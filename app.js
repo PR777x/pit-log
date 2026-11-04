@@ -15,9 +15,10 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
+const DB_ID = "pit-log"; // Firestore database ID (created as "pit-log", not "(default)")
 let fdb;
-try { fdb = initializeFirestore(app, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) }); }
-catch (_) { fdb = initializeFirestore(app, {}); }
+try { fdb = initializeFirestore(app, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) }, DB_ID); }
+catch (_) { fdb = initializeFirestore(app, {}, DB_ID); }
 const storage = getStorage(app);
 
 const $ = s => document.querySelector(s);
@@ -976,7 +977,7 @@ onAuthStateChanged(auth, async user => {
   } catch (e) {
     console.error(e); showSetup();
     const why = e.code === "permission-denied" ? "Firestore rules aren't published yet (Firestore → Rules → paste → Publish)."
-      : e.code === "timeout" || e.code === "unavailable" || e.code === "failed-precondition" ? "Can't reach the database. Check that Firestore has a database named (default): Databases & Storage → Firestore → Create database."
+      : e.code === "timeout" || e.code === "unavailable" || e.code === "failed-precondition" ? "Can't reach the database \"" + DB_ID + "\". Check it exists under Databases & Storage → Firestore and its Rules are published."
       : e.code === "not-found" ? "No Firestore database yet: Databases & Storage → Firestore → Create database."
       : "Database error: " + (e.code || e.message);
     showOnly("gate"); $("#signinMsg").textContent = why; return;
