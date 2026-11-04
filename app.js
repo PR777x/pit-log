@@ -892,7 +892,7 @@ async function doSignIn(){
   $("#signinMsg").textContent = "";
   try { await signInWithPopup(auth, p); }
   catch (e) {
-    if (["auth/popup-blocked", "auth/operation-not-supported-in-this-environment", "auth/web-storage-unsupported"].includes(e.code)) { try { await signInWithRedirect(auth, p); } catch (e2) { $("#signinMsg").textContent = "Sign-in failed: " + (e2.code || e2.message); } }
+    if (["auth/popup-blocked", "auth/operation-not-supported-in-this-environment", "auth/web-storage-unsupported"].includes(e.code)) { try { try { sessionStorage.setItem("pitlog.redirect", "1"); } catch(_){} await signInWithRedirect(auth, p); } catch (e2) { $("#signinMsg").textContent = "Sign-in failed: " + (e2.code || e2.message); } }
     else if (e.code !== "auth/popup-closed-by-user" && e.code !== "auth/cancelled-popup-request") $("#signinMsg").textContent = e.code === "auth/unauthorized-domain" ? "This web address isn't authorized yet. Add it under Authentication → Settings → Authorized domains." : "Sign-in failed: " + (e.code || e.message);
   }
 }
@@ -954,9 +954,15 @@ function startApp(){
 function updateCrewBadge(){ const n = REQ.in.filter(r => r.status === "pending").length; $("#tab-crew").innerHTML = "Crew" + (n ? ` <span class="badge-n">${n}</span>` : ""); $("#tab-crew").setAttribute("aria-selected", S.tab === "crew"); }
 
 $("#signinBtn").addEventListener("click", doSignIn);
+if (/; wv\)|FBAN|FBAV|Instagram|Line\/|GSA\//.test(navigator.userAgent) || (document.referrer && !document.referrer.includes(location.host) && window.matchMedia("(display-mode: browser)").matches && /Android/.test(navigator.userAgent) && !window.chrome)) $("#inapp").hidden = false;
 getRedirectResult(auth).catch(e => { if ($("#signinMsg")) $("#signinMsg").textContent = "Sign-in failed: " + (e.code || e.message); });
 onAuthStateChanged(auth, async user => {
-  if (!user) { resetState(); showOnly("gate"); return; }
+  let wasRedirect = false; try { wasRedirect = sessionStorage.getItem("pitlog.redirect") === "1"; sessionStorage.removeItem("pitlog.redirect"); } catch(_){}
+  if (!user) {
+    resetState(); showOnly("gate");
+    if (wasRedirect) $("#signinMsg").textContent = "Sign-in didn't finish. This browser blocked it. Open this page in Chrome (⋮ → Open in Chrome) or Safari and try again.";
+    return;
+  }
   ME = user;
   try {
     const p = await getDoc(doc(fdb, "users", user.uid));
