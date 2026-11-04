@@ -295,3 +295,20 @@ label.btn{display:inline-block}
 .famcard.on{border-color:var(--rust);background:rgba(201,118,47,.10)}
 .famcard .ft{font-family:var(--f-display);font-size:24px;line-height:1.05}
 .explain .ro{max-width:62ch}
+
+/* Profiles */
+.av.xl{width:96px;height:96px;font-size:52px;border:2px solid var(--blood)}
+.prof{border:1px solid var(--iron);background:linear-gradient(160deg,rgba(181,18,27,.18),var(--crypt) 55%);padding:16px;display:grid;gap:12px}
+.prof-top{display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+.prof-id{flex:1 1 200px;min-width:0;display:grid;gap:4px}
+.pname{font-family:var(--f-display);font-size:clamp(36px,9vw,52px);line-height:.95;overflow-wrap:anywhere}
+.prof .hd{font-family:var(--f-label);font-size:15px;letter-spacing:.06em;color:var(--blood-hi)}
+.pbio{margin:2px 0 0;max-width:52ch;overflow-wrap:anywhere}
+.pfav b{font-family:var(--f-label);font-size:17px;letter-spacing:.04em}
+.prof-act{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.prow-show{align-items:center}
+.pdate{display:grid;justify-items:center;min-width:56px;font-family:var(--f-label);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ash)}
+.pdate b{font-family:var(--f-display);font-size:30px;font-weight:400;line-height:1;color:var(--blood-hi);letter-spacing:0}
+.avedit{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+.avbtns{display:flex;flex-direction:column;gap:6px}
+.mbox textarea{min-height:70px}

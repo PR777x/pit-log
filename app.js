@@ -357,7 +357,7 @@ function renderCal(){
 
 function renderTab(){
   for (const t of ["shows","cal","vault","stats","crew"]) $("#tab-"+t).setAttribute("aria-selected", S.tab===t);
-  if (S.tab === "crew") renderCrew(); else if (S.tab === "shows") renderShows(); else if (S.tab === "cal") renderCal(); else if (S.tab === "vault") renderVault(); else renderStats();
+  if (S.tab === "me") renderMe(); else if (S.tab === "crew") renderCrew(); else if (S.tab === "shows") renderShows(); else if (S.tab === "cal") renderCal(); else if (S.tab === "vault") renderVault(); else renderStats();
 }
 function render(){ renderNext(); renderTab(); if (S.open) renderSheet(); }
 
@@ -654,6 +654,8 @@ document.addEventListener("click", e => {
   else if (t.dataset.fopen) { const [u, id] = t.dataset.fopen.split("|"); openFriendSheet(u, id); }
   else if (t.id === "tab-crew") { if (S.tab === "crew") S.crewSel = null; S.tab = "crew"; renderTab(); }
   else if (t.id === "acct") accountMenu();
+  else if (t.hasAttribute("data-editprofile")) editProfile();
+  else if (t.hasAttribute("data-myprofile2")) { S.tab = "me"; renderTab(); window.scrollTo(0, 0); }
   else if (t.hasAttribute("data-crewtoggle")) { S.crewOn = !S.crewOn; try { localStorage.setItem("pitlog.crewOn", S.crewOn ? "1" : "0"); } catch (_) {} renderTab(); }
   else if (crewClick(t)) {}
   else if (t.hasAttribute("data-close")) closeSheet();
@@ -673,6 +675,7 @@ document.addEventListener("change", e => {
   const up = e.target.dataset && e.target.dataset.upkind;
   if (up) { const files = [...(e.target.files || [])]; e.target.value = ""; readForm(); handleFiles(up, files); return; }
   if (e.target.id === "f-lineup" && draft) { readForm(); renderSheet(); }
+  if (e.target.id === "avatarFile") { const f = e.target.files && e.target.files[0]; e.target.value = ""; if (f) uploadAvatar(f); }
   if (e.target.id === "importFile") { const f = e.target.files && e.target.files[0]; e.target.value = ""; if (f) importFile(f); }
 });
 document.addEventListener("keydown", e => {
@@ -820,9 +823,9 @@ function watchFriend(uid, info){
     if (f.family) scheduleFamilySync();
     rerenderSoft();
   }, err => { f.err = err.code === "permission-denied" ? "Their log isn't shared with you yet." : "Couldn't load their log."; f.loaded = true; rerenderSoft(); });
-  getDoc(doc(fdb, "users", uid)).then(p => { if (p.exists()) { const d = p.data(); Object.assign(f, { name: d.name || f.name, handle: d.handle || f.handle, photo: d.photoURL || f.photo }); rerenderSoft(); } }).catch(()=>{});
+  f.unsubP = onSnapshot(doc(fdb, "users", uid), p => { if (p.exists()) { const d = p.data(); Object.assign(f, { name: d.name || f.name, handle: d.handle || f.handle, photo: d.photoURL || f.photo, bio: d.bio || "", favBand: d.favBand || "" }); rerenderSoft(); } }, () => {});
 }
-function dropFriend(uid){ const f = FR[uid]; if (!f) return; try { f.unsub && f.unsub(); } catch(_){} delete FR[uid]; }
+function dropFriend(uid){ const f = FR[uid]; if (!f) return; try { f.unsub && f.unsub(); f.unsubP && f.unsubP(); } catch(_){} delete FR[uid]; }
 
 function syncFriends(){
   const keep = new Set();
@@ -876,7 +879,7 @@ function renderCrew(){
     <section class="me-card">${avatar(PROFILE.photoURL, PROFILE.name, "lg")}
       <div style="min-width:0"><div class="nm">${esc(PROFILE.name || "You")}</div><div class="hd">@${esc(PROFILE.handle)}</div>
       <div class="ro">Friends add you with this username.</div></div>
-      <button class="btn" data-copyhandle>Copy</button></section>
+      <div style="display:flex;flex-direction:column;gap:6px"><button class="btn" data-copyhandle>Copy</button><button class="btn ghost" data-myprofile2>Profile</button></div></section>
     <section class="sect" style="margin-top:0"><h3>Add a friend</h3>
       <form class="addrow" id="addForm" autocomplete="off"><input class="search" id="addHandle" placeholder="@username" value="${esc(S.crewAdd||"")}" autocapitalize="none" spellcheck="false" aria-label="Friend's username"><button class="btn red" type="submit">Send</button></form></section>`;
   if (inc.length) html += `<section class="sect"><h3>Requests <span class="lbl">${inc.length}</span></h3><div class="plist">${inc.map(r => `
@@ -912,6 +915,114 @@ function familyBlock(f){
   return `<section class="famcard"><div><div class="ft">Crew Family</div><div class="ro">Link logs with @${h} so shows either of you adds land in both. They'll need to approve.</div></div><button class="btn" data-famprop="${esc(f.uid)}">Invite to Crew Family</button></section>`;
 }
 
+/* ---------- Profiles ---------- */
+function profileTop(p, isMe, f){
+  return `<div class="prof-top">${avatar(p.photo, p.name, "xl")}
+    <div class="prof-id"><div class="pname">${esc(p.name || p.handle || "")}</div>
+      <div class="hd">@${esc(p.handle || "")}${f && f.family ? ` <span class="chip fam">Crew Family</span>` : ""}</div>
+      ${p.bio ? `<p class="pbio">${esc(p.bio)}</p>` : isMe ? `<p class="pbio ro">Add a short bio so your crew knows what you're about.</p>` : ""}
+      ${p.favBand ? `<div class="pfav"><span class="lbl">Favorite band</span> <b>${esc(p.favBand)}</b></div>` : ""}
+    </div></div>
+    ${isMe ? `<div class="prof-act"><button class="btn red" data-editprofile>Edit profile</button><span class="ro">This is what your crew sees.</span></div>` : ""}`;
+}
+function showRow(s, ownerUid, label){
+  if (!s) return "";
+  const p = parse(s.date), lu = lineup(s), opener = ownerUid ? `data-fopen="${esc(ownerUid)}|${esc(s.id)}"` : `data-open="${esc(s.id)}"`;
+  return `<button class="prow tap prow-show" ${opener}><span class="pdate"><b class="num">${p.d}</b>${MONTHS[(p.m||1)-1]} ${p.y}</span>
+    <div class="pt"><div class="lbl">${esc(label)}</div><div class="nm" style="font-size:22px">${esc(lu[0] || "Show")}</div><div class="ro">${esc(s.venue || "Venue unknown")}</div></div></button>`;
+}
+function profileBlock(p, isMe, f, extra){
+  const shows = p.shows || [], done = shows.filter(s => !isUpcoming(s)).sort((a,b) => (b.date||"").localeCompare(a.date||""));
+  const bands = counts(done.flatMap(lineup)), venues = counts(done.map(s => s.venue || "")).filter(v => v.name);
+  const yrs = done.map(s => parse(s.date).y).filter(Boolean);
+  const rated = done.filter(s => Number(s.rating) > 0);
+  const avg = rated.length ? (rated.reduce((a,s) => a + Number(s.rating), 0) / rated.length).toFixed(1) : "–";
+  const next = shows.filter(isUpcoming).sort((a,b) => (a.date||"").localeCompare(b.date||""))[0];
+  const best = rated.filter(s => Number(s.rating) >= 5)[0];
+  const owner = isMe ? null : p.uid;
+  const tile = (l, v) => `<div class="tile"><div class="lbl">${l}</div><div class="v num">${v}</div></div>`;
+  return `<section class="prof">${profileTop(p, isMe, f)}</section>
+    <div class="tiles">
+      ${tile("Shows", done.length)}${tile("Bands seen", bands.length)}${tile("Venues", venues.length)}
+      ${isMe ? tile("Crew", friendList().length) + tile("Avg rating", avg) : tile("Together", extra.together) + tile("Shared bands", extra.shared)}
+      ${tile("Since", yrs.length ? Math.min(...yrs) : "–")}
+    </div>
+    ${bands.filter(b => b.n > 1).length ? `<section class="sect" style="margin-top:0"><h3>Most seen</h3><div class="tagrow">${bands.filter(b => b.n > 1).slice(0, 8).map(b => `<span class="tagbtn" aria-pressed="true">${esc(b.name)} <span class="num" style="opacity:.75">×${b.n}</span></span>`).join("")}</div></section>` : ""}
+    ${venues[0] ? `<div class="ro">Home venue: <b style="color:var(--bone)">${esc(venues[0].name)}</b> · ${venues[0].n} show${venues[0].n > 1 ? "s" : ""}</div>` : ""}
+    <div class="plist">${showRow(next, owner, "Next show")}${showRow(done[0], owner, "Last show")}${best && best !== done[0] ? showRow(best, owner, "A 5-skull night") : ""}</div>`;
+}
+
+function renderMe(){
+  if (!PROFILE) return;
+  $("#view").innerHTML = `<div class="crew">${profileBlock({ uid: ME.uid, name: PROFILE.name, handle: PROFILE.handle, photo: PROFILE.photoURL, bio: PROFILE.bio, favBand: PROFILE.favBand, shows: S.shows }, true, null, {})}</div>`;
+}
+
+let PEDIT = null;
+function editProfile(){
+  PEDIT = { name: PROFILE.name || "", bio: PROFILE.bio || "", favBand: PROFILE.favBand || "", photoURL: PROFILE.photoURL || "", photoPath: PROFILE.photoPath || "", busy: false };
+  drawEdit();
+}
+function drawEdit(){
+  const root = $("#modalRoot"), e = PEDIT, g = ME.photoURL || "";
+  root.innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-label="Edit profile"><div class="mbox">
+    <h3>Edit profile</h3>
+    <div class="avedit">${avatar(e.photoURL, e.name, "xl")}
+      <div class="avbtns">
+        <label class="btn">${e.busy ? "Uploading…" : "Change photo"}<input class="vh" type="file" id="avatarFile" accept="image/*" ${e.busy ? "disabled" : ""}></label>
+        ${g && e.photoURL !== g ? `<button class="btn ghost" data-avgoogle>Use Google photo</button>` : ""}
+        ${e.photoURL ? `<button class="btn ghost" data-avnone>Use my initial</button>` : ""}
+      </div></div>
+    <label class="field"><span class="lbl">Name</span><input id="pf-name" maxlength="40" value="${esc(e.name)}"></label>
+    <label class="field"><span class="lbl">Bio <span id="pf-count">${(e.bio||"").length}/140</span></span><textarea id="pf-bio" maxlength="140" placeholder="Doom, deathcore and barricade spots.">${esc(e.bio)}</textarea></label>
+    <label class="field"><span class="lbl">Favorite band</span><input id="pf-fav" maxlength="40" value="${esc(e.favBand)}" placeholder="Katatonia"></label>
+    <div class="ro">Username: @${esc(PROFILE.handle)} (can't be changed)</div>
+    <div class="mbtns"><button class="btn ghost" data-pcancel>Cancel</button><button class="btn red" data-psave ${e.busy ? "disabled" : ""}>Save</button></div>
+  </div></div>`;
+  const keep = () => { PEDIT.name = $("#pf-name").value; PEDIT.bio = $("#pf-bio").value; PEDIT.favBand = $("#pf-fav").value; };
+  root.querySelector("[data-pcancel]").onclick = () => { if (PEDIT.photoPath && PEDIT.photoPath !== PROFILE.photoPath) removeFile(PEDIT.photoPath); PEDIT = null; root.innerHTML = ""; };
+  root.querySelector("[data-psave]").onclick = () => { keep(); saveProfileEdit(); };
+  const gb = root.querySelector("[data-avgoogle]"); if (gb) gb.onclick = () => { keep(); dropPendingAvatar(); PEDIT.photoURL = g; PEDIT.photoPath = ""; drawEdit(); };
+  const nb = root.querySelector("[data-avnone]"); if (nb) nb.onclick = () => { keep(); dropPendingAvatar(); PEDIT.photoURL = ""; PEDIT.photoPath = ""; drawEdit(); };
+  $("#pf-bio").oninput = ev => { $("#pf-count").textContent = ev.target.value.length + "/140"; };
+}
+function dropPendingAvatar(){ if (PEDIT.photoPath && PEDIT.photoPath !== PROFILE.photoPath) removeFile(PEDIT.photoPath); }
+async function squareAvatar(file){
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
+    const side = Math.min(img.naturalWidth, img.naturalHeight), out = Math.min(400, side);
+    const c = document.createElement("canvas"); c.width = c.height = out;
+    c.getContext("2d").drawImage(img, (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, 0, 0, out, out);
+    return await new Promise(r => c.toBlob(r, "image/jpeg", 0.88));
+  } finally { URL.revokeObjectURL(url); }
+}
+async function uploadAvatar(file){
+  if (!PEDIT) return;
+  PEDIT.name = $("#pf-name").value; PEDIT.bio = $("#pf-bio").value; PEDIT.favBand = $("#pf-fav").value;
+  PEDIT.busy = true; drawEdit();
+  try {
+    const blob = await squareAvatar(file);
+    const path = `users/${ME.uid}/avatar-${rid()}.jpg`, r = sref(storage, path);
+    await uploadBytes(r, blob, { contentType: "image/jpeg", cacheControl: "public,max-age=31536000" });
+    dropPendingAvatar();
+    PEDIT.photoURL = await getDownloadURL(r); PEDIT.photoPath = path;
+  } catch (e) { console.error(e); toast(e && e.code === "storage/unauthorized" ? "Upload blocked: check the Storage rules" : "Couldn't use that image. Try a JPG or PNG.", 4000); }
+  if (PEDIT) { PEDIT.busy = false; drawEdit(); }
+}
+async function saveProfileEdit(){
+  const e = PEDIT, name = (e.name || "").trim();
+  if (!name) { toast("Add your name"); return; }
+  const patch = { name, bio: (e.bio || "").trim().slice(0, 140), favBand: (e.favBand || "").trim().slice(0, 40), photoURL: e.photoURL || "", photoPath: e.photoPath || "" };
+  try {
+    await updateDoc(doc(fdb, "users", ME.uid), patch);
+    const old = PROFILE.photoPath; Object.assign(PROFILE, patch);
+    if (old && old !== patch.photoPath) removeFile(old);
+    PEDIT = null; $("#modalRoot").innerHTML = "";
+    $("#acct").innerHTML = avatar(PROFILE.photoURL, PROFILE.name);
+    toast("Profile saved"); renderTab();
+  } catch (err) { handleWriteErr(err); }
+}
+
 function renderFriend(f){
   const theirs = [...(f.shows||[])].sort((a,b) => (b.date||"").localeCompare(a.date||""));
   const done = theirs.filter(s => !isUpcoming(s));
@@ -927,13 +1038,8 @@ function renderFriend(f){
   else body = theirs.length ? `<div class="list">${theirs.map(s => ticket(s, firsts, { friend: f.uid })).join("")}</div>` : `<div class="empty"><h3>Nothing logged</h3><div>${esc(f.name || "They")} haven't logged any shows yet.</div></div>`;
   $("#view").innerHTML = `<div class="crew">
     <button class="btn ghost" data-crewback style="justify-self:start">← The crew</button>
-    <section class="me-card">${avatar(f.photo, f.name, "lg")}<div style="min-width:0"><div class="nm">${esc(f.name || f.handle)}</div><div class="hd">@${esc(f.handle)}</div></div></section>
-    <div class="tiles">
-      <div class="tile"><div class="lbl">Shows</div><div class="v num">${done.length}</div></div>
-      <div class="tile"><div class="lbl">Bands seen</div><div class="v num">${counts(done.flatMap(lineup)).length}</div></div>
-      <div class="tile"><div class="lbl">Together</div><div class="v num">${together.length}</div></div>
-      <div class="tile"><div class="lbl">Shared bands</div><div class="v num">${shared.length}</div></div>
-    </div>
+    ${f.err ? `<section class="prof">${profileTop({ name: f.name, handle: f.handle, photo: f.photo, bio: f.bio, favBand: f.favBand }, false, f)}</section>`
+      : profileBlock({ uid: f.uid, name: f.name, handle: f.handle, photo: f.photo, bio: f.bio, favBand: f.favBand, shows: f.shows || [] }, false, f, { together: together.length, shared: shared.length })}
     <div class="seg big" role="group" aria-label="View">
       <button data-crewview="shows" aria-pressed="${v==="shows"}">Their shows</button>
       <button data-crewview="together" aria-pressed="${v==="together"}">Together</button>
@@ -974,12 +1080,14 @@ function accountMenu(){
   const root = $("#modalRoot");
   root.innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-label="Account"><div class="mbox">
     <div class="me-card" style="border:0;padding:0">${avatar(PROFILE.photoURL, PROFILE.name, "lg")}<div style="min-width:0"><div class="nm">${esc(PROFILE.name||"")}</div><div class="hd">@${esc(PROFILE.handle)}</div><div class="ro">${esc(ME.email||"")}</div></div></div>
+    <button class="btn red" data-myprofile style="text-align:center">View my profile</button>
     <div class="ro">Moving from the old Pit Log? Import the export file once and your shows and photos load into this account.</div>
     <label class="btn" style="text-align:center">Import Pit Log file<input class="vh" type="file" id="importFile" accept=".json,application/json"></label>
     <div class="mbtns"><button class="btn warn" data-signout>Sign out</button><button class="btn ghost" data-mclose>Close</button></div>
   </div></div>`;
   root.querySelector("[data-mclose]").onclick = () => root.innerHTML = "";
   root.querySelector("[data-signout]").onclick = () => { root.innerHTML = ""; signOut(auth); };
+  root.querySelector("[data-myprofile]").onclick = () => { root.innerHTML = ""; S.tab = "me"; renderTab(); window.scrollTo(0, 0); };
 }
 
 async function importFile(file){
