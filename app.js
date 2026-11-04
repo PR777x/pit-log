@@ -1,7 +1,7 @@
 // Pit Log — Firebase edition
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -37,6 +37,8 @@ let S = { shows: [], loaded: false, slow: false, error: "", tab: "shows", filter
   cal: { y: new Date().getFullYear(), m: new Date().getMonth() } };
 let db = null, assets = null;
 let ME = null, PROFILE = null;
+const crewPref = (() => { try { return localStorage.getItem("pitlog.crewOn") === "1"; } catch (_) { return false; } })();
+S.crewOn = crewPref;
 const FR = {}; // friend uid -> { uid, name, handle, photo, shows, err, unsub }
 let REQ = { in: [], out: [] };
 
@@ -91,7 +93,7 @@ function ticket(s, firsts, opts){
   const media = [...items(s,"photos"), ...items(s,"merch")];
   const vids = media.filter(m=>m.type==="video").length;
   const thumbs = [pid(s.poster), ...media.filter(m=>m.type!=="video").map(m=>m.id)].filter(Boolean).slice(0,5);
-  return `<button class="ticket ${up?'upcoming':''}" ${opts.friend ? `data-fopen="${esc(opts.friend)}|${esc(s.id)}"` : `data-open="${esc(s.id)}"`} aria-label="Open ${esc(lu[0]||'show')}">
+  return `<button class="ticket ${up?'upcoming':''}${opts.friend && S.tab!=="crew" ? " crewt" : ""}" ${opts.friend ? `data-fopen="${esc(opts.friend)}|${esc(s.id)}"` : `data-open="${esc(s.id)}"`} aria-label="Open ${esc(lu[0]||'show')}">
     <div class="stub"><div class="mo">${MONTHS[(p.m||1)-1].toUpperCase()}</div><div class="dd num">${p.d||"?"}</div><div class="dw">${DAYS[p.dt.getDay()]}</div></div>
     <div class="tbody">
       <div class="head">${esc(lu[0]||"Untitled show")}</div>
@@ -138,16 +140,17 @@ function groupOf(s){
 }
 
 function renderShows(){
-  let list = S.shows.filter(inYear);
+  let list = [...S.shows, ...(S.crewOn ? crewOverlay() : [])].filter(inYear);
   if (S.filter === "attended") list = list.filter(s => !isUpcoming(s));
   if (S.filter === "upcoming") list = list.filter(isUpcoming);
   const q = S.q.trim().toLowerCase();
-  if (q) list = list.filter(s => [...lineup(s), s.venue, s.city, ...crew(s), s.tour].join(" ").toLowerCase().includes(q));
+  if (q) list = list.filter(s => [...lineup(s), s.venue, s.city, ...crew(s), s.tour, s._f && FR[s._f] ? "@" + FR[s._f].handle : ""].join(" ").toLowerCase().includes(q));
   sortShows(list);
   const firsts = firstSightings();
   let html = `<div class="filters">
     ${yearSeg()}
     <div class="seg" role="group" aria-label="Filter">${["all","attended","upcoming"].map(f=>`<button data-filter="${f}" aria-pressed="${S.filter===f}">${f}</button>`).join("")}</div>
+    ${crewToggle()}
   </div>
   <div class="filters">
     <label class="sortsel"><span class="lbl">Sort</span><select id="sort" aria-label="Sort shows">${Object.entries(SORTS).map(([v,l])=>`<option value="${v}" ${S.sort===v?"selected":""}>${l}</option>`).join("")}</select></label>
@@ -162,7 +165,7 @@ function renderShows(){
     for (const s of list) {
       const [g, sub] = groupOf(s), key = g + "|" + sub;
       if (key !== lastKey) { html += `<div class="month">${esc(g)} <span class="lbl" style="font-size:13px">${esc(sub)}${S.sort!=="newest"&&S.sort!=="oldest" ? `${sub?" · ":""}${counts[key]}` : ""}</span></div>`; lastKey = key; }
-      html += ticket(s, firsts);
+      html += ticket(s, firsts, s._f ? { friend: s._f } : null);
     }
     html += `</div>`;
   }
@@ -260,7 +263,7 @@ const money = n => "$" + Math.round(n).toLocaleString();
 
 function renderStats(){
   const all = sorted().filter(inYear), done = all.filter(s=>!isUpcoming(s)), up = all.filter(isUpcoming);
-  if (!S.loaded || !all.length) { $("#view").innerHTML = `<div class="filters">${yearSeg()}</div><div class="empty" style="margin-top:16px"><h3>No stats yet</h3><div>Stats build up as shows are logged.</div></div>`; return; }
+  if (!S.loaded || !all.length) { $("#view").innerHTML = `<div class="filters">${yearSeg()}${crewToggle()}</div><div class="empty" style="margin-top:16px"><h3>No stats yet</h3><div>Stats build up as shows are logged.</div></div>`; return; }
   const bands = counts(done.flatMap(lineup)), venues = counts(done.map(s=>s.venue||"")), people = counts(done.flatMap(crew));
   const miles = done.reduce((a,s)=>a+(Number(s.miles)||0),0), tix = done.reduce((a,s)=>a+(Number(s.ticket)||0),0), merch = done.reduce((a,s)=>a+(Number(s.merchSpend)||0),0);
   const rated = done.filter(s=>Number(s.rating)>0);
@@ -284,7 +287,8 @@ function renderStats(){
     {t:"Barricade Bound", d:"Logged a show on the rail", on:done.some(s=>s.spot==="Barricade")},
   ];
   const rank = (rows, max) => rows.length ? `<div class="rank">${rows.slice(0,8).map(r=>`<div class="row"><span class="n">${esc(r.name)}</span><span class="num lbl" style="color:var(--bone)">${r.n}×</span><div class="track"><i style="width:${(r.n/max*100).toFixed(1)}%"></i></div></div>`).join("")}</div>` : `<div class="ro">Nothing logged yet.</div>`;
-  $("#view").innerHTML = `<div class="filters">${yearSeg()}</div><div class="stats" style="margin-top:0">
+  $("#view").innerHTML = `<div class="filters">${yearSeg()}${crewToggle()}</div><div class="stats" style="margin-top:0">
+    ${S.crewOn ? crewStats() : ""}
     <div class="tiles">
       <div class="tile"><div class="lbl">Shows attended</div><div class="v num">${done.length}</div></div>
       <div class="tile"><div class="lbl">Still to come</div><div class="v num">${up.length}</div></div>
@@ -316,32 +320,37 @@ function renderCal(){
   if (!S.loaded) { $("#view").innerHTML = `<div class="calwrap">${statusBlock()}</div>`; return; }
   const { y, m } = S.cal;
   const key = (dd) => y+"-"+String(m+1).padStart(2,"0")+"-"+String(dd).padStart(2,"0");
-  const byDate = {}; for (const s of sorted()) (byDate[s.date] = byDate[s.date] || []).push(s);
+  const all = [...sorted(), ...(S.crewOn ? crewOverlay() : [])];
+  const byDate = {}; for (const s of all) (byDate[s.date] = byDate[s.date] || []).push(s);
   const first = new Date(y, m, 1).getDay(), dim = new Date(y, m+1, 0).getDate();
   const cells = [];
   for (let i = 0; i < first; i++) cells.push(`<div class="day out" aria-hidden="true"></div>`);
   for (let d = 1; d <= dim; d++) {
     const k = key(d), list = byDate[k] || [], today = k === todayISO;
     if (!list.length) { cells.push(`<div class="day${today?" today":""}"><span class="dn">${d}</span></div>`); continue; }
-    const s = list[0], up = isUpcoming(s);
-    cells.push(`<button class="day has${up?" up":""}${today?" today":""}" data-open="${esc(s.id)}" aria-label="${esc(fmtDate(k))}: ${esc(list.map(x=>lineup(x)[0]).join(", "))}">
-      <span class="dn">${d}</span><span class="sk">${SKULLC(up ? "var(--rust)" : "var(--bone)")}</span>
-      <span class="hl">${esc(lineup(s)[0]||"Show")}${list.length>1?` +${list.length-1}`:""}</span></button>`);
+    const mineL = list.filter(x => !x._f), crewL = list.filter(x => x._f);
+    const s = mineL[0] || crewL[0], up = isUpcoming(s), onlyCrew = !mineL.length;
+    const opener = s._f ? `data-fopen="${esc(s._f)}|${esc(s.id)}"` : `data-open="${esc(s.id)}"`;
+    const dots = crewL.length ? `<span class="cdots">${[...new Set(crewL.map(x => x._f))].slice(0,3).map(u => `<i>${esc(((FR[u]&&FR[u].handle)||"?").charAt(0).toUpperCase())}</i>`).join("")}</span>` : "";
+    cells.push(`<button class="day has${up?" up":""}${onlyCrew?" crewday":""}${today?" today":""}" ${opener} aria-label="${esc(fmtDate(k))}: ${esc(list.map(x=>(x._f && FR[x._f] ? "@"+FR[x._f].handle+" " : "")+lineup(x)[0]).join(", "))}">
+      <span class="dn">${d}</span><span class="sk">${SKULLC(onlyCrew ? "var(--dim)" : up ? "var(--rust)" : "var(--bone)")}</span>
+      <span class="hl">${esc(lineup(s)[0]||"Show")}${mineL.length>1?` +${mineL.length-1}`:""}</span>${dots}</button>`);
   }
   while (cells.length % 7) cells.push(`<div class="day out" aria-hidden="true"></div>`);
   const mc = Array(12).fill(0); for (const s of S.shows) { const p = parse(s.date); if (p.y === y) mc[p.m-1]++; }
-  const inMonth = sorted().filter(s => { const p = parse(s.date); return p.y === y && p.m === m+1; });
+  const inMonth = all.filter(s => { const p = parse(s.date); return p.y === y && p.m === m+1; }).sort((a,b) => (a.date||"").localeCompare(b.date||"") || (!!a._f - !!b._f));
   const yrs = years(); if (!yrs.includes(y)) yrs.push(y);
   $("#view").innerHTML = `<div class="calwrap">
     <div class="filters" style="margin:0"><div class="seg" role="group" aria-label="Year">${yrs.sort((a,b)=>b-a).map(yy=>`<button data-caly="${yy}" aria-pressed="${yy===y}">${yy}</button>`).join("")}</div>
-      <button class="btn ghost" data-caltoday>Today</button></div>
+      <button class="btn ghost" data-caltoday>Today</button>${crewToggle()}</div>
     <div class="mstrip" role="group" aria-label="Months of ${y}">${MONTHS.map((mn,i)=>`<button data-calm="${i}" aria-pressed="${i===m}" aria-label="${MONTHS_LONG[i]}: ${mc[i]} show${mc[i]!==1?"s":""}"><span class="ml">${mn[0]}</span><span class="mc ${mc[i]?"":"z"}">${mc[i]||"·"}</span></button>`).join("")}</div>
     <div class="calnav"><button class="arw" data-calnav="-1" aria-label="Previous month">‹</button>
       <div class="mt-title">${MONTHS_LONG[m]} <span style="color:var(--ash)">${y}</span></div>
       <button class="arw" data-calnav="1" aria-label="Next month">›</button></div>
     <div class="cal">${DAYS.map(d=>`<div class="dow">${d.slice(0,2)}</div>`).join("")}${cells.join("")}</div>
     ${inMonth.length ? `<div class="mlist">${inMonth.map(s=>{ const p = parse(s.date), lu = lineup(s);
-        return `<button data-open="${esc(s.id)}" class="${isUpcoming(s)?"up":""}"><span class="dd num">${p.d}</span><span style="min-width:0"><div class="t1">${esc(lu[0]||"Show")}${isUpcoming(s)?` <span class="chip up">Upcoming</span>`:""}</div><div class="t2">${esc([lu.slice(1).join(" · "), s.venue].filter(Boolean).join(" — ") || "Venue unknown")}</div></span></button>`; }).join("")}</div>`
+        const opener = s._f ? `data-fopen="${esc(s._f)}|${esc(s.id)}"` : `data-open="${esc(s.id)}"`;
+        return `<button ${opener} class="${isUpcoming(s)?"up":""}${s._f?" crewrow":""}"><span class="dd num">${p.d}</span><span style="min-width:0"><div class="t1">${s._f && FR[s._f] ? `<span class="chip crewtag">@${esc(FR[s._f].handle)}</span> ` : ""}${esc(lu[0]||"Show")}${isUpcoming(s)?` <span class="chip up">Upcoming</span>`:""}</div><div class="t2">${esc([lu.slice(1).join(" · "), s.venue].filter(Boolean).join(" — ") || "Venue unknown")}</div></span></button>`; }).join("")}</div>`
       : `<div class="empty"><h3>Silent month</h3><div>No shows logged in ${MONTHS_LONG[m]} ${y}.</div></div>`}
   </div>`;
 }
@@ -437,7 +446,7 @@ function renderSheet(fresh){
     </div>
     ${media}
 
-    ${!isNew && !ro ? `<div class="sect"><div><button class="btn warn" data-del>${confirmDel?"Tap again to delete this show":"Delete show"}</button></div></div>` : ""}
+    ${!isNew && !ro ? `<div class="sect"><div><button class="btn warn" data-del>${confirmDel?(draft.linkId && friendList().some(f=>f.family) ? "Tap again: deletes from your log only" : "Tap again to delete this show"):"Delete show"}</button></div></div>` : ""}
   </div></div>`;
   const sh = $("#sheetRoot .sheet"); if (sh && !fresh) sh.scrollTop = scroll;
 }
@@ -463,7 +472,7 @@ async function save(){
   const body = {...draft}; delete body.id;
   try {
     if (draft.id === "__new") { const ref = await addDoc(myShows(), body); draft.id = ref.id; S.open = ref.id; toast("Show added"); }
-    else { await setDoc(myShow(draft.id), body); toast("Saved"); }
+    else { await setDoc(myShow(draft.id), body); toast("Saved"); pushShared(body); }
   } catch(e){ handleWriteErr(e); }
   busy = false; renderSheet();
 }
@@ -645,6 +654,7 @@ document.addEventListener("click", e => {
   else if (t.dataset.fopen) { const [u, id] = t.dataset.fopen.split("|"); openFriendSheet(u, id); }
   else if (t.id === "tab-crew") { if (S.tab === "crew") S.crewSel = null; S.tab = "crew"; renderTab(); }
   else if (t.id === "acct") accountMenu();
+  else if (t.hasAttribute("data-crewtoggle")) { S.crewOn = !S.crewOn; try { localStorage.setItem("pitlog.crewOn", S.crewOn ? "1" : "0"); } catch (_) {} renderTab(); }
   else if (crewClick(t)) {}
   else if (t.hasAttribute("data-close")) closeSheet();
   else if (t.hasAttribute("data-save")) save();
@@ -706,8 +716,91 @@ function sameShow(a, b){
 }
 const togetherWith = s => friendList().filter(f => (f.shows||[]).some(o => sameShow(s, o)));
 function togetherChips(s, opts){
-  if (opts && opts.friend) return S.shows.some(o => sameShow(s, o)) ? `<span class="chip tog">You were there</span>` : "";
-  return togetherWith(s).map(f => `<span class="chip tog">w/ @${esc(f.handle)}</span>`).join("");
+  let h = "";
+  if (s.addedBy && ME && s.addedBy !== ME.uid && !(opts && opts.friend)) h += `<span class="chip fam">Added by @${esc((FR[s.addedBy] && FR[s.addedBy].handle) || "family")}</span>`;
+  if (opts && opts.friend) {
+    if (S.tab !== "crew" && FR[opts.friend]) h += `<span class="chip crewtag">@${esc(FR[opts.friend].handle)}</span>`;
+    return h + (S.shows.some(o => sameShow(s, o)) ? `<span class="chip tog">You were there</span>` : "");
+  }
+  if (!S.crewOn && S.tab !== "crew") return h;
+  return h + togetherWith(s).filter(f => !f.family).map(f => `<span class="chip tog">w/ @${esc(f.handle)}</span>`).join("");
+}
+
+/* ---------- Crew overlay (toggle) ---------- */
+function crewToggle(){
+  if (!friendList().length) return "";
+  return `<button class="crewtog" data-crewtoggle aria-pressed="${!!S.crewOn}" title="Show your crew's shows">${SKULLC(S.crewOn ? "var(--moss)" : "var(--dim)")}<span>Crew ${S.crewOn ? "on" : "off"}</span></button>`;
+}
+// Friends' shows that aren't already in your log (tagged with _f = friend uid)
+function crewOverlay(){
+  const out = [];
+  for (const f of friendList()) for (const s of (f.shows || [])) {
+    if (S.shows.some(o => sameShow(o, s))) continue;
+    out.push({ ...s, _f: f.uid });
+  }
+  return out;
+}
+function crewStats(){
+  const inY = s => S.year === "all" || parse(s.date).y === Number(S.year);
+  const mine = S.shows.filter(s => inY(s) && !isUpcoming(s));
+  const rows = [{ name: "You", n: mine.length, t: null, me: true }].concat(friendList().filter(f => f.loaded && !f.err).map(f => {
+    const theirs = (f.shows || []).filter(s => inY(s) && !isUpcoming(s));
+    return { name: "@" + f.handle, n: theirs.length, t: mine.filter(s => theirs.some(o => sameShow(s, o))).length, family: f.family };
+  })).sort((a, b) => b.n - a.n);
+  const max = Math.max(1, ...rows.map(r => r.n));
+  const top = rows.filter(r => !r.me && !r.family && r.t).sort((a, b) => b.t - a.t)[0];
+  return `<section class="crewstat"><h2>Crew standings</h2>
+    ${top ? `<div class="ro" style="margin-bottom:8px">Most shows together: <b style="color:var(--bone)">${esc(top.name)}</b> · ${top.t}</div>` : ""}
+    <div class="rank">${rows.map(r => `<div class="row"><span class="n">${esc(r.name)}${r.family ? ` <span class="chip fam">Family</span>` : ""}${r.t ? ` <span class="lbl" style="color:var(--moss)">${r.t} together</span>` : ""}</span><span class="num lbl" style="color:var(--bone)">${r.n}</span><div class="track"><i style="width:${(r.n / max * 100).toFixed(1)}%;${r.me ? "background:var(--bone)" : ""}"></i></div></div>`).join("")}</div></section>`;
+}
+
+/* ---------- Crew Family (linked logs) ---------- */
+const SHARED = ["date", "lineup", "venue", "city", "tour", "unsure"];
+const reqWith = uid => REQ.in.concat(REQ.out).find(r => r.status === "accepted" && (r.from === uid || r.to === uid));
+async function setFamily(uid, state){
+  const r = reqWith(uid); if (!r) return;
+  const patch = { family: state, familyAt: serverTimestamp() };
+  if (state === "pending") patch.familyBy = ME.uid;
+  try {
+    await updateDoc(doc(fdb, "friendRequests", r.id), patch);
+    const h = (FR[uid] && FR[uid].handle) || "them";
+    toast(state === "pending" ? `Family invite sent to @${h}` : state === "active" ? `You and @${h} are Crew Family. Syncing your logs…` : "Crew Family turned off", 3500);
+  } catch (e) { handleWriteErr(e); }
+}
+let famTimer = null, famBusy = false, famAgain = false;
+function scheduleFamilySync(){ clearTimeout(famTimer); famTimer = setTimeout(familySync, 1500); }
+async function familySync(){
+  if (!ME || !S.loaded) return;
+  if (famBusy) { famAgain = true; return; }
+  famBusy = true; let made = 0;
+  try {
+    for (const f of friendList().filter(f => f.family && f.loaded && !f.err)) {
+      for (const s of S.shows) {
+        if (Array.isArray(s.familySynced) && s.familySynced.includes(f.uid)) continue; // already shared (or they removed their copy)
+        let p = s.linkId && f.shows.find(x => x.linkId === s.linkId);
+        if (!p) p = f.shows.find(x => sameShow(s, x));
+        const lid = s.linkId || (p && p.linkId) || ("L" + rid());
+        if (p) { if (p.linkId !== lid) await updateDoc(doc(fdb, "users", f.uid, "shows", p.id), { linkId: lid }); }
+        else {
+          const copy = { linkId: lid, addedBy: ME.uid, wentWith: [], rating: 0, pit: 0, spot: "", best: "", highlight: "", setlist: "", notes: "", ticket: null, merchSpend: null, miles: s.miles ?? null, poster: null, photos: [], merch: [] };
+          for (const k of SHARED) copy[k] = s[k] ?? (k === "lineup" ? [] : k === "unsure" ? false : "");
+          await setDoc(doc(fdb, "users", f.uid, "shows", lid), copy); made++;
+        }
+        await updateDoc(myShow(s.id), { linkId: lid, familySynced: arrayUnion(f.uid) });
+      }
+    }
+    if (made) toast(`Shared ${made} show${made > 1 ? "s" : ""} with your Crew Family`, 3000);
+  } catch (e) { console.error("family sync", e); }
+  famBusy = false;
+  if (famAgain) { famAgain = false; scheduleFamilySync(); }
+}
+async function pushShared(show){
+  if (!show || !show.linkId) return;
+  const patch = { syncedAt: serverTimestamp() }; for (const k of SHARED) patch[k] = show[k] ?? (k === "lineup" ? [] : k === "unsure" ? false : "");
+  for (const f of friendList().filter(f => f.family)) {
+    const p = (f.shows || []).find(x => x.linkId === show.linkId);
+    if (p) { try { await updateDoc(doc(fdb, "users", f.uid, "shows", p.id), patch); } catch (e) { console.error("push shared", e); } }
+  }
 }
 
 function openFriendSheet(uid, id){
@@ -724,6 +817,7 @@ function watchFriend(uid, info){
   const f = FR[uid] = { uid, shows: [], loaded: false, err: "", ...info };
   f.unsub = onSnapshot(collection(fdb, "users", uid, "shows"), snap => {
     f.shows = snap.docs.map(d => ({ id: d.id, ...d.data() })); f.loaded = true; f.err = "";
+    if (f.family) scheduleFamilySync();
     rerenderSoft();
   }, err => { f.err = err.code === "permission-denied" ? "Their log isn't shared with you yet." : "Couldn't load their log."; f.loaded = true; rerenderSoft(); });
   getDoc(doc(fdb, "users", uid)).then(p => { if (p.exists()) { const d = p.data(); Object.assign(f, { name: d.name || f.name, handle: d.handle || f.handle, photo: d.photoURL || f.photo }); rerenderSoft(); } }).catch(()=>{});
@@ -736,11 +830,12 @@ function syncFriends(){
     if (r.status !== "accepted") continue;
     const other = r.from === ME.uid ? { uid: r.to, name: r.toName, handle: r.toHandle, photo: r.toPhoto } : { uid: r.from, name: r.fromName, handle: r.fromHandle, photo: r.fromPhoto };
     keep.add(other.uid); watchFriend(other.uid, other);
+    FR[other.uid].family = r.family === "active"; FR[other.uid].famState = r.family || "off"; FR[other.uid].famBy = r.familyBy || "";
   }
   for (const uid of Object.keys(FR)) if (!keep.has(uid)) dropFriend(uid);
-  rerenderSoft();
+  rerenderSoft(); scheduleFamilySync();
 }
-function rerenderSoft(){ if (S.open || LB || $("#modalRoot").innerHTML) return; if (S.tab === "crew" || S.tab === "shows") renderTab(); }
+function rerenderSoft(){ if (S.open || LB || $("#modalRoot").innerHTML) return; if (S.tab !== "vault") renderTab(); }
 
 async function sendRequest(raw){
   const h = String(raw||"").trim().replace(/^@/, "").toLowerCase();
@@ -787,16 +882,34 @@ function renderCrew(){
   if (inc.length) html += `<section class="sect"><h3>Requests <span class="lbl">${inc.length}</span></h3><div class="plist">${inc.map(r => `
       <div class="prow">${avatar(r.fromPhoto, r.fromName)}<div class="pt"><div class="nm">${esc(r.fromName || r.fromHandle)}</div><div class="hd">@${esc(r.fromHandle)}</div></div>
       <button class="btn red" data-accept="${esc(r.id)}">Accept</button><button class="btn ghost" data-decline="${esc(r.id)}">Decline</button></div>`).join("")}</div></section>`;
+  const famInc = fl.filter(f => f.famState === "pending" && f.famBy && f.famBy !== ME.uid);
+  if (famInc.length) html += `<section class="sect"><h3>Family invites <span class="lbl">${famInc.length}</span></h3><div class="plist">${famInc.map(f => `
+      <div class="prow">${avatar(f.photo, f.name)}<div class="pt"><div class="nm">${esc(f.name || f.handle)}</div><div class="hd">@${esc(f.handle)} wants to link logs</div>
+      <div class="ro">Every show either of you adds lands in both logs.</div></div>
+      <button class="btn red" data-famok="${esc(f.uid)}">Approve</button><button class="btn ghost" data-famno="${esc(f.uid)}">Not now</button></div>`).join("")}</div></section>`;
   html += `<section class="sect"><h3>The crew <span class="lbl">${fl.length}</span></h3>`;
   if (!fl.length) html += `<div class="empty"><h3>No crew yet</h3><div>Send a friend your username, or add theirs above. Once they accept, you can see each other's shows and the ones you hit together.</div></div>`;
   else html += `<div class="plist">${fl.map(f => { const tog = S.shows.filter(s => (f.shows||[]).some(o => sameShow(s,o))).length;
-      return `<button class="prow tap" data-friend="${esc(f.uid)}">${avatar(f.photo, f.name)}<div class="pt"><div class="nm">${esc(f.name || f.handle)}</div><div class="hd">@${esc(f.handle)}</div>
-        <div class="ro">${f.err ? esc(f.err) : !f.loaded ? "Loading…" : `${f.shows.filter(s=>!isUpcoming(s)).length} shows · ${tog} together`}</div></div><span class="ct">${tog || ""}</span></button>`; }).join("")}</div>`;
+      return `<button class="prow tap" data-friend="${esc(f.uid)}">${avatar(f.photo, f.name)}<div class="pt"><div class="nm">${esc(f.name || f.handle)}</div><div class="hd">@${esc(f.handle)}${f.family ? ` <span class="chip fam">Family</span>` : f.famState === "pending" ? ` <span class="chip unsure">Family pending</span>` : ""}</div>
+        <div class="ro">${f.err ? esc(f.err) : !f.loaded ? "Loading…" : f.family ? `${f.shows.filter(s=>!isUpcoming(s)).length} shows · logs linked` : `${f.shows.filter(s=>!isUpcoming(s)).length} shows · ${tog} together`}</div></div><span class="ct">${tog || ""}</span></button>`; }).join("")}</div>`;
   html += `</section>`;
   if (out.length) html += `<section class="sect"><h3>Sent</h3><div class="plist">${out.map(r => `
       <div class="prow">${avatar(r.toPhoto, r.toName)}<div class="pt"><div class="nm">${esc(r.toName || r.toHandle)}</div><div class="hd">@${esc(r.toHandle)} · waiting</div></div>
       <button class="btn ghost" data-decline="${esc(r.id)}">Cancel</button></div>`).join("")}</div></section>`;
+  html += `<section class="sect explain"><h3>How the crew works</h3>
+    <div class="ro"><b>Crew</b>: friends who can see each other's shows (read-only). Turn on <b>Crew</b> on Shows, Calendar or Stats to mix their shows into your view. It's off by default.</div>
+    <div class="ro"><b>Crew Family</b>: links two logs. Any show either of you adds or edits (date, bands, venue) shows up in both. Ratings, notes, photos and spend stay your own. Both people have to approve, and either can turn it off. Invite someone from their profile.</div></section>`;
   $("#view").innerHTML = html + `</div>`;
+}
+
+function familyBlock(f){
+  const h = esc(f.handle);
+  if (f.family) return `<section class="famcard on"><div><div class="ft">Crew Family</div><div class="ro">Your logs are linked with @${h}. New shows and changes to date, bands or venue sync both ways.</div></div>
+    <button class="btn warn" data-famleave="${esc(f.uid)}">${S.famConfirm ? "Tap again: unlink logs" : "Leave Crew Family"}</button></section>`;
+  if (f.famState === "pending" && f.famBy === ME.uid) return `<section class="famcard"><div><div class="ft">Family invite sent</div><div class="ro">Waiting for @${h} to approve.</div></div><button class="btn ghost" data-famno="${esc(f.uid)}">Cancel invite</button></section>`;
+  if (f.famState === "pending") return `<section class="famcard"><div><div class="ft">@${h} invited you to Crew Family</div><div class="ro">Approving links your logs: every show either of you adds lands in both. Your ratings, notes and photos stay yours.</div></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn red" data-famok="${esc(f.uid)}">Approve</button><button class="btn ghost" data-famno="${esc(f.uid)}">Not now</button></div></section>`;
+  return `<section class="famcard"><div><div class="ft">Crew Family</div><div class="ro">Link logs with @${h} so shows either of you adds land in both. They'll need to approve.</div></div><button class="btn" data-famprop="${esc(f.uid)}">Invite to Crew Family</button></section>`;
 }
 
 function renderFriend(f){
@@ -826,6 +939,7 @@ function renderFriend(f){
       <button data-crewview="together" aria-pressed="${v==="together"}">Together</button>
       <button data-crewview="bands" aria-pressed="${v==="bands"}">Shared bands</button></div>
     ${body}
+    ${familyBlock(f)}
     <div style="margin-top:18px"><button class="btn warn" data-unfriend="${esc(f.uid)}">${S.unfriendConfirm ? "Tap again to remove from crew" : "Remove from crew"}</button></div>
   </div>`;
 }
@@ -834,9 +948,13 @@ function crewClick(t){
   if (t.hasAttribute("data-copyhandle")) { const h = "@" + PROFILE.handle; (navigator.clipboard ? navigator.clipboard.writeText(h) : Promise.reject()).then(() => toast("Copied " + h), () => toast("Your username is " + h, 4000)); return true; }
   if (t.dataset.accept) { const r = REQ.in.find(x => x.id === t.dataset.accept); if (r) acceptRequest(r); return true; }
   if (t.dataset.decline) { removeRequest(t.dataset.decline); return true; }
-  if (t.dataset.friend) { S.crewSel = t.dataset.friend; S.crewView = "shows"; S.unfriendConfirm = false; renderCrew(); window.scrollTo(0, 0); return true; }
+  if (t.dataset.friend) { S.crewSel = t.dataset.friend; S.crewView = "shows"; S.unfriendConfirm = false; S.famConfirm = false; renderCrew(); window.scrollTo(0, 0); return true; }
   if (t.hasAttribute("data-crewback")) { S.crewSel = null; renderCrew(); return true; }
   if (t.dataset.crewview) { S.crewView = t.dataset.crewview; renderCrew(); return true; }
+  if (t.dataset.famprop) { setFamily(t.dataset.famprop, "pending"); return true; }
+  if (t.dataset.famok) { setFamily(t.dataset.famok, "active"); return true; }
+  if (t.dataset.famno) { setFamily(t.dataset.famno, "off"); return true; }
+  if (t.dataset.famleave) { if (!S.famConfirm) { S.famConfirm = true; renderCrew(); return true; } S.famConfirm = false; setFamily(t.dataset.famleave, "off"); return true; }
   if (t.dataset.unfriend) {
     if (!S.unfriendConfirm) { S.unfriendConfirm = true; renderCrew(); return true; }
     const uid = t.dataset.unfriend; S.unfriendConfirm = false; S.crewSel = null;
@@ -941,6 +1059,7 @@ function startApp(){
   UNSUBS.push(onSnapshot(myShows(), { includeMetadataChanges: false }, snap => {
     S.shows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     if (!snap.metadata.fromCache || S.shows.length) { S.loaded = true; S.slow = false; clearTimeout(timer); }
+    if (friendList().some(f => f.family)) scheduleFamilySync();
     if (S.open && !S.openFriend && S.open !== "__new" && draft && !busy) {
       const fresh = S.shows.find(x => x.id === S.open);
       if (fresh) { readForm(); for (const k of ["poster","photos","merch"]) draft[k] = fresh[k]; }

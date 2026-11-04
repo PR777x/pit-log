@@ -263,7 +263,7 @@ label.btn{display:inline-block}
 .plist{display:grid;gap:1px;background:var(--iron);border:1px solid var(--iron)}
 .prow{display:flex;align-items:center;gap:10px;background:var(--crypt);padding:10px 12px;border:0;text-align:left;width:100%;flex-wrap:wrap}
 .prow.tap:hover{background:var(--slab)}
-.prow .pt{flex:1;min-width:0}
+.prow .pt{flex:1 1 170px;min-width:0}
 .prow .ct{font-family:var(--f-display);font-size:30px;color:var(--blood-hi)}
 .chip.tog{border-color:var(--moss);color:var(--bone);background:rgba(127,154,90,.22)}
 .badge-n{display:inline-grid;place-items:center;min-width:18px;height:18px;border-radius:9px;background:var(--blood);color:var(--bone);font-size:11px;padding:0 5px;margin-left:2px}
@@ -274,3 +274,24 @@ label.btn{display:inline-block}
   nav.tabs .add::before{content:"+";font-size:32px;line-height:1;font-family:var(--f-label);font-weight:600}
   .wrap{padding-bottom:100px}
 }
+
+/* Crew toggle, overlay, family */
+.crewtog{display:inline-flex;align-items:center;gap:6px;background:var(--crypt);border:1px solid var(--iron);padding:6px 12px 6px 9px;font-family:var(--f-label);font-weight:700;letter-spacing:.1em;text-transform:uppercase;font-size:13px;color:var(--ash)}
+.crewtog svg{width:16px;height:16px}
+.crewtog[aria-pressed="true"]{border-color:var(--moss);color:var(--bone);background:rgba(127,154,90,.18)}
+.ticket.crewt{border-style:dashed;background:transparent;opacity:.88}
+.ticket.crewt .stub{background:transparent}
+.chip.crewtag{border-color:var(--moss);color:var(--moss)}
+.chip.fam{border-color:var(--rust);color:var(--bone);background:rgba(201,118,47,.22)}
+.cal .day.crewday{background:repeating-linear-gradient(135deg,var(--crypt) 0 6px,rgba(127,154,90,.12) 6px 12px)}
+.cal .day.crewday .hl{color:var(--ash)}
+.cal .cdots{display:flex;gap:2px;margin-top:auto}
+.cal .cdots i{font-style:normal;width:14px;height:14px;border-radius:50%;background:var(--moss);color:var(--void);font-family:var(--f-label);font-weight:700;font-size:9px;display:grid;place-items:center}
+.mlist .crewrow{background:transparent}
+.mlist .crewrow .dd{color:var(--moss)}
+.crewstat{border:1px solid var(--moss);background:rgba(127,154,90,.07);padding:14px}
+.famcard{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;border:1px solid var(--iron);background:var(--crypt);padding:12px 14px}
+.famcard > div:first-child{flex:1 1 220px;min-width:0}
+.famcard.on{border-color:var(--rust);background:rgba(201,118,47,.10)}
+.famcard .ft{font-family:var(--f-display);font-size:24px;line-height:1.05}
+.explain .ro{max-width:62ch}
