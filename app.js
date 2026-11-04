@@ -965,13 +965,21 @@ onAuthStateChanged(auth, async user => {
     return;
   }
   ME = user;
+  $("#signinMsg").textContent = "Signed in as " + (user.email || "you") + ". Opening your log…";
   try {
-    const p = await getDoc(doc(fdb, "users", user.uid));
+    const p = await Promise.race([
+      getDoc(doc(fdb, "users", user.uid)),
+      new Promise((_, rej) => setTimeout(() => rej({ code: "timeout" }), 12000))
+    ]);
     if (p.exists() && p.data().handle) { PROFILE = p.data(); startApp(); }
     else showSetup();
   } catch (e) {
     console.error(e); showSetup();
-    $("#setupMsg").textContent = e.code === "permission-denied" ? "The Firestore rules aren't published yet." : "Couldn't reach the database: " + (e.code || e.message);
+    const why = e.code === "permission-denied" ? "Firestore rules aren't published yet (Firestore → Rules → paste → Publish)."
+      : e.code === "timeout" || e.code === "unavailable" || e.code === "failed-precondition" ? "Can't reach the database. Check that Firestore has a database named (default): Databases & Storage → Firestore → Create database."
+      : e.code === "not-found" ? "No Firestore database yet: Databases & Storage → Firestore → Create database."
+      : "Database error: " + (e.code || e.message);
+    showOnly("gate"); $("#signinMsg").textContent = why; return;
   }
 });
 
