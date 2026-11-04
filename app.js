@@ -890,10 +890,11 @@ function showOnly(id){ for (const x of ["gate", "setup", "appRoot"]) $("#"+x).hi
 async function doSignIn(){
   const p = new GoogleAuthProvider(); p.setCustomParameters({ prompt: "select_account" });
   $("#signinMsg").textContent = "";
-  try { await signInWithPopup(auth, p); }
+  try { const r = await signInWithPopup(auth, p); $("#signinMsg").textContent = r && r.user ? "Signed in as " + (r.user.email || "you") + ", loading…" : "Popup returned no user."; }
   catch (e) {
     if (["auth/popup-blocked", "auth/operation-not-supported-in-this-environment", "auth/web-storage-unsupported"].includes(e.code)) { try { try { sessionStorage.setItem("pitlog.redirect", "1"); } catch(_){} await signInWithRedirect(auth, p); } catch (e2) { $("#signinMsg").textContent = "Sign-in failed: " + (e2.code || e2.message); } }
-    else if (e.code !== "auth/popup-closed-by-user" && e.code !== "auth/cancelled-popup-request") $("#signinMsg").textContent = e.code === "auth/unauthorized-domain" ? "This web address isn't authorized yet. Add it under Authentication → Settings → Authorized domains." : "Sign-in failed: " + (e.code || e.message);
+    else if (e.code === "auth/popup-closed-by-user" || e.code === "auth/cancelled-popup-request") $("#signinMsg").textContent = "Sign-in window closed before finishing (" + e.code + ").";
+    else $("#signinMsg").textContent = e.code === "auth/unauthorized-domain" ? "This web address isn't authorized yet. Add it under Authentication → Settings → Authorized domains." : "Sign-in failed: " + (e.code || e.message);
   }
 }
 
