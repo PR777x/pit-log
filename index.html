@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Pit Log</title>
+<meta name="description" content="Log the shows you've seen, with your crew.">
+<meta name="theme-color" content="#0e0b0c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Pit Log">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Pirata+One&family=Barlow+Condensed:wght@400;500;600;700&family=Barlow:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<section id="gate" class="gate">
+  <div class="gbox">
+    <h1>Pit <span>Log</span></h1>
+    <p class="gtag">Every show. Every pit. Every night you were there.</p>
+    <button class="btn red gbtn" id="signinBtn">Sign in with Google</button>
+    <p class="ro" id="signinMsg" role="alert"></p>
+    <p class="ro">Your log is private. Friends you accept can see your shows.</p>
+  </div>
+</section>
+
+<section id="setup" class="gate" hidden>
+  <form class="gbox" id="setupForm" autocomplete="off">
+    <h2 class="gh2">Claim your name</h2>
+    <p class="ro">Friends find you by username.</p>
+    <label class="field"><span class="lbl">Your name</span><input id="setupName" maxlength="40"></label>
+    <label class="field"><span class="lbl">Username</span><input id="setupHandle" maxlength="20" autocapitalize="none" spellcheck="false" placeholder="e.g. pat_reeves"></label>
+    <p class="ro" id="setupMsg" role="alert" style="color:var(--rust)"></p>
+    <button class="btn red gbtn" id="setupGo" type="submit">Enter the pit</button>
+  </form>
+</section>
+
+<div id="appRoot" hidden>
+<div class="wrap">
+  <header class="hero">
+    <div class="brand">
+      <h1>Pit <span>Log</span></h1>
+      <div class="brand-r">
+        <div class="year" id="yearLabel"></div>
+        <button class="acct" id="acct" aria-label="Account" hidden></button>
+      </div>
+    </div>
+    <div class="next" id="next" hidden></div>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button role="tab" id="tab-shows" aria-selected="true">Shows</button>
+    <button role="tab" id="tab-cal" aria-selected="false">Calendar</button>
+    <button role="tab" id="tab-vault" aria-selected="false">Vault</button>
+    <button role="tab" id="tab-stats" aria-selected="false">Stats</button>
+    <button role="tab" id="tab-crew" aria-selected="false">Crew</button>
+    <button class="add" id="addBtn" hidden>+ Add show</button>
+  </nav>
+
+  <main id="view"></main>
+</div>
+</div>
+
+<div id="sheetRoot"></div>
+<div id="lbRoot"></div>
+<div id="modalRoot"></div>
+<div id="toastRoot"></div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

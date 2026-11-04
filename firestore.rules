@@ -1,0 +1,43 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function reqPath(a, b) { return /databases/$(database)/documents/friendRequests/$(a + '_' + b); }
+    function accepted(a, b) { return exists(reqPath(a, b)) && get(reqPath(a, b)).data.status == 'accepted'; }
+    function friends(a, b) { return accepted(a, b) || accepted(b, a); }
+
+    match /users/{uid} {
+      allow read: if signedIn();
+      allow write: if signedIn() && request.auth.uid == uid;
+
+      match /shows/{showId} {
+        allow read: if signedIn() && (request.auth.uid == uid || friends(request.auth.uid, uid));
+        allow write: if signedIn() && request.auth.uid == uid;
+      }
+    }
+
+    match /handles/{handle} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.uid == request.auth.uid
+        && handle.matches('^[a-z0-9_]{3,20}$');
+      allow delete: if signedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    match /friendRequests/{id} {
+      allow get: if signedIn() && (resource == null
+        || request.auth.uid == resource.data.from || request.auth.uid == resource.data.to);
+      allow list: if signedIn()
+        && (request.auth.uid == resource.data.from || request.auth.uid == resource.data.to);
+      allow create: if signedIn()
+        && request.resource.data.from == request.auth.uid
+        && request.resource.data.to != request.auth.uid
+        && id == request.resource.data.from + '_' + request.resource.data.to
+        && request.resource.data.status == 'pending';
+      allow update: if signedIn() && request.auth.uid == resource.data.to
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'acceptedAt'])
+        && request.resource.data.status == 'accepted';
+      allow delete: if signedIn()
+        && (request.auth.uid == resource.data.from || request.auth.uid == resource.data.to);
+    }
+  }
+}
