@@ -441,7 +441,7 @@ function renderSheet(fresh){
       <div class="poster">
         ${d.poster ? `<button class="posterbox" data-lbi="0" aria-label="View poster"><img src="${src(pid(d.poster))}" alt="Tour poster"></button>`
           : `<div class="posterbox"><span class="lbl">No poster yet</span></div>`}
-        <div class="ro">${S.openFriend ? "" : assets && !isNew ? `<label class="btn">${d.poster?"Replace poster":"Upload poster"}<input class="vh" type="file" data-upkind="poster" accept="image/*" aria-label="Upload poster"></label>` : isNew ? "Save the show first, then add a poster." : ""}</div>
+        <div class="ro">${S.openFriend ? "" : assets && !isNew ? `<label class="btn">${d.poster?"Replace poster":"Upload poster"}<input class="vh" type="file" data-upkind="poster" accept="image/*,.heic,.heif" aria-label="Upload poster"></label>` : isNew ? "Save the show first, then add a poster." : ""}</div>
       </div>
     </div>
     ${media}
@@ -493,23 +493,59 @@ async function del(){
 }
 
 /* ---------- Uploads ---------- */
-async function compress(file){
-  if (!/^image\/(jpeg|png|webp)$/.test(file.type)) return file;
-  try {
-    const url = URL.createObjectURL(file);
-    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
-    const max = 1800, sc = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
-    const c = document.createElement("canvas"); c.width = Math.round(img.naturalWidth*sc); c.height = Math.round(img.naturalHeight*sc);
-    c.getContext("2d").drawImage(img, 0, 0, c.width, c.height); URL.revokeObjectURL(url);
-    const blob = await new Promise(r => c.toBlob(r, "image/jpeg", 0.86));
-    return blob && blob.size < file.size ? blob : file;
-  } catch(_) { return file; }
+/* ---------- Photo compressor ----------
+   Every photo is re-encoded before upload: longest side capped, quality stepped down until
+   it fits the target size, WebP where the browser can write it (else JPEG). Re-encoding also
+   strips hidden metadata such as GPS location. iPhone HEIC photos are converted first. */
+const COMPRESS = { maxSide: 2048, posterSide: 2400, target: 900 * 1024, minQ: 0.55 };
+const fmtBytes = n => n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB";
+const isHeic = f => /image\/hei[cf]/i.test(f.type) || /\.(heic|heif)$/i.test(f.name || "");
+let webpOK = null;
+async function canWebp(){
+  if (webpOK !== null) return webpOK;
+  try { const c = document.createElement("canvas"); c.width = c.height = 2; const b = await new Promise(r => c.toBlob(r, "image/webp", 0.8)); webpOK = !!b && b.type === "image/webp"; }
+  catch (_) { webpOK = false; }
+  return webpOK;
+}
+function loadScript(src){ return new Promise((res, rej) => { const s = document.createElement("script"); s.src = src; s.onload = res; s.onerror = rej; document.head.appendChild(s); }); }
+async function decodeImage(blob){
+  if (window.createImageBitmap) { try { return await createImageBitmap(blob, { imageOrientation: "from-image" }); } catch (_) {} }
+  const url = URL.createObjectURL(blob);
+  try { return await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; }); }
+  finally { setTimeout(() => URL.revokeObjectURL(url), 1000); }
+}
+async function heicToJpeg(file){
+  if (!window.heic2any) await loadScript("https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js");
+  const out = await window.heic2any({ blob: file, toType: "image/jpeg", quality: 0.9 });
+  return Array.isArray(out) ? out[0] : out;
+}
+async function compress(file, kind){
+  if (/image\/gif/.test(file.type)) return file; // keep animation
+  let src = file, img;
+  try { img = await decodeImage(src); }
+  catch (e) { if (!isHeic(file)) throw e; src = await heicToJpeg(file); img = await decodeImage(src); }
+  const w = img.width || img.naturalWidth, h = img.height || img.naturalHeight;
+  const side = kind === "poster" ? COMPRESS.posterSide : COMPRESS.maxSide;
+  const sc = Math.min(1, side / Math.max(w, h));
+  const c = document.createElement("canvas"); c.width = Math.max(1, Math.round(w * sc)); c.height = Math.max(1, Math.round(h * sc));
+  const ctx = c.getContext("2d"); ctx.imageSmoothingQuality = "high"; ctx.drawImage(img, 0, 0, c.width, c.height);
+  if (img.close) img.close();
+  const type = (await canWebp()) ? "image/webp" : "image/jpeg";
+  let q = 0.86, blob = null;
+  for (;;) {
+    blob = await new Promise(r => c.toBlob(r, type, q));
+    if (!blob || blob.size <= COMPRESS.target || q <= COMPRESS.minQ) break;
+    q = Math.max(COMPRESS.minQ, q - 0.08);
+  }
+  if (!blob) return file;
+  // Only keep the original if it's already a small, metadata-free-safe format and smaller
+  return blob.size < file.size || isHeic(file) || file.size > COMPRESS.target ? blob : (file.type === "image/png" || file.type === "image/webp" || file.type === "image/jpeg" ? blob : file);
 }
 
 function isVideo(f){ return /^video\//.test(f.type) || /\.(mp4|m4v|mov|webm)$/i.test(f.name||""); }
 function videoType(f){ return (f.type === "video/webm" || /\.webm$/i.test(f.name||"")) ? "video/webm" : "video/mp4"; }
 
-const ACCEPT_MEDIA = "image/*";
+const ACCEPT_MEDIA = "image/*,.heic,.heif";
 function handleFiles(kind, files){
   if (!draft || !assets) return;
   const vids = files.filter(isVideo).length;
@@ -541,12 +577,13 @@ function tagModal(files, lu, onGo){
 
 async function doUpload(kind, files, bands){
   const showId = draft && draft.id; if (!showId || showId === "__new") return;
-  const out = []; let skipped = 0, n = 0;
+  const out = []; let skipped = 0, n = 0, before = 0, after = 0;
   for (const f of files) {
     n++;
-    toast(`Uploading ${n} of ${files.length}…`, 60000);
+    toast(`Compressing & uploading ${n} of ${files.length}…`, 60000);
     try {
-      const b = await compress(f);
+      const b = await compress(f, kind);
+      before += f.size; after += b.size;
       if (b.size > MAX_BYTES) { skipped++; continue; }
       const r = await putImage(b, showId, kind);
       out.push({ url: r.url, path: r.path, type: "image", bands });
@@ -563,7 +600,8 @@ async function doUpload(kind, files, bands){
   const patch = kind === "poster" ? { poster: { url: out[0].url, path: out[0].path } } : { [kind]: [...items(s,kind), ...out] };
   try {
     await updateDoc(myShow(s.id), patch); if (draft && draft.id === s.id) { Object.assign(draft, patch); renderSheet(); }
-    toast(skipped ? `Added ${out.length}. Skipped ${skipped} that couldn't upload.` : `Added ${out.length}`, skipped ? 5000 : 2400);
+    const saved = before > after ? ` · ${fmtBytes(before)} → ${fmtBytes(after)}` : "";
+    toast(skipped ? `Added ${out.length}${saved}. Skipped ${skipped} that couldn't upload.` : `Added ${out.length}${saved}`, skipped ? 5000 : 3500);
     if (kind === "poster" && old && old.path) await removeFile(old.path);
   } catch(e){ handleWriteErr(e); }
 }
@@ -968,7 +1006,7 @@ function drawEdit(){
     <h3>Edit profile</h3>
     <div class="avedit">${avatar(e.photoURL, e.name, "xl")}
       <div class="avbtns">
-        <label class="btn">${e.busy ? "Uploading…" : "Change photo"}<input class="vh" type="file" id="avatarFile" accept="image/*" ${e.busy ? "disabled" : ""}></label>
+        <label class="btn">${e.busy ? "Uploading…" : "Change photo"}<input class="vh" type="file" id="avatarFile" accept="image/*,.heic,.heif" ${e.busy ? "disabled" : ""}></label>
         ${g && e.photoURL !== g ? `<button class="btn ghost" data-avgoogle>Use Google photo</button>` : ""}
         ${e.photoURL ? `<button class="btn ghost" data-avnone>Use my initial</button>` : ""}
       </div></div>
@@ -987,14 +1025,14 @@ function drawEdit(){
 }
 function dropPendingAvatar(){ if (PEDIT.photoPath && PEDIT.photoPath !== PROFILE.photoPath) removeFile(PEDIT.photoPath); }
 async function squareAvatar(file){
-  const url = URL.createObjectURL(file);
-  try {
-    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
-    const side = Math.min(img.naturalWidth, img.naturalHeight), out = Math.min(400, side);
-    const c = document.createElement("canvas"); c.width = c.height = out;
-    c.getContext("2d").drawImage(img, (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, 0, 0, out, out);
-    return await new Promise(r => c.toBlob(r, "image/jpeg", 0.88));
-  } finally { URL.revokeObjectURL(url); }
+  let img;
+  try { img = await decodeImage(file); } catch (e) { if (!isHeic(file)) throw e; img = await decodeImage(await heicToJpeg(file)); }
+  const W = img.width || img.naturalWidth, H = img.height || img.naturalHeight;
+  const side = Math.min(W, H), out = Math.min(400, side);
+  const c = document.createElement("canvas"); c.width = c.height = out;
+  const ctx = c.getContext("2d"); ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(img, (W - side) / 2, (H - side) / 2, side, side, 0, 0, out, out);
+  return await new Promise(r => c.toBlob(r, "image/jpeg", 0.86));
 }
 async function uploadAvatar(file){
   if (!PEDIT) return;
@@ -1096,7 +1134,7 @@ async function importFile(file){
   try { data = JSON.parse(await file.text()); } catch (_) { toast("That file isn't a Pit Log export", 4000); return; }
   const list = Array.isArray(data && data.shows) ? data.shows : null;
   if (!list) { toast("That file isn't a Pit Log export", 4000); return; }
-  const fromData = async (m, showId, kind) => { if (!m || !m.data) return null; const b = await (await fetch(m.data)).blob(); const r = await putImage(b, showId, kind); return { url: r.url, path: r.path, type: "image", bands: m.bands || [] }; };
+  const fromData = async (m, showId, kind) => { if (!m || !m.data) return null; const raw = await (await fetch(m.data)).blob(); const b = await compress(raw, kind); const r = await putImage(b, showId, kind); return { url: r.url, path: r.path, type: "image", bands: m.bands || [] }; };
   let n = 0, pics = 0;
   for (const raw of list) {
     n++; toast(`Importing ${n} of ${list.length}…`, 60000);
