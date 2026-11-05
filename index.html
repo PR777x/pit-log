@@ -16,7 +16,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Pirata+One&family=Barlow+Condensed:wght@400;500;600;700&family=Barlow:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="styles.css?v=7">
+<link rel="stylesheet" href="styles.css?v=8">
 </head>
 <body>
 
@@ -25,9 +25,23 @@
     <h1>Pit <span>Log</span></h1>
     <p class="gtag">Every show. Every pit. Every night you were there.</p>
     <button class="btn red gbtn" id="signinBtn">Sign in with Google</button>
+    <div class="or"><span>or use email</span></div>
+    <div class="seg authseg" role="group" aria-label="Email sign-in mode">
+      <button type="button" data-authmode="in" aria-pressed="true">Sign in</button>
+      <button type="button" data-authmode="up" aria-pressed="false">Create account</button>
+    </div>
+    <form id="emailForm" class="authform" autocomplete="on" novalidate>
+      <label class="field up-only" hidden><span class="lbl">Your name</span><input id="auName" maxlength="40" autocomplete="name"></label>
+      <label class="field up-only" hidden><span class="lbl">Username</span><input id="auHandle" maxlength="20" autocapitalize="none" spellcheck="false" placeholder="e.g. pat_reeves" autocomplete="username"></label>
+      <label class="field"><span class="lbl">Email</span><input id="auEmail" type="email" autocomplete="email" autocapitalize="none" spellcheck="false" required></label>
+      <label class="field"><span class="lbl">Password</span><input id="auPass" type="password" autocomplete="current-password" minlength="6" required></label>
+      <label class="field up-only" hidden><span class="lbl">Confirm password</span><input id="auPass2" type="password" autocomplete="new-password" minlength="6"></label>
+      <button class="btn gbtn" id="emailGo" type="submit">Sign in</button>
+      <button class="linkbtn" type="button" id="forgotBtn">Forgot password?</button>
+    </form>
     <p class="ro" id="signinMsg" role="alert"></p>
     <p class="ro">Your log is private. Friends you accept can see your shows.</p>
-    <p class="ro" style="opacity:.5">build 7</p>
+    <p class="ro" style="opacity:.5">build 8</p>
     <p class="ro" id="inapp" hidden>Opened inside another app? Use ⋮ → <b>Open in Chrome</b> (or Safari on iPhone) for sign-in to work.</p>
   </div>
 </section>
@@ -74,6 +88,6 @@
 <div id="modalRoot"></div>
 <div id="toastRoot"></div>
 
-<script type="module" src="app.js?v=7"></script>
+<script type="module" src="app.js?v=8"></script>
 </body>
 </html>

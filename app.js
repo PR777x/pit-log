@@ -1,6 +1,6 @@
 // Pit Log — Firebase edition
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
@@ -1128,8 +1128,9 @@ async function doSignIn(){
 function showSetup(){
   showOnly("setup");
   const base = (ME.email || "").split("@")[0].toLowerCase().replace(/[^a-z0-9_]/g, "").slice(0, 20);
-  $("#setupName").value = ME.displayName || "";
-  $("#setupHandle").value = base.length >= 3 ? base : "";
+  $("#setupName").value = (PENDING && PENDING.name) || ME.displayName || "";
+  $("#setupHandle").value = (PENDING && PENDING.handle) || (base.length >= 3 ? base : "");
+  if (PENDING) { PENDING = null; saveProfile(); }
 }
 async function saveProfile(){
   const name = $("#setupName").value.trim(), h = $("#setupHandle").value.trim().replace(/^@/, "").toLowerCase();
@@ -1183,6 +1184,61 @@ function startApp(){
 function updateCrewBadge(){ const n = REQ.in.filter(r => r.status === "pending").length; $("#tab-crew").innerHTML = "Crew" + (n ? ` <span class="badge-n">${n}</span>` : ""); $("#tab-crew").setAttribute("aria-selected", S.tab === "crew"); }
 
 $("#signinBtn").addEventListener("click", doSignIn);
+
+/* ---------- Email + password ---------- */
+let AUTHMODE = "in", PENDING = null;
+function setAuthMode(m){
+  AUTHMODE = m;
+  document.querySelectorAll("[data-authmode]").forEach(b => b.setAttribute("aria-pressed", b.dataset.authmode === m));
+  document.querySelectorAll("#emailForm .up-only").forEach(el => el.hidden = m !== "up");
+  $("#emailGo").textContent = m === "up" ? "Create account" : "Sign in";
+  $("#forgotBtn").hidden = m === "up";
+  $("#auPass").autocomplete = m === "up" ? "new-password" : "current-password";
+  $("#signinMsg").textContent = "";
+}
+document.querySelectorAll("[data-authmode]").forEach(b => b.addEventListener("click", () => setAuthMode(b.dataset.authmode)));
+const AUTH_MSG = {
+  "auth/invalid-email": "That email address doesn't look right.",
+  "auth/missing-password": "Enter your password.",
+  "auth/weak-password": "Use at least 6 characters for your password.",
+  "auth/email-already-in-use": "There's already an account with that email. Sign in instead, or use the Google button if you signed up with Google.",
+  "auth/invalid-credential": "Email or password is wrong. If you signed up with Google, use the Google button.",
+  "auth/wrong-password": "Email or password is wrong.",
+  "auth/user-not-found": "No account with that email yet. Tap Create account.",
+  "auth/too-many-requests": "Too many tries. Wait a minute, or reset your password.",
+  "auth/operation-not-allowed": "Email sign-in isn't switched on yet (Firebase → Authentication → Sign-in method → Email/Password).",
+  "auth/network-request-failed": "No connection. Check your signal and try again."
+};
+const authErr = e => AUTH_MSG[e && e.code] || ("Sign-in failed: " + ((e && (e.code || e.message)) || "unknown error"));
+$("#emailForm").addEventListener("submit", async ev => {
+  ev.preventDefault();
+  const msg = $("#signinMsg"), btn = $("#emailGo");
+  const email = $("#auEmail").value.trim(), pass = $("#auPass").value;
+  msg.textContent = "";
+  if (!email || !pass) { msg.textContent = "Enter your email and password."; return; }
+  if (AUTHMODE === "up") {
+    const name = $("#auName").value.trim(), h = $("#auHandle").value.trim().replace(/^@/, "").toLowerCase();
+    if (!name) { msg.textContent = "Add your name."; return; }
+    if (!HANDLE_RE.test(h)) { msg.textContent = "Usernames are 3–20 lowercase letters, numbers or _."; return; }
+    if (pass.length < 6) { msg.textContent = "Use at least 6 characters for your password."; return; }
+    if (pass !== $("#auPass2").value) { msg.textContent = "Passwords don't match."; return; }
+    btn.disabled = true; PENDING = { name, handle: h };
+    try { const cred = await createUserWithEmailAndPassword(auth, email, pass); try { await updateProfile(cred.user, { displayName: name }); } catch (_) {} }
+    catch (e) { PENDING = null; msg.textContent = authErr(e); }
+    btn.disabled = false;
+  } else {
+    btn.disabled = true;
+    try { await signInWithEmailAndPassword(auth, email, pass); }
+    catch (e) { msg.textContent = authErr(e); }
+    btn.disabled = false;
+  }
+});
+$("#forgotBtn").addEventListener("click", async () => {
+  const email = $("#auEmail").value.trim(), msg = $("#signinMsg");
+  if (!email) { msg.textContent = "Type your email above, then tap Forgot password again."; return; }
+  try { await sendPasswordResetEmail(auth, email); msg.textContent = "If that email has an account, a reset link is on its way. Check spam too."; }
+  catch (e) { msg.textContent = authErr(e); }
+});
 if (/; wv\)|FBAN|FBAV|Instagram|Line\/|GSA\//.test(navigator.userAgent) || (document.referrer && !document.referrer.includes(location.host) && window.matchMedia("(display-mode: browser)").matches && /Android/.test(navigator.userAgent) && !window.chrome)) $("#inapp").hidden = false;
 getRedirectResult(auth).catch(e => { if ($("#signinMsg")) $("#signinMsg").textContent = "Sign-in failed: " + (e.code || e.message); });
 onAuthStateChanged(auth, async user => {

@@ -312,3 +312,12 @@ label.btn{display:inline-block}
 .avedit{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
 .avbtns{display:flex;flex-direction:column;gap:6px}
 .mbox textarea{min-height:70px}
+
+/* Email sign-in */
+.or{display:flex;align-items:center;gap:10px;font-family:var(--f-label);font-size:12px;letter-spacing:.18em;text-transform:uppercase;color:var(--dim)}
+.or::before,.or::after{content:"";flex:1;height:1px;background:var(--iron)}
+.authseg{justify-self:center}
+.authform{display:grid;gap:10px;text-align:left}
+.authform .gbtn{border-color:var(--bone)}
+.linkbtn{background:none;border:0;color:var(--ash);font-size:13px;text-decoration:underline;justify-self:center;padding:6px}
+.linkbtn:hover{color:var(--bone)}
