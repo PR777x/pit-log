@@ -1141,7 +1141,7 @@ function accountMenu(){
   root.innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-label="Account"><div class="mbox">
     <div class="me-card" style="border:0;padding:0">${avatar(PROFILE.photoURL, PROFILE.name, "lg")}<div style="min-width:0"><div class="nm">${esc(PROFILE.name||"")}</div><div class="hd">@${esc(PROFILE.handle)}</div><div class="ro">${esc(ME.email||"")}</div></div></div>
     <button class="btn red" data-myprofile style="text-align:center">View my profile</button>
-    <div class="ro">Moving from the old Pit Log? Import the export file once and your shows and photos load into this account.</div>
+    <div class="ro">Import a Pit Log export file, or a ticket-cost file. A cost file only fills in ticket totals on shows you've already logged.</div>
     <label class="btn" style="text-align:center">Import Pit Log file<input class="vh" type="file" id="importFile" accept=".json,application/json"></label>
     <div class="mbtns"><button class="btn warn" data-signout>Sign out</button><button class="btn ghost" data-mclose>Close</button></div>
   </div></div>`;
@@ -1154,6 +1154,7 @@ async function importFile(file){
   $("#modalRoot").innerHTML = "";
   let data;
   try { data = JSON.parse(await file.text()); } catch (_) { toast("That file isn't a Pit Log export", 4000); return; }
+  if (data && data.kind === "pitlog-costs" && Array.isArray(data.costs)) return importCosts(data.costs);
   const list = Array.isArray(data && data.shows) ? data.shows : null;
   if (!list) { toast("That file isn't a Pit Log export", 4000); return; }
   const fromData = async (m, showId, kind) => { if (!m || !m.data) return null; const raw = await (await fetch(m.data)).blob(); const b = await compress(raw, kind); const r = await putImage(b, showId, kind); return { url: r.url, path: r.path, type: "image", bands: m.bands || [] }; };
@@ -1169,6 +1170,25 @@ async function importFile(file){
     } catch (e) { console.error(e); toast(`Import stopped at show ${n}: ${e.code || "error"}`, 6000); return; }
   }
   toast(`Imported ${list.length} shows and ${pics} photos`, 4000);
+}
+
+// Cost-only import: fills ticket fields on shows already in the log. Never touches photos, notes or
+// anything else, and skips a show that already has an order total so manual entries win.
+async function importCosts(costs){
+  const low = x => String(x || "").trim().toLowerCase();
+  let added = 0, kept = 0; const missed = [];
+  for (const c of costs) {
+    const same = S.shows.filter(s => s.date === c.date);
+    const hit = same.find(s => lineup(s).some(b => low(b) === low(c.headliner))) || same.find(s => low(s.venue) === low(c.venue)) || (same.length === 1 ? same[0] : null);
+    if (!hit) { missed.push(c.date + " " + c.headliner); continue; }
+    if (hit.ticketTotal != null && hit.ticketTotal !== "") { kept++; continue; }
+    const qty = hit.ticketQty != null ? Number(hit.ticketQty) : (c.qty ?? null);
+    const upd = { ticketTotal: Number(c.total), ticketQty: qty, ticket: perTicket({ ticketQty: qty, ticketTotal: Number(c.total) }) };
+    try { await updateDoc(myShow(hit.id), upd); added++; }
+    catch (e) { console.error(e); toast("Cost import stopped: " + (e.code || "error"), 6000); return; }
+  }
+  if (missed.length) console.warn("Pit Log cost import, no match:", missed);
+  toast(`Added costs to ${added} show${added===1?"":"s"}` + (kept ? `, kept ${kept} you'd already filled in` : "") + (missed.length ? `, ${missed.length} not matched` : ""), 6000);
 }
 
 /* ---------- Auth + profile ---------- */
