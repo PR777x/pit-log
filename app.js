@@ -260,12 +260,25 @@ function renderVault(){
 /* ---------- Stats tab ---------- */
 function counts(arr){ const m = new Map(); for (const x of arr){ const k = String(x||"").trim(); if(!k) continue; const key = k.toLowerCase(); const cur = m.get(key) || {name:k,n:0}; cur.n++; m.set(key,cur);} return [...m.values()].sort((a,b)=>b.n-a.n||a.name.localeCompare(b.name)); }
 const money = n => "$" + Math.round(n).toLocaleString();
+const money2 = n => "$" + Number(n).toFixed(2);
+// Per-ticket price: order total / tickets bought; falls back to an older single "ticket" value.
+function perTicket(s){
+  const q = Number(s.ticketQty), t = Number(s.ticketTotal);
+  if (t > 0 && q > 0) return t / q;
+  if (s.ticketTotal == null && Number(s.ticket) > 0) return Number(s.ticket);
+  return null;
+}
+// What the whole order cost (everyone's tickets plus fees).
+function orderSpend(s){
+  if (Number(s.ticketTotal) > 0) return Number(s.ticketTotal);
+  return Number(s.ticket) > 0 ? Number(s.ticket) * (Number(s.ticketQty) || 1) : 0;
+}
 
 function renderStats(){
   const all = sorted().filter(inYear), done = all.filter(s=>!isUpcoming(s)), up = all.filter(isUpcoming);
   if (!S.loaded || !all.length) { $("#view").innerHTML = `<div class="filters">${yearSeg()}${crewToggle()}</div><div class="empty" style="margin-top:16px"><h3>No stats yet</h3><div>Stats build up as shows are logged.</div></div>`; return; }
   const bands = counts(done.flatMap(lineup)), venues = counts(done.map(s=>s.venue||"")), people = counts(done.flatMap(crew));
-  const miles = done.reduce((a,s)=>a+(Number(s.miles)||0),0), tix = done.reduce((a,s)=>a+(Number(s.ticket)||0),0), merch = done.reduce((a,s)=>a+(Number(s.merchSpend)||0),0);
+  const miles = done.reduce((a,s)=>a+(Number(s.miles)||0),0), tix = done.reduce((a,s)=>a+orderSpend(s),0), share = done.reduce((a,s)=>a+(perTicket(s)||0),0), withQty = done.filter(s=>Number(s.ticketQty)>0&&Number(s.ticketTotal)>0), qtySum = withQty.reduce((a,s)=>a+Number(s.ticketQty),0), avgTix = qtySum ? withQty.reduce((a,s)=>a+Number(s.ticketTotal),0)/qtySum : 0, merch = done.reduce((a,s)=>a+(Number(s.merchSpend)||0),0);
   const rated = done.filter(s=>Number(s.rating)>0);
   const avg = rated.length ? (rated.reduce((a,s)=>a+Number(s.rating),0)/rated.length).toFixed(1) : "–";
   const media = allMedia().filter(e=>inYear(e.show)), vids = media.filter(e=>e.it.type==="video").length;
@@ -296,7 +309,9 @@ function renderStats(){
       <div class="tile"><div class="lbl">Venues</div><div class="v num">${venues.filter(v=>v.name).length}</div></div>
       <div class="tile"><div class="lbl">Est. miles driven</div><div class="v num">${Math.round(miles).toLocaleString()}</div></div>
       <div class="tile"><div class="lbl">Avg rating</div><div class="v num">${avg}<small>/5</small></div></div>
-      <div class="tile"><div class="lbl">Tickets</div><div class="v num">${tix?money(tix):"–"}</div></div>
+      <div class="tile"><div class="lbl">Ticket spend</div><div class="v num">${tix?money(tix):"–"}</div></div>
+      <div class="tile"><div class="lbl">Your seats</div><div class="v num">${share?money(share):"–"}</div></div>
+      <div class="tile"><div class="lbl">Avg per ticket</div><div class="v num">${avgTix?money2(avgTix):"–"}</div></div>
       <div class="tile"><div class="lbl">Merch haul</div><div class="v num">${merch?money(merch):"–"}</div></div>
       <div class="tile"><div class="lbl">Vault items</div><div class="v num">${media.length}${vids?`<small> · ${vids} vid</small>`:""}</div></div>
     </div>
@@ -431,7 +446,9 @@ function renderSheet(fresh){
       <label class="field"><span class="lbl">Setlist notes</span><textarea id="f-setlist" placeholder="Opened with… closed with…" ${ro?"disabled":""}>${esc(d.setlist||"")}</textarea></label>
       <label class="field"><span class="lbl">Notes</span><textarea id="f-notes" ${ro?"disabled":""}>${esc(d.notes||"")}</textarea></label>
       <div class="grid2">
-        <label class="field"><span class="lbl">Ticket $</span><input id="f-ticket" type="number" min="0" step="1" inputmode="decimal" value="${esc(d.ticket??"")}" ${ro?"disabled":""}></label>
+        <label class="field"><span class="lbl">Tickets bought</span><input id="f-ticketQty" type="number" min="0" step="1" inputmode="numeric" value="${esc(d.ticketQty??"")}" ${ro?"disabled":""}></label>
+        <label class="field"><span class="lbl">Order total $ (with fees)</span><input id="f-ticketTotal" type="number" min="0" step="0.01" inputmode="decimal" value="${esc(d.ticketTotal??(d.ticket!=null&&d.ticketQty==null?d.ticket:""))}" ${ro?"disabled":""}></label>
+        <div class="field"><span class="lbl">Per ticket</span><div class="ro num" id="f-perTicket" style="padding:10px 0;font-size:18px">${perTicket(d)!=null?money2(perTicket(d)):"–"}</div></div>
         <label class="field"><span class="lbl">Merch $</span><input id="f-merchSpend" type="number" min="0" step="1" inputmode="decimal" value="${esc(d.merchSpend??"")}" ${ro?"disabled":""}></label>
         <label class="field"><span class="lbl">Round-trip miles (est.)</span><input id="f-miles" type="number" min="0" step="1" value="${esc(d.miles??"")}" ${ro?"disabled":""}></label>
       </div>
@@ -460,8 +477,9 @@ function readForm(){
     date: v("f-date"), tour: v("f-tour").trim(), lineup: list(v("f-lineup")), venue: v("f-venue").trim(), city: v("f-city").trim(),
     unsure: !!$("#f-unsure")?.checked, wentWith: list(v("f-crew")), spot: v("f-spot"), best: v("f-best"),
     highlight: v("f-highlight").trim(), setlist: v("f-setlist"), notes: v("f-notes"),
-    ticket: n(v("f-ticket")), merchSpend: n(v("f-merchSpend")), miles: n(v("f-miles")),
+    ticketQty: n(v("f-ticketQty")), ticketTotal: n(v("f-ticketTotal")), merchSpend: n(v("f-merchSpend")), miles: n(v("f-miles")),
   });
+  draft.ticket = perTicket({ ticketQty: draft.ticketQty, ticketTotal: draft.ticketTotal });
 }
 
 async function save(){
@@ -707,6 +725,10 @@ function keepFocus(id, fn){ const el = $("#"+id); const pos = el.selectionStart;
 document.addEventListener("input", e => {
   if (e.target.id === "q") { S.q = e.target.value; keepFocus("q", renderShows); }
   else if (e.target.id === "vq") { S.vault.q = e.target.value; keepFocus("vq", renderVault); }
+  else if (e.target.id === "f-ticketQty" || e.target.id === "f-ticketTotal") {
+    const q = Number($("#f-ticketQty")?.value), t = Number($("#f-ticketTotal")?.value), out = $("#f-perTicket");
+    if (out) out.textContent = q > 0 && t > 0 ? money2(t / q) : "–";
+  }
 });
 document.addEventListener("change", e => {
   if (e.target.id === "sort") { S.sort = e.target.value; try { localStorage.setItem("pitlog.sort", S.sort); } catch(_){} renderShows(); return; }
@@ -823,7 +845,7 @@ async function familySync(){
         const lid = s.linkId || (p && p.linkId) || ("L" + rid());
         if (p) { if (p.linkId !== lid) await updateDoc(doc(fdb, "users", f.uid, "shows", p.id), { linkId: lid }); }
         else {
-          const copy = { linkId: lid, addedBy: ME.uid, wentWith: [], rating: 0, pit: 0, spot: "", best: "", highlight: "", setlist: "", notes: "", ticket: null, merchSpend: null, miles: s.miles ?? null, poster: null, photos: [], merch: [] };
+          const copy = { linkId: lid, addedBy: ME.uid, wentWith: [], rating: 0, pit: 0, spot: "", best: "", highlight: "", setlist: "", notes: "", ticket: null, ticketQty: null, ticketTotal: null, merchSpend: null, miles: s.miles ?? null, poster: null, photos: [], merch: [] };
           for (const k of SHARED) copy[k] = s[k] ?? (k === "lineup" ? [] : k === "unsure" ? false : "");
           await setDoc(doc(fdb, "users", f.uid, "shows", lid), copy); made++;
         }
