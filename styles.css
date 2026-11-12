@@ -333,3 +333,14 @@ label.btn{display:inline-block}
 .vrow{display:flex;margin-bottom:10px}
 .vswitch{flex:1}.vswitch button{flex:1;padding:8px 12px}
 a.btn{text-decoration:none;display:inline-flex;align-items:center;justify-content:center}
+/* settings */
+.settings .setgrp{border-top:1px solid var(--iron);padding:6px 0}
+.settings summary{cursor:pointer;list-style:none;display:flex;align-items:center;justify-content:space-between}
+.settings summary::-webkit-details-marker{display:none}
+.settings summary::after{content:"+";font-family:var(--f-label);font-size:20px;color:var(--ash)}
+.settings details[open] summary::after{content:"–"}
+.settings summary h3{margin:6px 0}
+.setrow{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--crypt)}
+.setrow .st{display:grid;gap:2px;min-width:0}.setrow .st b{color:var(--bone);font-weight:600}
+.setrow select{flex:none;max-width:44%}
+.setrow select{background:var(--void);color:var(--bone);border:1px solid var(--iron);padding:8px 10px;font-family:var(--f-label);font-weight:600;letter-spacing:.04em;min-height:40px}

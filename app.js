@@ -281,8 +281,34 @@ function renderVault(){
 
 /* ---------- Stats tab ---------- */
 function counts(arr){ const m = new Map(); for (const x of arr){ const k = String(x||"").trim(); if(!k) continue; const key = k.toLowerCase(); const cur = m.get(key) || {name:k,n:0}; cur.n++; m.set(key,cur);} return [...m.values()].sort((a,b)=>b.n-a.n||a.name.localeCompare(b.name)); }
-const money = n => "$" + Math.round(n).toLocaleString();
-const money2 = n => "$" + Number(n).toFixed(2);
+/* ---------- Settings (stored on users/{uid}.settings so they follow the account) ---------- */
+const LEVELS = [["public", "Public"], ["crew", "Crew only"], ["family", "Family only"], ["private", "Private"]];
+const LV = { private: 0, family: 1, crew: 2, public: 3 };
+const PRIVACY = [
+  ["ticketCost", "Ticket cost", "Order totals and price per ticket."],
+  ["merchCost", "Merch cost", "What you spent on merch."],
+  ["photos", "Photos", "Show photos and merch photos, including in the Vault."],
+  ["poster", "Tour posters", "Linked Crew Family shows always share their poster."],
+  ["ratings", "Ratings", "Skulls, pit intensity and best band of the night."],
+  ["notes", "Notes and setlists", "Notes, highlight moment and setlist notes."],
+  ["wentWith", "Who you went with", "Names under Went with. Anyone you tag still sees their own tag."],
+  ["spot", "Where you stood and miles", "Your spot in the crowd and miles driven."],
+  ["upcoming", "Upcoming shows", "Shows that haven't happened yet, so people can't see where you'll be."],
+  ["stats", "Profile stats", "Show, band and venue counts, and your spot in Crew standings."],
+  ["tagMe", "Who can tag me", "Who can tag you on their shows. People you block from tagging won't see you in their tag list."],
+];
+const SETTING_DEFAULTS = { ...Object.fromEntries(PRIVACY.map(([k]) => [k, "public"])),
+  defaultView: "list", defaultSort: "newest", crewDefault: "off", weekStart: "sun", currency: "$", distance: "mi" };
+const settingsOf = prof => ({ ...SETTING_DEFAULTS, ...((prof && prof.settings) || {}) });
+const MY = () => settingsOf(PROFILE);
+// Family sees what's "family" and up; the rest of the crew sees "crew" and up.
+const canSee = (set, key, f) => LV[set[key] || "public"] >= (f && f.family ? LV.family : LV.crew);
+const CUR = () => MY().currency;
+const KM = () => MY().distance === "km";
+const dist = mi => KM() ? mi * 1.609344 : mi;
+const distLbl = () => KM() ? "km" : "miles";
+const money = n => CUR() + Math.round(n).toLocaleString();
+const money2 = n => CUR() + Number(n).toFixed(2);
 // Per-ticket price: order total / tickets bought; falls back to an older single "ticket" value.
 function perTicket(s){
   const q = Number(s.ticketQty), t = Number(s.ticketTotal);
@@ -329,7 +355,7 @@ function renderStats(){
       <div class="tile"><div class="lbl">Still to come</div><div class="v num">${up.length}</div></div>
       <div class="tile"><div class="lbl">Bands seen</div><div class="v num">${bands.length}</div></div>
       <div class="tile"><div class="lbl">Venues</div><div class="v num">${venues.filter(v=>v.name).length}</div></div>
-      <div class="tile"><div class="lbl">Est. miles driven</div><div class="v num">${Math.round(miles).toLocaleString()}</div></div>
+      <div class="tile"><div class="lbl">Est. ${distLbl()} driven</div><div class="v num">${Math.round(dist(miles)).toLocaleString()}</div></div>
       <div class="tile"><div class="lbl">Avg rating</div><div class="v num">${avg}<small>/5</small></div></div>
       <div class="tile"><div class="lbl">Ticket spend</div><div class="v num">${tix?money(tix):"–"}</div></div>
       <div class="tile"><div class="lbl">Your seats</div><div class="v num">${share?money(share):"–"}</div></div>
@@ -359,7 +385,7 @@ function renderCal(){
   const key = (dd) => y+"-"+String(m+1).padStart(2,"0")+"-"+String(dd).padStart(2,"0");
   const all = [...sorted(), ...(S.crewOn ? crewOverlay() : [])];
   const byDate = {}; for (const s of all) (byDate[s.date] = byDate[s.date] || []).push(s);
-  const first = new Date(y, m, 1).getDay(), dim = new Date(y, m+1, 0).getDate();
+  const mon = MY().weekStart === "mon", first = (new Date(y, m, 1).getDay() + (mon ? 6 : 0)) % 7, dim = new Date(y, m+1, 0).getDate();
   const cells = [];
   for (let i = 0; i < first; i++) cells.push(`<div class="day out" aria-hidden="true"></div>`);
   for (let d = 1; d <= dim; d++) {
@@ -384,7 +410,7 @@ function renderCal(){
     <div class="calnav"><button class="arw" data-calnav="-1" aria-label="Previous month">‹</button>
       <div class="mt-title">${MONTHS_LONG[m]} <span style="color:var(--ash)">${y}</span></div>
       <button class="arw" data-calnav="1" aria-label="Next month">›</button></div>
-    <div class="cal">${DAYS.map(d=>`<div class="dow">${d.slice(0,2)}</div>`).join("")}${cells.join("")}</div>
+    <div class="cal">${(mon ? [...DAYS.slice(1), DAYS[0]] : DAYS).map(d=>`<div class="dow">${d.slice(0,2)}</div>`).join("")}${cells.join("")}</div>
     ${inMonth.length ? `<div class="mlist">${inMonth.map(s=>{ const p = parse(s.date), lu = lineup(s);
         const opener = s._f ? `data-fopen="${esc(s._f)}|${esc(s.id)}"` : `data-open="${esc(s.id)}"`;
         return `<button ${opener} class="${isUpcoming(s)?"up":""}${s._f?" crewrow":""}"><span class="dd num">${p.d}</span><span style="min-width:0"><div class="t1">${s._f && FR[s._f] ? `<span class="chip crewtag">@${esc(FR[s._f].handle)}</span> ` : ""}${esc(lu[0]||"Show")}${isUpcoming(s)?` <span class="chip up">Upcoming</span>`:""}</div><div class="t2">${esc([lu.slice(1).join(" · "), s.venue].filter(Boolean).join(" — ") || "Venue unknown")}</div></span></button>`; }).join("")}</div>`
@@ -474,10 +500,10 @@ function renderSheet(fresh){
       <label class="field"><span class="lbl">Notes</span><textarea id="f-notes" ${ro?"disabled":""}>${esc(d.notes||"")}</textarea></label>
       <div class="grid2">
         <label class="field"><span class="lbl">Tickets bought</span><input id="f-ticketQty" type="number" min="0" step="1" inputmode="numeric" value="${esc(d.ticketQty??"")}" ${ro?"disabled":""}></label>
-        <label class="field"><span class="lbl">Order total $ (with fees)</span><input id="f-ticketTotal" type="number" min="0" step="0.01" inputmode="decimal" value="${esc(d.ticketTotal??(d.ticket!=null&&d.ticketQty==null?d.ticket:""))}" ${ro?"disabled":""}></label>
+        <label class="field"><span class="lbl">Order total ${esc(CUR())} (with fees)</span><input id="f-ticketTotal" type="number" min="0" step="0.01" inputmode="decimal" value="${esc(d.ticketTotal??(d.ticket!=null&&d.ticketQty==null?d.ticket:""))}" ${ro?"disabled":""}></label>
         <div class="field"><span class="lbl">Per ticket</span><div class="ro num" id="f-perTicket" style="padding:10px 0;font-size:18px">${perTicket(d)!=null?money2(perTicket(d)):"–"}</div></div>
-        <label class="field"><span class="lbl">Merch $</span><input id="f-merchSpend" type="number" min="0" step="1" inputmode="decimal" value="${esc(d.merchSpend??"")}" ${ro?"disabled":""}></label>
-        <label class="field"><span class="lbl">Round-trip miles (est.)</span><input id="f-miles" type="number" min="0" step="1" value="${esc(d.miles??"")}" ${ro?"disabled":""}></label>
+        <label class="field"><span class="lbl">Merch ${esc(CUR())}</span><input id="f-merchSpend" type="number" min="0" step="1" inputmode="decimal" value="${esc(d.merchSpend??"")}" ${ro?"disabled":""}></label>
+        <label class="field"><span class="lbl">Round-trip ${distLbl()} (est.)</span><input id="f-miles" type="number" min="0" step="1" value="${esc(d.miles!=null&&d.miles!==""?Math.round(dist(Number(d.miles))):"")}" ${ro?"disabled":""}></label>
       </div>
     </div>
 
@@ -504,7 +530,7 @@ function readForm(){
     date: v("f-date"), tour: v("f-tour").trim(), lineup: list(v("f-lineup")), venue: v("f-venue").trim(), city: v("f-city").trim(),
     unsure: !!$("#f-unsure")?.checked, wentWith: list(v("f-crew")), spot: v("f-spot"), best: v("f-best"),
     highlight: v("f-highlight").trim(), setlist: v("f-setlist"), notes: v("f-notes"),
-    ticketQty: n(v("f-ticketQty")), ticketTotal: n(v("f-ticketTotal")), merchSpend: n(v("f-merchSpend")), miles: n(v("f-miles")),
+    ticketQty: n(v("f-ticketQty")), ticketTotal: n(v("f-ticketTotal")), merchSpend: n(v("f-merchSpend")), miles: (x => x == null ? null : KM() ? Math.round(x / 1.609344) : x)(n(v("f-miles"))),
   });
   draft.ticket = perTicket({ ticketQty: draft.ticketQty, ticketTotal: draft.ticketTotal });
   draft.tagged = tagsOf(draft).filter(t => draft.wentWith.some(n => ieq(n, t.name)));
@@ -729,6 +755,7 @@ document.addEventListener("click", e => {
   else if (t.dataset.calm) { S.cal.m = Number(t.dataset.calm); renderCal(); }
   else if (t.dataset.calnav) { let m = S.cal.m + Number(t.dataset.calnav), y = S.cal.y; if (m < 0) { m = 11; y--; } if (m > 11) { m = 0; y++; } S.cal = { y, m }; renderCal(); }
   else if (t.hasAttribute("data-calexport")) exportMenu();
+  else if (t.hasAttribute("data-backup")) downloadBackup();
   else if (t.hasAttribute("data-ics1")) { if (draft) { readForm(); deliverIcs([draft], `${slug(draft)}-${draft.date}.ics`); } }
   else if (t.hasAttribute("data-caltoday")) { const d = new Date(); S.cal = { y: d.getFullYear(), m: d.getMonth() }; renderCal(); }
   else if (t.id === "tab-stats") { S.tab = "stats"; renderTab(); }
@@ -764,6 +791,7 @@ document.addEventListener("input", e => {
   }
 });
 document.addEventListener("change", e => {
+  if (e.target.dataset && e.target.dataset.setting) { saveSetting(e.target.dataset.setting, e.target.value).then(() => { if (S.tab === "me") renderMe(); }); return; }
   if (e.target.id === "sort") { S.sort = e.target.value; try { localStorage.setItem("pitlog.sort", S.sort); } catch(_){} renderShows(); return; }
   const up = e.target.dataset && e.target.dataset.upkind;
   if (up) { const files = [...(e.target.files || [])]; e.target.value = ""; readForm(); handleFiles(up, files); return; }
@@ -839,7 +867,7 @@ function crewOverlay(){
 function crewStats(){
   const inY = s => S.year === "all" || parse(s.date).y === Number(S.year);
   const mine = S.shows.filter(s => inY(s) && !isUpcoming(s));
-  const rows = [{ name: "You", n: mine.length, t: null, me: true }].concat(friendList().filter(f => f.loaded && !f.err).map(f => {
+  const rows = [{ name: "You", n: mine.length, t: null, me: true }].concat(friendList().filter(f => f.loaded && !f.err && !f.statsHidden).map(f => {
     const theirs = (f.shows || []).filter(s => inY(s) && !isUpcoming(s));
     return { name: "@" + f.handle, n: theirs.length, t: mine.filter(s => theirs.some(o => sameShow(s, o))).length, family: f.family };
   })).sort((a, b) => b.n - a.n);
@@ -873,8 +901,9 @@ async function familySync(){
     for (const f of friendList().filter(f => f.family && f.loaded && !f.err)) {
       for (const s of S.shows) {
         if (Array.isArray(s.familySynced) && s.familySynced.includes(f.uid)) continue; // already shared (or they removed their copy)
-        let p = s.linkId && f.shows.find(x => x.linkId === s.linkId);
-        if (!p) p = f.shows.find(x => sameShow(s, x));
+        const all = f.raw || f.shows;
+        let p = s.linkId && all.find(x => x.linkId === s.linkId);
+        if (!p) p = all.find(x => sameShow(s, x));
         const lid = s.linkId || (p && p.linkId) || ("L" + rid());
         if (p) { if (p.linkId !== lid) await updateDoc(doc(fdb, "users", f.uid, "shows", p.id), { linkId: lid }); }
         else {
@@ -888,7 +917,7 @@ async function familySync(){
     // Tour posters are shared across linked logs: fill in any linked copy that's missing yours.
     for (const f of friendList().filter(f => f.family && f.loaded && !f.err)) for (const s of S.shows) {
       if (!s.linkId || !s.poster) continue;
-      const p = f.shows.find(x => x.linkId === s.linkId);
+      const p = (f.raw || f.shows).find(x => x.linkId === s.linkId);
       if (p && !p.poster && !(Array.isArray(p.posterCleared) && p.posterCleared.includes(s.poster.url))) await updateDoc(doc(fdb, "users", f.uid, "shows", p.id), { poster: s.poster });
     }
     if (made) toast(`Shared ${made} show${made > 1 ? "s" : ""} with your Crew Family`, 3000);
@@ -900,7 +929,7 @@ async function familySync(){
 async function pushPoster(show, poster){
   if (!show || !show.linkId) return;
   for (const f of friendList().filter(f => f.family)) {
-    const p = (f.shows || []).find(x => x.linkId === show.linkId);
+    const p = (f.raw || f.shows || []).find(x => x.linkId === show.linkId);
     if (p) { try { await updateDoc(doc(fdb, "users", f.uid, "shows", p.id), { poster: poster || null }); } catch (e) { console.error("push poster", e); } }
   }
 }
@@ -908,7 +937,7 @@ async function pushShared(show){
   if (!show || !show.linkId) return;
   const patch = { syncedAt: serverTimestamp() }; for (const k of SHARED) patch[k] = show[k] ?? (k === "lineup" ? [] : k === "unsure" ? false : "");
   for (const f of friendList().filter(f => f.family)) {
-    const p = (f.shows || []).find(x => x.linkId === show.linkId);
+    const p = (f.raw || f.shows || []).find(x => x.linkId === show.linkId);
     if (p) { try { await updateDoc(doc(fdb, "users", f.uid, "shows", p.id), patch); } catch (e) { console.error("push shared", e); } }
   }
 }
@@ -926,11 +955,31 @@ function watchFriend(uid, info){
   if (FR[uid]) { if (!FR[uid].live) Object.assign(FR[uid], info); return; }
   const f = FR[uid] = { uid, shows: [], loaded: false, err: "", ...info };
   f.unsub = onSnapshot(collection(fdb, "users", uid, "shows"), snap => {
-    f.shows = snap.docs.map(d => ({ id: d.id, ...d.data() })); f.loaded = true; f.err = "";
-    if (f.family) scheduleFamilySync();
+    f.raw = snap.docs.map(d => ({ id: d.id, ...d.data() })); applyPrivacy(f); f.loaded = true; f.err = "";
+    if (f.family) { applyPrivacy(f); scheduleFamilySync(); }
     rerenderSoft();
   }, err => { f.err = err.code === "permission-denied" ? "Their log isn't shared with you yet." : "Couldn't load their log."; f.loaded = true; rerenderSoft(); });
-  f.unsubP = onSnapshot(doc(fdb, "users", uid), p => { if (p.exists()) { const d = p.data(); f.live = true; Object.assign(f, { name: d.name || f.name, handle: d.handle || f.handle, photo: d.photoURL || f.photo, bio: d.bio || "", favBand: d.favBand || "" }); rerenderSoft(); } }, () => {});
+  f.unsubP = onSnapshot(doc(fdb, "users", uid), p => { if (p.exists()) { const d = p.data(); f.live = true; Object.assign(f, { name: d.name || f.name, handle: d.handle || f.handle, photo: d.photoURL || f.photo, bio: d.bio || "", favBand: d.favBand || "", settings: d.settings || {} }); applyPrivacy(f); rerenderSoft(); } }, () => {});
+}
+// Friends' privacy settings decide what this app shows of their log. f.raw keeps the full
+// docs for Crew Family syncing; everything you see goes through f.shows.
+function redactShow(s, set, f){
+  const ok = k => canSee(set, k, f), o = { ...s };
+  if (!ok("ticketCost")) { o.ticket = null; o.ticketQty = null; o.ticketTotal = null; }
+  if (!ok("merchCost")) o.merchSpend = null;
+  if (!ok("photos")) { o.photos = []; o.merch = []; }
+  if (!ok("poster") && !(f.family && s.linkId)) o.poster = null;
+  if (!ok("ratings")) { o.rating = 0; o.pit = 0; o.best = ""; }
+  if (!ok("notes")) { o.notes = ""; o.highlight = ""; o.setlist = ""; }
+  if (!ok("wentWith")) { o.tagged = tagsOf(s).filter(t => ME && t.uid === ME.uid); o.wentWith = o.tagged.map(t => t.name); }
+  if (!ok("spot")) { o.spot = ""; o.miles = null; }
+  return o;
+}
+function applyPrivacy(f){
+  if (!f.raw) return;
+  const set = settingsOf(f);
+  f.shows = f.raw.filter(s => canSee(set, "upcoming", f) || !isUpcoming(s)).map(s => redactShow(s, set, f));
+  f.statsHidden = !canSee(set, "stats", f);
 }
 function dropFriend(uid){ const f = FR[uid]; if (!f) return; try { f.unsub && f.unsub(); f.unsubP && f.unsubP(); } catch(_){} delete FR[uid]; }
 
@@ -941,6 +990,7 @@ function syncFriends(){
     const other = r.from === ME.uid ? { uid: r.to, name: r.toName, handle: r.toHandle, photo: r.toPhoto } : { uid: r.from, name: r.fromName, handle: r.fromHandle, photo: r.fromPhoto };
     keep.add(other.uid); watchFriend(other.uid, other);
     FR[other.uid].family = r.family === "active"; FR[other.uid].famState = r.family || "off"; FR[other.uid].famBy = r.familyBy || "";
+    applyPrivacy(FR[other.uid]); // family vs crew changes what their settings let you see
   }
   for (const uid of Object.keys(FR)) if (!keep.has(uid)) dropFriend(uid);
   rerenderSoft(); scheduleFamilySync();
@@ -1047,8 +1097,8 @@ function exportMenu(){
 /* ---------- Crew tagging ---------- */
 const splitKey = k => { const i = k.indexOf("|"); return [k.slice(0, i), k.slice(i + 1)]; };
 function tagPicker(d, ro){
-  const fl = friendList(); if (!fl.length) return "";
   const on = new Set(tagsOf(d).map(t => t.uid));
+  const fl = friendList().filter(f => on.has(f.uid) || canSee(settingsOf(f), "tagMe", f)); if (!fl.length) return "";
   if (ro) { const tg = tagsOf(d); return tg.length ? `<div class="tagrow">${tg.map(t => `<span class="chip crew tg">${esc(t.name)}${FR[t.uid] ? ` · @${esc(FR[t.uid].handle)}` : ""}</span>`).join("")}</div>` : ""; }
   return `<div class="field"><span class="lbl">Tag crew with an account</span><div class="tagrow">${fl.map(f =>
     `<button type="button" class="tagbtn tagf" data-tagf="${esc(f.uid)}" aria-pressed="${on.has(f.uid)}">${avatar(f.photo, f.name, "sm")}@${esc(f.handle)}</button>`).join("")}</div></div>`;
@@ -1132,6 +1182,7 @@ function tagInbox(){
   const seen = new Set((PROFILE && PROFILE.tagSeen) || []), out = [];
   for (const f of friendList()) for (const s of (f.shows || [])) {
     if (!(Array.isArray(s.taggedUids) && s.taggedUids.includes(ME.uid))) continue;
+    if (!canSee(MY(), "tagMe", f)) continue;
     if (seen.has(f.uid + "|" + s.id) || S.shows.some(o => sameShow(o, s))) continue;
     out.push({ f, s });
   }
@@ -1278,6 +1329,7 @@ function profileBlock(p, isMe, f, extra){
   const best = rated.filter(s => Number(s.rating) >= 5)[0];
   const owner = isMe ? null : p.uid;
   const tile = (l, v) => `<div class="tile"><div class="lbl">${l}</div><div class="v num">${v}</div></div>`;
+  if (f && f.statsHidden) return `<section class="prof">${profileTop(p, isMe, f)}</section><div class="ro">@${esc(p.handle || "")} keeps their stats private.</div>`;
   return `<section class="prof">${profileTop(p, isMe, f)}</section>
     <div class="tiles">
       ${tile("Shows", done.length)}${tile("Bands seen", bands.length)}${tile("Venues", venues.length)}
@@ -1291,7 +1343,44 @@ function profileBlock(p, isMe, f, extra){
 
 function renderMe(){
   if (!PROFILE) return;
-  $("#view").innerHTML = `<div class="crew">${profileBlock({ uid: ME.uid, name: PROFILE.name, handle: PROFILE.handle, photo: PROFILE.photoURL, bio: PROFILE.bio, favBand: PROFILE.favBand, shows: S.shows }, true, null, {})}</div>`;
+  const openNow = [...document.querySelectorAll("[data-setgrp]")];
+  if (openNow.length) S.setOpen = new Set(openNow.filter(d => d.open).map(d => d.dataset.setgrp));
+  $("#view").innerHTML = `<div class="crew">${profileBlock({ uid: ME.uid, name: PROFILE.name, handle: PROFILE.handle, photo: PROFILE.photoURL, bio: PROFILE.bio, favBand: PROFILE.favBand, shows: S.shows }, true, null, {})}${settingsBlock()}</div>`;
+}
+const selectRow = (key, label, help, opts, val) => `<label class="setrow"><span class="st"><b>${esc(label)}</b>${help ? `<span class="ro">${esc(help)}</span>` : ""}</span>
+  <select data-setting="${key}" aria-label="${esc(label)}">${opts.map(([v, l]) => `<option value="${v}" ${val === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`;
+function settingsBlock(){
+  const set = MY(), open = S.setOpen || new Set();
+  const grp = (id, title, body) => `<details class="setgrp" data-setgrp="${id}" ${open.has(id) ? "open" : ""}><summary><h3>${title}</h3></summary>${body}</details>`;
+  return `<section class="sect settings"><h3 style="margin-bottom:6px">Settings</h3>
+    ${grp("privacy", "Privacy", `<div class="ro" style="margin:4px 0 10px">Choose who sees each part of your log. Family only means people you've linked with Crew Family. Public covers your whole crew today, and anyone on Pit Log if public profiles are added later.</div>
+      ${PRIVACY.map(([k, l, h]) => selectRow(k, l, h, LEVELS, set[k])).join("")}`)}
+    ${grp("display", "Display", [
+      selectRow("defaultView", "Shows opens to", "", [["list", "List"], ["cal", "Calendar"]], set.defaultView),
+      selectRow("defaultSort", "Default sort", "", Object.entries(SORTS), set.defaultSort),
+      selectRow("crewDefault", "Crew shows mixed in", "Starting state of the Crew toggle.", [["off", "Off"], ["on", "On"]], set.crewDefault),
+      selectRow("weekStart", "Week starts on", "", [["sun", "Sunday"], ["mon", "Monday"]], set.weekStart),
+      selectRow("currency", "Currency", "", [["$", "$ Dollar"], ["€", "€ Euro"], ["£", "£ Pound"]], set.currency),
+      selectRow("distance", "Distance", "", [["mi", "Miles"], ["km", "Kilometers"]], set.distance)].join(""))}
+    ${grp("data", "Your data", `<div class="ro" style="margin:4px 0 10px">Download a backup of every show you've logged. Import it from the account menu to restore it.</div>
+      <button class="btn" data-backup>Download my data</button>`)}
+  </section>`;
+}
+async function saveSetting(key, val){
+  PROFILE.settings = { ...(PROFILE.settings || {}), [key]: val };
+  if (key === "defaultView") { S.showView = val; try { localStorage.setItem("pitlog.showView", val); } catch (_) {} }
+  if (key === "defaultSort") { S.sort = val; try { localStorage.setItem("pitlog.sort", val); } catch (_) {} }
+  if (key === "crewDefault") { S.crewOn = val === "on"; try { localStorage.setItem("pitlog.crewOn", S.crewOn ? "1" : "0"); } catch (_) {} }
+  try { await updateDoc(doc(fdb, "users", ME.uid), { ["settings." + key]: val }); toast("Saved"); }
+  catch (e) { handleWriteErr(e); }
+}
+function downloadBackup(){
+  const shows = S.shows.map(x => { const o = { ...x }; delete o._f; return o; });
+  const blob = new Blob([JSON.stringify({ app: "pitlog", exportedAt: new Date().toISOString(), owner: PROFILE.handle, shows }, null, 1)], { type: "application/json" });
+  const url = URL.createObjectURL(blob), a = document.createElement("a");
+  a.href = url; a.download = `pit-log-backup-${todayISO}.json`; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+  toast(`Backup ready · ${shows.length} shows`);
 }
 
 let PEDIT = null;
@@ -1465,7 +1554,7 @@ async function importFile(file){
   if (data && data.kind === "pitlog-costs" && Array.isArray(data.costs)) return importCosts(data.costs);
   const list = Array.isArray(data && data.shows) ? data.shows : null;
   if (!list) { toast("That file isn't a Pit Log export", 4000); return; }
-  const fromData = async (m, showId, kind) => { if (!m || !m.data) return null; const raw = await (await fetch(m.data)).blob(); const b = await compress(raw, kind); const r = await putImage(b, showId, kind); return { url: r.url, path: r.path, type: "image", bands: m.bands || [] }; };
+  const fromData = async (m, showId, kind) => { if (m && !m.data && m.url) return { url: m.url, path: m.path || "", type: m.type || "image", bands: m.bands || [] }; if (!m || !m.data) return null; const raw = await (await fetch(m.data)).blob(); const b = await compress(raw, kind); const r = await putImage(b, showId, kind); return { url: r.url, path: r.path, type: "image", bands: m.bands || [] }; };
   let n = 0, pics = 0;
   for (const raw of list) {
     n++; toast(`Importing ${n} of ${list.length}…`, 60000);
@@ -1548,6 +1637,11 @@ function resetState(){
 
 function startApp(){
   db = fdb; assets = true; S.canWrite = true;
+  // Account-level defaults from Settings (only the ones the person has actually set)
+  const ps = (PROFILE && PROFILE.settings) || {};
+  if (ps.defaultView) S.showView = ps.defaultView;
+  if (ps.defaultSort && SORTS[ps.defaultSort]) S.sort = ps.defaultSort;
+  if (ps.crewDefault) S.crewOn = ps.crewDefault === "on";
   showOnly("appRoot");
   const a = $("#acct"); a.hidden = false; a.innerHTML = avatar(PROFILE.photoURL, PROFILE.name);
   $("#addBtn").hidden = false;
@@ -1657,3 +1751,4 @@ onAuthStateChanged(auth, async user => {
 });
 
 if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js").catch(() => {}));
+
