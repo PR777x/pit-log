@@ -1039,17 +1039,52 @@ function tagInboxBlock(){
   const list = tagInbox(); if (!list.length) return "";
   return `<section class="sect"><h3>You were tagged <span class="lbl">${list.length}</span></h3><div class="plist">${list.map(({ f, s }) => {
     const k = esc(f.uid + "|" + s.id);
-    return `<div class="tagin">${showRow(s, f.uid, "@" + f.handle + " tagged you")}<div class="tagact"><button class="btn red" data-tagadd="${k}">Add to my log</button><button class="btn ghost" data-tagdis="${k}">Dismiss</button></div></div>`; }).join("")}</div></section>`;
+    return `<div class="tagin">${showRow(s, f.uid, "@" + f.handle + " tagged you")}<div class="tagact"><button class="btn red" data-tagadd="${k}">Add show only</button><button class="btn" data-tagfull="${k}">Add with their details</button><button class="btn ghost" data-tagdis="${k}">Dismiss</button></div></div>`; }).join("")}</div>
+    <div class="ro" style="margin-top:8px"><b>Show only</b> adds the date, bands and venue. Your rating, notes, spend and photos start blank. <b>With their details</b> also copies their rating, notes, spend and photos, which you can edit after.</div></section>`;
 }
-async function addTaggedShow(uid, id){
-  const f = FR[uid]; const s = f && (f.shows || []).find(x => x.id === id); if (!s) return;
+// Accept a tag. "Show only" copies the date, bands and venue and leaves your own night blank.
+// "Everything" also brings over their rating, notes, spend, poster and photos.
+const PERSONAL = ["rating", "pit", "spot", "best", "highlight", "setlist", "notes", "ticket", "ticketQty", "ticketTotal", "merchSpend", "miles"];
+async function copyMedia(m, showId, kind, owner){
+  try {
+    const r = await fetch(m.url); if (!r.ok) throw new Error(r.status);
+    const put = await putImage(await r.blob(), showId, kind);
+    return { url: put.url, path: put.path, type: m.type || "image", bands: m.bands || [] };
+  } catch (_) {
+    // Couldn't copy the file (offline or blocked): point at theirs instead. path "" means we never delete it.
+    return { url: m.url, path: "", type: m.type || "image", bands: m.bands || [], sharedFrom: owner };
+  }
+}
+async function addTaggedShow(uid, id, full){
+  const f = FR[uid]; const s = f && (f.shows || []).find(x => x.id === id); if (!s || busy) return;
   if (S.shows.some(o => sameShow(o, s))) { toast("That show is already in your log"); return; }
   const tagged = [{ name: firstName(f), uid }];
   for (const t of tagsOf(s)) if (t.uid !== ME.uid && FR[t.uid] && !tagged.some(x => x.uid === t.uid)) tagged.push({ name: firstName(FR[t.uid]), uid: t.uid });
-  const body = { wentWith: tagged.map(t => t.name), tagged, taggedUids: tagged.map(t => t.uid), rating: 0, pit: 0, spot: "", best: "", highlight: "", setlist: "", notes: "",
-    ticket: null, ticketQty: null, ticketTotal: null, merchSpend: null, miles: null, poster: null, photos: [], merch: [] };
+  const names = tagged.map(t => t.name);
+  if (full) for (const n of crew(s)) if (!tagFor(s, n) && !nameMatches(PROFILE, n) && !names.some(x => ieq(x, n))) names.push(n);
+  const body = { wentWith: names, tagged, taggedUids: tagged.map(t => t.uid), rating: 0, pit: 0, spot: "", best: "", highlight: "", setlist: "", notes: "",
+    ticket: null, ticketQty: null, ticketTotal: null, merchSpend: null, miles: null, poster: null, photos: [], merch: [],
+    copiedFrom: { uid, id, full: !!full } };
   for (const k of SHARED) body[k] = s[k] ?? (k === "lineup" ? [] : k === "unsure" ? false : "");
-  try { await addDoc(myShows(), body); toast(`Added ${lineup(s)[0] || "the show"} to your log`); } catch (e) { handleWriteErr(e); }
+  const newId = rid();
+  busy = true;
+  try {
+    if (full) {
+      for (const k of PERSONAL) if (s[k] != null) body[k] = s[k];
+      const media = [...items(s, "photos").map(m => ["photos", m]), ...items(s, "merch").map(m => ["merch", m])];
+      if (s.poster) media.unshift(["poster", { url: pid(s.poster), type: "image" }]);
+      let n = 0;
+      for (const [kind, m] of media) {
+        toast(`Copying photos ${++n} of ${media.length}…`, 60000);
+        const c = await copyMedia(m, newId, kind, uid);
+        if (kind === "poster") body.poster = { url: c.url, path: c.path, ...(c.sharedFrom ? { sharedFrom: c.sharedFrom } : {}) };
+        else body[kind].push(c);
+      }
+    }
+    await setDoc(myShow(newId), body);
+    toast(`Added ${lineup(s)[0] || "the show"} to your log${full ? " with their details" : ""}`, 3500);
+  } catch (e) { handleWriteErr(e); }
+  busy = false;
 }
 async function dismissTag(key){
   PROFILE.tagSeen = [...new Set([...(PROFILE.tagSeen || []), key])];
@@ -1100,7 +1135,7 @@ function renderCrew(){
       <button class="btn ghost" data-decline="${esc(r.id)}">Cancel</button></div>`; }).join("")}</div></section>`;
   html += `<section class="sect explain"><h3>How the crew works</h3>
     <div class="ro"><b>Crew</b>: friends who can see each other's shows (read-only). Turn on <b>Crew</b> on Shows, Calendar or Stats to mix their shows into your view. It's off by default.</div>
-    <div class="ro"><b>Tagging</b>: in a show's "Went with", tap a friend to tag them. They'll see it under "You were tagged" and can add the show to their log in one tap. Names you logged before a friend joined can be linked to their account from their profile.</div>
+    <div class="ro"><b>Tagging</b>: in a show's "Went with", tap a friend to tag them. They'll see it under "You were tagged" and can add just the show, or the show with your rating, notes, spend and photos. Names you logged before a friend joined can be linked to their account from their profile.</div>
     <div class="ro"><b>Crew Family</b>: links two logs. Any show either of you adds or edits (date, bands, venue) shows up in both. Ratings, notes, photos and spend stay your own. Both people have to approve, and either can turn it off. Invite someone from their profile.</div></section>`;
   $("#view").innerHTML = html + `</div>`;
 }
@@ -1285,7 +1320,8 @@ function crewClick(t){
   if (t.dataset.crewview) { S.crewView = t.dataset.crewview; renderCrew(); return true; }
   if (t.dataset.taglink) { const [uid, name] = splitKey(t.dataset.taglink); linkName(name, uid); return true; }
   if (t.dataset.tagunlink) { const [uid, name] = splitKey(t.dataset.tagunlink); unlinkName(name, uid); return true; }
-  if (t.dataset.tagadd) { const [uid, id] = splitKey(t.dataset.tagadd); addTaggedShow(uid, id); return true; }
+  if (t.dataset.tagadd) { const [uid, id] = splitKey(t.dataset.tagadd); addTaggedShow(uid, id, false); return true; }
+  if (t.dataset.tagfull) { const [uid, id] = splitKey(t.dataset.tagfull); addTaggedShow(uid, id, true); return true; }
   if (t.dataset.tagdis) { dismissTag(t.dataset.tagdis); return true; }
   if (t.dataset.famprop) { setFamily(t.dataset.famprop, "pending"); return true; }
   if (t.dataset.famok) { setFamily(t.dataset.famok, "active"); return true; }
