@@ -1571,7 +1571,7 @@ function settingsBlock(){
   </section>`;
 }
 async function saveSetting(key, val){
-  PROFILE.settings = { ...(PROFILE.settings || {}), [key]: val };
+  PROFILE.settings = { ...(PROFILE.settings || {}), [key]: val }; cacheProfile();
   if (key === "defaultView") { S.showView = val; try { localStorage.setItem("pitlog.showView", val); } catch (_) {} }
   if (key === "defaultSort") { S.sort = val; try { localStorage.setItem("pitlog.sort", val); } catch (_) {} }
   if (key === "crewDefault") { S.crewOn = val === "on"; try { localStorage.setItem("pitlog.crewOn", S.crewOn ? "1" : "0"); } catch (_) {} }
@@ -1678,7 +1678,7 @@ async function saveProfileEdit(){
     if (old && old !== patch.photoPath) removeFile(old);
     PEDIT = null; $("#modalRoot").innerHTML = "";
     $("#acct").innerHTML = avatar(PROFILE.photoURL, PROFILE.name);
-    toast(changing ? `You're now @${patch.handle}` : "Profile saved"); renderTab(); syncSearchFields(); schedulePublish(true);
+    toast(changing ? `You're now @${patch.handle}` : "Profile saved"); renderTab(); syncSearchFields(); schedulePublish(true); cacheProfile();
   } catch (err) { handleWriteErr(err); }
 }
 
@@ -1751,7 +1751,7 @@ function accountMenu(){
     <div class="mbtns"><button class="btn warn" data-signout>Sign out</button><button class="btn ghost" data-mclose>Close</button></div>
   </div></div>`;
   root.querySelector("[data-mclose]").onclick = () => root.innerHTML = "";
-  root.querySelector("[data-signout]").onclick = () => { root.innerHTML = ""; signOut(auth); };
+  root.querySelector("[data-signout]").onclick = () => { root.innerHTML = ""; try { localStorage.removeItem(profKey(ME.uid)); } catch (_) {} signOut(auth); };
   root.querySelector("[data-myprofile]").onclick = () => { root.innerHTML = ""; S.tab = "me"; renderTab(); window.scrollTo(0, 0); };
 }
 
@@ -1797,7 +1797,12 @@ async function importCosts(costs){
 }
 
 /* ---------- Auth + profile ---------- */
-function showOnly(id){ for (const x of ["gate", "setup", "appRoot"]) $("#"+x).hidden = x !== id; }
+function showOnly(id){ for (const x of ["boot", "gate", "setup", "appRoot"]) $("#"+x).hidden = x !== id; }
+// The last profile seen on this device, so a refresh can open the app right away
+// instead of waiting on the network (it's refreshed from the server straight after).
+const profKey = uid => "pitlog.profile." + uid;
+function cacheProfile(){ try { if (ME && PROFILE) localStorage.setItem(profKey(ME.uid), JSON.stringify(PROFILE)); } catch (_) {} }
+function cachedProfile(uid){ try { const p = JSON.parse(localStorage.getItem(profKey(uid)) || "null"); return p && p.handle ? p : null; } catch (_) { return null; } }
 
 async function doSignIn(){
   const p = new GoogleAuthProvider(); p.setCustomParameters({ prompt: "select_account" });
@@ -1831,7 +1836,7 @@ async function saveProfile(){
     if (!taken.exists()) b.set(doc(fdb, "handles", h), { uid: ME.uid });
     b.set(doc(fdb, "users", ME.uid), prof);
     await b.commit();
-    PROFILE = prof; startApp();
+    PROFILE = prof; cacheProfile(); startApp();
   } catch (e) { console.error(e); msg.textContent = e.code === "permission-denied" ? `@${h} is taken, or the Firestore rules aren't published yet.` : "Couldn't save: " + (e.code || e.message); btn.disabled = false; }
 }
 
@@ -1944,12 +1949,20 @@ onAuthStateChanged(auth, async user => {
   }
   ME = user;
   $("#signinMsg").textContent = "Signed in as " + (user.email || "you") + ". Opening your log…";
+  const cached = !wasRedirect && cachedProfile(user.uid);
+  if (cached) {
+    // Open straight away from the saved profile, then quietly swap in the server copy.
+    PROFILE = cached; startApp();
+    getDoc(doc(fdb, "users", user.uid)).then(p => { if (p.exists() && p.data().handle && ME && ME.uid === user.uid) { PROFILE = { ...p.data() }; cacheProfile(); const a = $("#acct"); if (a) a.innerHTML = avatar(PROFILE.photoURL, PROFILE.name); } }).catch(() => {});
+    return;
+  }
+  if ($("#boot").hidden) showOnly("gate");
   try {
     const p = await Promise.race([
       getDoc(doc(fdb, "users", user.uid)),
       new Promise((_, rej) => setTimeout(() => rej({ code: "timeout" }), 12000))
     ]);
-    if (p.exists() && p.data().handle) { PROFILE = p.data(); startApp(); }
+    if (p.exists() && p.data().handle) { PROFILE = p.data(); cacheProfile(); startApp(); }
     else showSetup();
   } catch (e) {
     console.error(e); showSetup();

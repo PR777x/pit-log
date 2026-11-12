@@ -16,11 +16,18 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Pirata+One&family=Barlow+Condensed:wght@400;500;600;700&family=Barlow:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="styles.css?v=21">
+<link rel="stylesheet" href="styles.css?v=22">
 </head>
 <body>
 
-<section id="gate" class="gate">
+<section id="boot" class="gate" aria-live="polite">
+  <div class="gbox" style="text-align:center">
+    <h1>Pit <span>Log</span></h1>
+    <p class="gtag">Loading your log…</p>
+  </div>
+</section>
+
+<section id="gate" class="gate" hidden>
   <div class="gbox">
     <h1>Pit <span>Log</span></h1>
     <p class="gtag">Every show. Every pit. Every night you were there.</p>
@@ -41,7 +48,7 @@
     </form>
     <p class="ro" id="signinMsg" role="alert"></p>
     <p class="ro">Your log is private. Friends you accept can see your shows.</p>
-    <p class="ro" style="opacity:.5">build 21</p>
+    <p class="ro" style="opacity:.5">build 22</p>
     <p class="ro" id="inapp" hidden>Opened inside another app? Use ⋮ → <b>Open in Chrome</b> (or Safari on iPhone) for sign-in to work.</p>
   </div>
 </section>
@@ -88,6 +95,6 @@
 <div id="modalRoot"></div>
 <div id="toastRoot"></div>
 
-<script type="module" src="app.js?v=21"></script>
+<script type="module" src="app.js?v=22"></script>
 </body>
 </html>
