@@ -44,8 +44,12 @@ let S = { shows: [], loaded: false, slow: false, error: "", tab: "shows", filter
   cal: { y: new Date().getFullYear(), m: new Date().getMonth() } };
 let db = null, assets = null;
 let ME = null, PROFILE = null;
+// Shows tab: list or calendar view (remembered on this device)
+const showViewPref = (() => { try { return localStorage.getItem("pitlog.showView") === "cal" ? "cal" : "list"; } catch (_) { return "list"; } })();
+const viewSwitch = () => `<div class="seg vswitch" role="group" aria-label="View">${[["list","List"],["cal","Calendar"]].map(([v,l]) => `<button data-sview="${v}" aria-pressed="${S.showView===v}">${l}</button>`).join("")}</div>`;
 const crewPref = (() => { try { return localStorage.getItem("pitlog.crewOn") === "1"; } catch (_) { return false; } })();
 S.crewOn = crewPref;
+S.showView = showViewPref;
 const FR = {}; // friend uid -> { uid, name, handle, photo, shows, err, unsub }
 let REQ = { in: [], out: [] };
 
@@ -157,6 +161,7 @@ function groupOf(s){
 }
 
 function renderShows(){
+  if (S.showView === "cal") return renderCal();
   let list = [...S.shows, ...(S.crewOn ? crewOverlay() : [])].filter(inYear);
   if (S.filter === "attended") list = list.filter(s => !isUpcoming(s));
   if (S.filter === "upcoming") list = list.filter(isUpcoming);
@@ -164,7 +169,7 @@ function renderShows(){
   if (q) list = list.filter(s => [...lineup(s), s.venue, s.city, ...crew(s), s.tour, s._f && FR[s._f] ? "@" + FR[s._f].handle : ""].join(" ").toLowerCase().includes(q));
   sortShows(list);
   const firsts = firstSightings();
-  let html = `<div class="filters">
+  let html = `<div class="vrow">${viewSwitch()}</div><div class="filters">
     ${yearSeg()}
     <div class="seg" role="group" aria-label="Filter">${["all","attended","upcoming"].map(f=>`<button data-filter="${f}" aria-pressed="${S.filter===f}">${f}</button>`).join("")}</div>
     ${crewToggle()}
@@ -349,7 +354,7 @@ function renderStats(){
 /* ---------- Calendar tab ---------- */
 const MONTHS_LONG = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 function renderCal(){
-  if (!S.loaded) { $("#view").innerHTML = `<div class="calwrap">${statusBlock()}</div>`; return; }
+  if (!S.loaded) { $("#view").innerHTML = `<div class="vrow">${viewSwitch()}</div><div class="calwrap">${statusBlock()}</div>`; return; }
   const { y, m } = S.cal;
   const key = (dd) => y+"-"+String(m+1).padStart(2,"0")+"-"+String(dd).padStart(2,"0");
   const all = [...sorted(), ...(S.crewOn ? crewOverlay() : [])];
@@ -372,7 +377,7 @@ function renderCal(){
   const mc = Array(12).fill(0); for (const s of S.shows) { const p = parse(s.date); if (p.y === y) mc[p.m-1]++; }
   const inMonth = all.filter(s => { const p = parse(s.date); return p.y === y && p.m === m+1; }).sort((a,b) => (a.date||"").localeCompare(b.date||"") || (!!a._f - !!b._f));
   const yrs = years(); if (!yrs.includes(y)) yrs.push(y);
-  $("#view").innerHTML = `<div class="calwrap">
+  $("#view").innerHTML = `<div class="vrow">${viewSwitch()}</div><div class="calwrap">
     <div class="filters" style="margin:0"><div class="seg" role="group" aria-label="Year">${yrs.sort((a,b)=>b-a).map(yy=>`<button data-caly="${yy}" aria-pressed="${yy===y}">${yy}</button>`).join("")}</div>
       <button class="btn ghost" data-caltoday>Today</button>${crewToggle()}</div>
     <div class="mstrip" role="group" aria-label="Months of ${y}">${MONTHS.map((mn,i)=>`<button data-calm="${i}" aria-pressed="${i===m}" aria-label="${MONTHS_LONG[i]}: ${mc[i]} show${mc[i]!==1?"s":""}"><span class="ml">${mn[0]}</span><span class="mc ${mc[i]?"":"z"}">${mc[i]||"·"}</span></button>`).join("")}</div>
@@ -389,7 +394,8 @@ function renderCal(){
 
 function renderTab(){
   updateCrewBadge();
-  for (const t of ["shows","cal","vault","stats","crew"]) $("#tab-"+t).setAttribute("aria-selected", S.tab===t);
+  if (S.tab === "cal") { S.tab = "shows"; S.showView = "cal"; }
+  for (const t of ["shows","vault","stats","crew"]) $("#tab-"+t).setAttribute("aria-selected", S.tab===t);
   if (S.tab === "me") renderMe(); else if (S.tab === "crew") renderCrew(); else if (S.tab === "shows") renderShows(); else if (S.tab === "cal") renderCal(); else if (S.tab === "vault") renderVault(); else renderStats();
 }
 function render(){ renderNext(); renderTab(); if (S.open) renderSheet(); }
@@ -716,7 +722,7 @@ document.addEventListener("click", e => {
   }
   if (t.id === "tab-shows") { S.tab = "shows"; renderTab(); }
   else if (t.id === "tab-vault") { S.tab = "vault"; renderTab(); }
-  else if (t.id === "tab-cal") { S.tab = "cal"; renderTab(); }
+  else if (t.dataset.sview) { S.showView = t.dataset.sview; try { localStorage.setItem("pitlog.showView", S.showView); } catch (_) {} renderShows(); window.scrollTo(0, 0); }
   else if (t.dataset.year) { S.year = t.dataset.year; renderTab(); }
   else if (t.dataset.caly) { S.cal.y = Number(t.dataset.caly); renderCal(); }
   else if (t.dataset.calm) { S.cal.m = Number(t.dataset.calm); renderCal(); }

@@ -329,3 +329,6 @@ label.btn{display:inline-block}
 .tagin{display:grid;gap:6px}
 .tagact{display:flex;gap:8px;flex-wrap:wrap}
 .hrow{display:flex;align-items:center;gap:6px}.hrow>span{color:var(--ash);font-family:var(--f-label)}.hrow input{flex:1}
+/* Shows: list / calendar switch */
+.vrow{display:flex;margin-bottom:10px}
+.vswitch{flex:1}.vswitch button{flex:1;padding:8px 12px}
