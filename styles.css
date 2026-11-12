@@ -351,3 +351,9 @@ a.btn{text-decoration:none;display:inline-flex;align-items:center;justify-conten
 .searchv{gap:12px}
 .bandhit{display:grid;gap:4px;margin-bottom:10px}
 .bandhit .who{padding:0 4px}.bandhit .who .chip{cursor:pointer}
+/* top 5 */
+.top5{list-style:none;margin:4px 0 0;padding:0;display:grid;gap:2px}
+.top5 li{display:flex;gap:8px;align-items:baseline;color:var(--bone);font-weight:600}
+.top5 .num,.top5edit .num{color:var(--blood-hi);font-family:var(--f-display);min-width:14px}
+.top5edit{display:grid;gap:6px}.top5edit label{display:flex;align-items:center;gap:8px}.top5edit input{flex:1}
+.pfav{display:grid;gap:2px;margin-top:6px}
