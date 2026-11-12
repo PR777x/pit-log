@@ -332,3 +332,4 @@ label.btn{display:inline-block}
 /* Shows: list / calendar switch */
 .vrow{display:flex;margin-bottom:10px}
 .vswitch{flex:1}.vswitch button{flex:1;padding:8px 12px}
+a.btn{text-decoration:none;display:inline-flex;align-items:center;justify-content:center}

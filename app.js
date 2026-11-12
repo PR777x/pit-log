@@ -379,7 +379,7 @@ function renderCal(){
   const yrs = years(); if (!yrs.includes(y)) yrs.push(y);
   $("#view").innerHTML = `<div class="vrow">${viewSwitch()}</div><div class="calwrap">
     <div class="filters" style="margin:0"><div class="seg" role="group" aria-label="Year">${yrs.sort((a,b)=>b-a).map(yy=>`<button data-caly="${yy}" aria-pressed="${yy===y}">${yy}</button>`).join("")}</div>
-      <button class="btn ghost" data-caltoday>Today</button>${crewToggle()}</div>
+      <button class="btn ghost" data-caltoday>Today</button><button class="btn ghost" data-calexport>Export</button>${crewToggle()}</div>
     <div class="mstrip" role="group" aria-label="Months of ${y}">${MONTHS.map((mn,i)=>`<button data-calm="${i}" aria-pressed="${i===m}" aria-label="${MONTHS_LONG[i]}: ${mc[i]} show${mc[i]!==1?"s":""}"><span class="ml">${mn[0]}</span><span class="mc ${mc[i]?"":"z"}">${mc[i]||"·"}</span></button>`).join("")}</div>
     <div class="calnav"><button class="arw" data-calnav="-1" aria-label="Previous month">‹</button>
       <div class="mt-title">${MONTHS_LONG[m]} <span style="color:var(--ash)">${y}</span></div>
@@ -451,6 +451,7 @@ function renderSheet(fresh){
         <label class="field"><span class="lbl">City</span><input id="f-city" value="${esc(d.city||"")}" ${ro?"disabled":""}></label>
       </div>
       <label style="display:flex;gap:8px;align-items:center"><input id="f-unsure" type="checkbox" ${d.unsure?"checked":""} ${ro?"disabled":""}> <span class="lbl">Not confirmed / maybe</span></label>
+      ${!isNew && d.date ? `<div class="field"><span class="lbl">Add to calendar</span><div class="tagrow"><a class="btn" href="${esc(googleCalUrl(d))}" target="_blank" rel="noopener">Google Calendar</a><button class="btn" data-ics1>Apple / other (.ics)</button></div></div>` : ""}
     </div>
 
     <div class="sect"><h3>Went with</h3>
@@ -727,6 +728,8 @@ document.addEventListener("click", e => {
   else if (t.dataset.caly) { S.cal.y = Number(t.dataset.caly); renderCal(); }
   else if (t.dataset.calm) { S.cal.m = Number(t.dataset.calm); renderCal(); }
   else if (t.dataset.calnav) { let m = S.cal.m + Number(t.dataset.calnav), y = S.cal.y; if (m < 0) { m = 11; y--; } if (m > 11) { m = 0; y++; } S.cal = { y, m }; renderCal(); }
+  else if (t.hasAttribute("data-calexport")) exportMenu();
+  else if (t.hasAttribute("data-ics1")) { if (draft) { readForm(); deliverIcs([draft], `${slug(draft)}-${draft.date}.ics`); } }
   else if (t.hasAttribute("data-caltoday")) { const d = new Date(); S.cal = { y: d.getFullYear(), m: d.getMonth() }; renderCal(); }
   else if (t.id === "tab-stats") { S.tab = "stats"; renderTab(); }
   else if (t.id === "addBtn") openSheet("__new");
@@ -970,6 +973,76 @@ async function acceptRequest(r){
   catch (e) { handleWriteErr(e); }
 }
 async function removeRequest(id, msg){ try { await deleteDoc(doc(fdb, "friendRequests", id)); if (msg) toast(msg); } catch (e) { handleWriteErr(e); } }
+
+/* ---------- Calendar export (.ics + Google link) ---------- */
+// Shows have no start time, so each is an all-day event. UIDs are stable per show,
+// so importing the file again updates events instead of doubling them (Apple, Outlook).
+const icsDay = iso => String(iso || "").replace(/-/g, "");
+const nextDay = iso => { const p = parse(iso); const d = new Date(p.y, p.m - 1, p.d + 1); return d.getFullYear() + String(d.getMonth() + 1).padStart(2, "0") + String(d.getDate()).padStart(2, "0"); };
+const icsText = v => String(v || "").replace(/\\/g, "\\\\").replace(/\r?\n/g, "\\n").replace(/([,;])/g, "\\$1");
+function icsFold(line){ const out = []; let l = line; while (l.length > 74) { out.push(l.slice(0, 74)); l = " " + l.slice(74); } out.push(l); return out.join("\r\n"); }
+function eventTitle(s){ const lu = lineup(s); return (lu[0] || "Show") + (lu.length > 1 ? " w/ " + lu.slice(1).join(", ") : "") + (s.unsure ? " (maybe)" : ""); }
+function eventDetails(s){
+  const lu = lineup(s), bits = [];
+  if (s.tour) bits.push("Tour: " + s.tour);
+  if (lu.length) bits.push("Lineup: " + lu.join(", "));
+  if (crew(s).length) bits.push("Went with: " + crew(s).join(", "));
+  bits.push("Logged in Pit Log");
+  return bits.join("\n");
+}
+const eventPlace = s => [s.venue, s.city].filter(Boolean).join(", ");
+function buildIcs(list){
+  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
+  const L = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Pit Log//Shows//EN", "CALSCALE:GREGORIAN", "METHOD:PUBLISH", "X-WR-CALNAME:Pit Log shows"];
+  for (const s of list) {
+    if (!s.date) continue;
+    L.push("BEGIN:VEVENT", "UID:" + (s.linkId || s.id) + "@pitlog", "DTSTAMP:" + stamp,
+      "DTSTART;VALUE=DATE:" + icsDay(s.date), "DTEND;VALUE=DATE:" + nextDay(s.date),
+      "SUMMARY:" + icsText(eventTitle(s)));
+    if (eventPlace(s)) L.push("LOCATION:" + icsText(eventPlace(s)));
+    L.push("DESCRIPTION:" + icsText(eventDetails(s)), "TRANSP:TRANSPARENT", "END:VEVENT");
+  }
+  L.push("END:VCALENDAR");
+  return L.map(icsFold).join("\r\n") + "\r\n";
+}
+async function deliverIcs(list, name){
+  if (!list.length) { toast("No shows to export"); return; }
+  const file = new File([buildIcs(list)], name, { type: "text/calendar" });
+  // Installed iPhone apps can't download files, so hand it to the share sheet there.
+  const standalone = window.navigator.standalone || matchMedia("(display-mode: standalone)").matches;
+  const ios = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  if (ios && standalone && navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: "Pit Log shows" }); return; } catch (e) { if (e && e.name === "AbortError") return; }
+  }
+  const url = URL.createObjectURL(file), a = document.createElement("a");
+  a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+  toast(`Calendar file ready · ${list.length} show${list.length === 1 ? "" : "s"}`, 3500);
+}
+function googleCalUrl(s){
+  const q = new URLSearchParams({ action: "TEMPLATE", text: eventTitle(s), dates: icsDay(s.date) + "/" + nextDay(s.date), details: eventDetails(s) });
+  if (eventPlace(s)) q.set("location", eventPlace(s));
+  return "https://calendar.google.com/calendar/render?" + q.toString();
+}
+const slug = s => (lineup(s)[0] || "show").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 30) || "show";
+function exportMenu(){
+  const mine = sorted(), up = mine.filter(isUpcoming), yr = S.cal.y, inYr = mine.filter(s => parse(s.date).y === yr);
+  const opts = [["up", "Upcoming shows", up], ["year", `All of ${yr}`, inYr], ["all", "Everything I've logged", mine]];
+  const root = $("#modalRoot");
+  root.innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-label="Export calendar"><div class="mbox">
+    <h3>Export calendar</h3>
+    <div class="ro">Makes a calendar file of your shows as all-day events, with the lineup, venue and who you went with.</div>
+    ${opts.map(([k, l, list]) => `<button class="btn ${k === "up" ? "red" : ""}" data-exp="${k}" ${list.length ? "" : "disabled"} style="text-align:left">${l} <span class="lbl">${list.length}</span></button>`).join("")}
+    <div class="ro"><b>iPhone:</b> open the file and tap Add All. <b>Android:</b> open it with your calendar app. <b>Google Calendar:</b> on a computer, go to calendar.google.com, Settings, Import &amp; export, and import the file.</div>
+    <div class="ro">Exporting again later updates the same events in Apple Calendar instead of adding copies. It's a snapshot, so new shows need another export.</div>
+    <div class="mbtns"><button class="btn ghost" data-mclose>Close</button></div>
+  </div></div>`;
+  root.querySelector("[data-mclose]").onclick = () => root.innerHTML = "";
+  for (const b of root.querySelectorAll("[data-exp]")) b.onclick = () => {
+    const [k, , list] = opts.find(o => o[0] === b.dataset.exp);
+    root.innerHTML = ""; deliverIcs(list, `pit-log-${k === "year" ? yr : k === "up" ? "upcoming" : "all"}.ics`);
+  };
+}
 
 /* ---------- Crew tagging ---------- */
 const splitKey = k => { const i = k.indexOf("|"); return [k.slice(0, i), k.slice(i + 1)]; };
