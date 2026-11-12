@@ -360,3 +360,16 @@ a.btn{text-decoration:none;display:inline-flex;align-items:center;justify-conten
 /* Modals scroll on small screens; the action buttons stay pinned to the bottom of the box */
 .mbox{max-height:calc(100vh - 32px);max-height:calc(100dvh - 32px);overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
 .mbox{padding-bottom:0}.mbox .mbtns{position:sticky;bottom:0;margin:0 -18px;padding:12px 18px calc(12px + env(safe-area-inset-bottom,0px));background:var(--crypt);border-top:1px solid var(--iron);z-index:1}
+/* lineup + suggestions */
+.lugrid{display:grid;gap:6px}
+.luslot{display:flex;align-items:center;gap:8px}
+.lunum{min-width:24px;font-family:var(--f-label);font-weight:700;font-size:12px;letter-spacing:.08em;color:var(--ash);text-align:right}
+.luslot:first-child .lunum{color:var(--blood-hi)}
+.luslot input{flex:1}
+.addband{justify-self:start;margin-top:4px}
+.acwrap{position:relative}
+.acbox{position:absolute;left:0;right:0;top:100%;z-index:30;margin-top:2px;background:var(--crypt);border:1px solid var(--iron);box-shadow:0 10px 24px rgba(0,0,0,.55);max-height:280px;overflow-y:auto}
+.luslot .acbox{left:32px}
+.acopt{display:flex;justify-content:space-between;gap:10px;width:100%;padding:10px 12px;background:none;border:0;border-bottom:1px solid var(--slab);color:var(--bone);text-align:left;font:inherit}
+.acopt:hover,.acopt:focus{background:var(--slab)}
+.acsub{color:var(--ash);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:55%}

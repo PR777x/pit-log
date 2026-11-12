@@ -2,6 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { VENUES } from "./venues.js?v=23";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -433,7 +434,7 @@ let draft = null, confirmDel = false, busy = false;
 let SHEET_LIST = [];
 
 function openSheet(id){
-  S.openFriend = null;
+  S.openFriend = null; S.luExtra = 0;
   const s = id === "__new" ? { id:"__new", date: todayISO, lineup: [], wentWith: [], photos: [], merch: [] } : S.shows.find(x=>x.id===id);
   if (!s) return;
   closeLightbox();
@@ -473,9 +474,9 @@ function renderSheet(fresh){
         <label class="field"><span class="lbl">Date</span><input id="f-date" type="date" value="${esc(d.date)}" ${ro?"disabled":""}></label>
         <label class="field"><span class="lbl">Tour name</span><input id="f-tour" value="${esc(d.tour||"")}" placeholder="Name of the tour" ${ro?"disabled":""}></label>
       </div>
-      <label class="field"><span class="lbl">Lineup — headliner first, comma separated</span><input id="f-lineup" value="${esc(lineup(d).join(", "))}" ${ro?"disabled":""}></label>
+      ${lineupFields(d, ro)}
       <div class="grid2">
-        <label class="field"><span class="lbl">Venue</span><input id="f-venue" value="${esc(d.venue||"")}" ${ro?"disabled":""}></label>
+        <label class="field acwrap"><span class="lbl">Venue</span><input id="f-venue" data-ac="venue" autocomplete="off" value="${esc(d.venue||"")}" placeholder="Search or type a venue" ${ro?"disabled":""}><div class="acbox" hidden></div></label>
         <label class="field"><span class="lbl">City</span><input id="f-city" value="${esc(d.city||"")}" ${ro?"disabled":""}></label>
       </div>
       <label style="display:flex;gap:8px;align-items:center"><input id="f-unsure" type="checkbox" ${d.unsure?"checked":""} ${ro?"disabled":""}> <span class="lbl">Not confirmed / maybe</span></label>
@@ -529,7 +530,7 @@ function readForm(){
   const list = s => s.split(",").map(x=>x.trim()).filter(Boolean);
   const n = s => s === "" ? null : Number(s);
   Object.assign(draft, {
-    date: v("f-date"), tour: v("f-tour").trim(), lineup: list(v("f-lineup")), venue: v("f-venue").trim(), city: v("f-city").trim(),
+    date: v("f-date"), tour: v("f-tour").trim(), lineup: [...document.querySelectorAll(".lu-in")].map(x => x.value.trim()).filter(Boolean), venue: v("f-venue").trim(), city: v("f-city").trim(),
     unsure: !!$("#f-unsure")?.checked, wentWith: list(v("f-crew")), spot: v("f-spot"), best: v("f-best"),
     highlight: v("f-highlight").trim(), setlist: v("f-setlist"), notes: v("f-notes"),
     ticketQty: n(v("f-ticketQty")), ticketTotal: n(v("f-ticketTotal")), merchSpend: n(v("f-merchSpend")), miles: (x => x == null ? null : KM() ? Math.round(x / 1.609344) : x)(n(v("f-miles"))),
@@ -757,6 +758,7 @@ document.addEventListener("click", e => {
   else if (t.dataset.calm) { S.cal.m = Number(t.dataset.calm); renderCal(); }
   else if (t.dataset.calnav) { let m = S.cal.m + Number(t.dataset.calnav), y = S.cal.y; if (m < 0) { m = 11; y--; } if (m > 11) { m = 0; y++; } S.cal = { y, m }; renderCal(); }
   else if (t.hasAttribute("data-calexport")) exportMenu();
+  else if (t.hasAttribute("data-addband")) { readForm(); S.luExtra = (S.luExtra || 0) + 1; renderSheet(); const ins = document.querySelectorAll(".lu-in"); if (ins.length) ins[ins.length - 1].focus(); }
   else if (t.hasAttribute("data-backup")) downloadBackup();
   else if (t.hasAttribute("data-ics1")) { if (draft) { readForm(); deliverIcs([draft], `${slug(draft)}-${draft.date}.ics`); } }
   else if (t.hasAttribute("data-caltoday")) { const d = new Date(); S.cal = { y: d.getFullYear(), m: d.getMonth() }; renderCal(); }
@@ -799,7 +801,7 @@ document.addEventListener("change", e => {
   if (e.target.id === "sort") { S.sort = e.target.value; try { localStorage.setItem("pitlog.sort", S.sort); } catch(_){} renderShows(); return; }
   const up = e.target.dataset && e.target.dataset.upkind;
   if (up) { const files = [...(e.target.files || [])]; e.target.value = ""; readForm(); handleFiles(up, files); return; }
-  if (e.target.id === "f-lineup" && draft) { readForm(); renderSheet(); }
+  if (e.target.classList && e.target.classList.contains("lu-in") && draft) { readForm(); refreshBest(); }
   if (e.target.id === "avatarFile") { const f = e.target.files && e.target.files[0]; e.target.value = ""; if (f) uploadAvatar(f); }
   if (e.target.id === "importFile") { const f = e.target.files && e.target.files[0]; e.target.value = ""; if (f) importFile(f); }
 });
@@ -1225,6 +1227,69 @@ function searchClick(t){
 }
 document.addEventListener("input", e => { if (e.target.id === "sq") { S.search.q = e.target.value; if (S.search.mode === "bands") { const box = $("#sres"); if (box && !S.search.bands) drawSearchResults(); } runSearch(); } });
 
+/* ---------- Lineup fields + venue/band suggestions ---------- */
+// Four band boxes (headliner first) with an "Add another band" button for bigger bills.
+function lineupFields(d, ro){
+  const lu = lineup(d);
+  if (ro) return `<div class="field"><span class="lbl">Lineup</span><div class="ro" style="color:var(--bone)">${lu.map(esc).join(" · ") || "—"}</div></div>`;
+  const n = Math.max(4, lu.length + (S.luExtra || 0));
+  const slots = Array.from({ length: n }, (_, i) => lu[i] || "");
+  return `<div class="field"><span class="lbl">Lineup</span><div class="lugrid">${slots.map((b, i) =>
+    `<label class="acwrap luslot"><span class="lunum">${i ? i + 1 : "HL"}</span><input class="lu-in" data-ac="band" autocomplete="off" value="${esc(b)}" placeholder="${i ? `Band ${i + 1}` : "Headliner"}" aria-label="${i ? `Band ${i + 1}` : "Headliner"}"><div class="acbox" hidden></div></label>`).join("")}</div>
+    <button type="button" class="btn ghost addband" data-addband>+ Add another band</button></div>`;
+}
+function refreshBest(){
+  const sel = $("#f-best"); if (!sel || !draft) return;
+  const cur = sel.value;
+  sel.innerHTML = `<option value="">—</option>` + lineup(draft).map(b => `<option ${cur === b ? "selected" : ""}>${esc(b)}</option>`).join("");
+}
+const normV = x => String(x || "").toLowerCase().replace(/^the\s+/, "").replace(/[^a-z0-9]+/g, "");
+// Suggestions: your own most-used first, then your crew's, then the built-in venue list.
+function acOptions(kind, q){
+  const k = normV(q), seen = new Set(), out = [];
+  const cityHit = sub => String(sub || "").toLowerCase().split(/[^a-z0-9]+/).some(w => w && w.startsWith(k));
+  const push = (label, sub, extra, score) => { const n = normV(label); if (!n || seen.has(n)) return; if (k && !n.includes(k) && !cityHit(sub)) return; seen.add(n); out.push({ label, sub, score, ...extra }); };
+  const crewShows = friendList().flatMap(f => f.shows || []);
+  if (kind === "venue") {
+    const mine = {}, cityOf = {};
+    for (const sh of S.shows) if (sh.venue) { const n = normV(sh.venue); mine[n] = (mine[n] || 0) + 1; cityOf[n] = cityOf[n] || sh.city || ""; }
+    const ranked = (list) => { const m = new Map(); for (const sh of list) if (sh.venue) { const n = normV(sh.venue); const e = m.get(n) || { name: sh.venue, city: sh.city || "", n: 0 }; e.n++; if (!e.city && sh.city) e.city = sh.city; m.set(n, e); } return [...m.values()].sort((a, b) => b.n - a.n); };
+    for (const v of ranked(S.shows)) push(v.name, v.city, { city: v.city, tag: `${v.n} show${v.n > 1 ? "s" : ""}` }, 3);
+    for (const v of ranked(crewShows)) push(v.name, v.city, { city: v.city, tag: "Crew" }, 2);
+    for (const v of VENUES) push(v.name, v.city, { city: v.city }, 1);
+  } else {
+    const ranked = list => counts(list.flatMap(lineup));
+    for (const b of ranked(S.shows)) push(b.name, "", { tag: `seen ${b.n}×` }, 3);
+    for (const b of ranked(crewShows)) push(b.name, "", { tag: "Crew" }, 2);
+  }
+  // Starts-with matches float up within each group.
+  return out.map((o, i) => ({ ...o, i, starts: normV(o.label).startsWith(k) ? 1 : 0 }))
+    .sort((a, b) => b.score - a.score || (k ? b.starts - a.starts : 0) || a.i - b.i).slice(0, 8);
+}
+function showAc(input){
+  const box = input.parentElement.querySelector(".acbox"); if (!box) return;
+  const opts = acOptions(input.dataset.ac, input.value.trim());
+  const exact = opts.some(o => ieq(o.label, input.value.trim()));
+  if (!opts.length || (exact && opts.length === 1)) { box.hidden = true; return; }
+  box.innerHTML = opts.map((o, i) => `<button type="button" class="acopt" data-acpick="${i}"><span>${esc(o.label)}</span><span class="acsub">${esc([o.sub, o.tag].filter(Boolean).join(" · "))}</span></button>`).join("");
+  box._opts = opts; box.hidden = false;
+}
+function hideAllAc(except){ for (const b of document.querySelectorAll(".acbox")) if (b !== except) b.hidden = true; }
+document.addEventListener("focusin", e => { if (e.target.dataset && e.target.dataset.ac) { hideAllAc(e.target.parentElement.querySelector(".acbox")); showAc(e.target); } });
+document.addEventListener("input", e => { if (e.target.dataset && e.target.dataset.ac) showAc(e.target); if (e.target.id === "f-city") e.target.dataset.auto = "0"; });
+document.addEventListener("focusout", e => { if (e.target.dataset && e.target.dataset.ac) setTimeout(() => { const box = e.target.parentElement && e.target.parentElement.querySelector(".acbox"); if (box && !box.contains(document.activeElement)) box.hidden = true; }, 180); });
+// pointerdown so the pick lands before the input loses focus
+document.addEventListener("pointerdown", e => {
+  const b = e.target.closest && e.target.closest("[data-acpick]"); if (!b) return;
+  e.preventDefault();
+  const box = b.closest(".acbox"), input = box.parentElement.querySelector("[data-ac]"), o = box._opts[Number(b.dataset.acpick)];
+  input.value = o.label; box.hidden = true;
+  if (input.dataset.ac === "venue" && o.city) { const c = $("#f-city"); if (c && (!c.value.trim() || c.dataset.auto === "1")) { c.value = o.city; c.dataset.auto = "1"; } }
+  if (input.classList.contains("lu-in")) { readForm(); refreshBest(); const ins = [...document.querySelectorAll(".lu-in")], nx = ins[ins.indexOf(input) + 1]; if (nx && !nx.value) nx.focus(); else input.blur(); }
+  else input.blur();
+});
+document.addEventListener("keydown", e => { if (e.key === "Escape" && e.target.dataset && e.target.dataset.ac) { const box = e.target.parentElement.querySelector(".acbox"); if (box && !box.hidden) { box.hidden = true; e.stopPropagation(); } } }, true);
+
 /* ---------- Calendar export (.ics + Google link) ---------- */
 // Shows have no start time, so each is an all-day event. UIDs are stable per show,
 // so importing the file again updates events instead of doubling them (Apple, Outlook).
@@ -1607,7 +1672,7 @@ function drawEdit(){
     <div class="field"><span class="lbl">Top 5 bands</span><div class="top5edit">${e.favBands.map((b, i) => `<label><span class="num">${i + 1}</span><input id="pf-fav${i}" maxlength="40" list="dl-bands" value="${esc(b)}" placeholder="${i ? "" : "Katatonia"}" aria-label="Favorite band ${i + 1}"></label>`).join("")}</div></div>
     <label class="field"><span class="lbl">Favorite venue</span><input id="pf-venue" maxlength="60" list="dl-venues" value="${esc(e.favVenue)}" placeholder="Union Transfer"></label>
     <datalist id="dl-bands">${counts(S.shows.flatMap(lineup)).slice(0, 200).map(b => `<option value="${esc(b.name)}">`).join("")}</datalist>
-    <datalist id="dl-venues">${counts(S.shows.map(x => x.venue || "")).filter(v => v.name).map(v => `<option value="${esc(v.name)}">`).join("")}</datalist>
+    <datalist id="dl-venues">${[...new Set([...counts(S.shows.map(x => x.venue || "")).filter(v => v.name).map(v => v.name), ...VENUES.map(v => v.name)])].map(v => `<option value="${esc(v)}">`).join("")}</datalist>
     <label class="field"><span class="lbl">Username</span><div class="hrow"><span>@</span><input id="pf-handle" maxlength="20" value="${esc(e.handle)}" autocapitalize="none" spellcheck="false" ${handleLock() ? "disabled" : ""}></div></label>
     <div class="ro">${handleLock() ? `You changed your username recently. You can change it again on ${handleLock()}.` : `Changing it keeps your shows, crew and tags. Your old username keeps pointing to you, so friends who type it still find you. You can change it once every ${HANDLE_COOLDOWN_DAYS} days.`}</div>
     <div class="ro" style="opacity:.6">Account ID: <span class="num">${esc(ME.uid)}</span> (never changes)</div>
@@ -1866,13 +1931,18 @@ function startApp(){
     S.shows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     if (!snap.metadata.fromCache || S.shows.length) { S.loaded = true; S.slow = false; clearTimeout(timer); }
     if (friendList().some(f => f.family)) scheduleFamilySync();
+    // Only redraw an open show when its photos/poster changed underneath it; otherwise leave
+    // the form alone so nothing being typed gets lost or loses focus.
+    let redraw = false;
     if (S.open && !S.openFriend && S.open !== "__new" && draft && !busy) {
       const fresh = S.shows.find(x => x.id === S.open);
-      if (fresh) { readForm(); for (const k of ["poster","photos","merch"]) draft[k] = fresh[k]; }
+      if (fresh && ["poster","photos","merch"].some(k => JSON.stringify(fresh[k] ?? null) !== JSON.stringify(draft[k] ?? null))) {
+        readForm(); for (const k of ["poster","photos","merch"]) draft[k] = fresh[k]; redraw = true;
+      }
     }
     renderNext();
     schedulePublish();
-    if (!S.open) renderTab(); else renderSheet();
+    if (!S.open) renderTab(); else if (redraw || busy) renderSheet();
   }, err => { clearTimeout(timer); S.loaded = true; S.error = err.code === "permission-denied" ? "Your log is blocked — the Firestore rules aren't published yet." : "The log couldn't load. Reload to try again."; render(); }));
   const reqs = (field, key) => onSnapshot(query(collection(fdb, "friendRequests"), where(field, "==", ME.uid)), snap => {
     REQ[key] = snap.docs.map(d => ({ id: d.id, ...d.data() })); syncFriends(); updateCrewBadge();
