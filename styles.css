@@ -344,3 +344,10 @@ a.btn{text-decoration:none;display:inline-flex;align-items:center;justify-conten
 .setrow .st{display:grid;gap:2px;min-width:0}.setrow .st b{color:var(--bone);font-weight:600}
 .setrow select{flex:none;max-width:44%}
 .setrow select{background:var(--void);color:var(--bone);border:1px solid var(--iron);padding:8px 10px;font-family:var(--f-label);font-weight:600;letter-spacing:.04em;min-height:40px}
+/* search */
+.hbtn{width:40px;height:40px;border-radius:50%;padding:9px;border:2px solid var(--iron);background:var(--slab);color:var(--bone);display:grid;place-items:center}
+.hbtn:hover{border-color:var(--blood)}.hbtn svg{width:100%;height:100%}
+.brand-r{gap:8px}
+.searchv{gap:12px}
+.bandhit{display:grid;gap:4px;margin-bottom:10px}
+.bandhit .who{padding:0 4px}.bandhit .who .chip{cursor:pointer}

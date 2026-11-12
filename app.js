@@ -1,7 +1,7 @@
 // Pit Log — Firebase edition
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -296,6 +296,8 @@ const PRIVACY = [
   ["upcoming", "Upcoming shows", "Shows that haven't happened yet, so people can't see where you'll be."],
   ["stats", "Profile stats", "Show, band and venue counts, and your spot in Crew standings."],
   ["tagMe", "Who can tag me", "Who can tag you on their shows. People you block from tagging won't see you in their tag list."],
+  ["searchable", "Find me in search", "Public lets anyone on Pit Log find your profile by name or username. Anything else keeps you out of search."],
+  ["publicShows", "Shows on my public profile", "Public lets people outside your crew see your shows (date, bands, venue) on your profile and in band search. The settings above decide which extra details come with them."],
 ];
 const SETTING_DEFAULTS = { ...Object.fromEntries(PRIVACY.map(([k]) => [k, "public"])),
   defaultView: "list", defaultSort: "newest", crewDefault: "off", weekStart: "sun", currency: "$", distance: "mi" };
@@ -422,7 +424,7 @@ function renderTab(){
   updateCrewBadge();
   if (S.tab === "cal") { S.tab = "shows"; S.showView = "cal"; }
   for (const t of ["shows","vault","stats","crew"]) $("#tab-"+t).setAttribute("aria-selected", S.tab===t);
-  if (S.tab === "me") renderMe(); else if (S.tab === "crew") renderCrew(); else if (S.tab === "shows") renderShows(); else if (S.tab === "cal") renderCal(); else if (S.tab === "vault") renderVault(); else renderStats();
+  if (S.tab === "search") renderSearch(); else if (S.tab === "me") renderMe(); else if (S.tab === "crew") renderCrew(); else if (S.tab === "shows") renderShows(); else if (S.tab === "cal") renderCal(); else if (S.tab === "vault") renderVault(); else renderStats();
 }
 function render(){ renderNext(); renderTab(); if (S.open) renderSheet(); }
 
@@ -769,6 +771,8 @@ document.addEventListener("click", e => {
   else if (t.dataset.fopen) { const [u, id] = t.dataset.fopen.split("|"); openFriendSheet(u, id); }
   else if (t.id === "tab-crew") { if (S.tab === "crew") S.crewSel = null; S.tab = "crew"; renderTab(); }
   else if (t.id === "acct") accountMenu();
+  else if (t.id === "searchBtn") { S.tab = "search"; S.search.profile = null; renderTab(); window.scrollTo(0, 0); setTimeout(() => $("#sq") && $("#sq").focus(), 50); }
+  else if (searchClick(t)) {}
   else if (t.hasAttribute("data-editprofile")) editProfile();
   else if (t.hasAttribute("data-myprofile2")) { S.tab = "me"; renderTab(); window.scrollTo(0, 0); }
   else if (t.hasAttribute("data-crewtoggle")) { S.crewOn = !S.crewOn; try { localStorage.setItem("pitlog.crewOn", S.crewOn ? "1" : "0"); } catch (_) {} renderTab(); }
@@ -995,7 +999,7 @@ function syncFriends(){
   for (const uid of Object.keys(FR)) if (!keep.has(uid)) dropFriend(uid);
   rerenderSoft(); scheduleFamilySync();
 }
-function rerenderSoft(){ updateCrewBadge(); if (S.open || LB || $("#modalRoot").innerHTML) return; if (S.tab !== "vault") renderTab(); }
+function rerenderSoft(){ updateCrewBadge(); if (S.tab === "search") return; if (S.open || LB || $("#modalRoot").innerHTML) return; if (S.tab !== "vault") renderTab(); }
 
 async function sendRequest(raw){
   const h = String(raw||"").trim().replace(/^@/, "").toLowerCase();
@@ -1023,6 +1027,203 @@ async function acceptRequest(r){
   catch (e) { handleWriteErr(e); }
 }
 async function removeRequest(id, msg){ try { await deleteDoc(doc(fdb, "friendRequests", id)); if (msg) toast(msg); } catch (e) { handleWriteErr(e); } }
+
+/* ---------- Public layer: what people outside your crew can see ---------- */
+// Your full shows stay readable only by you and your crew. For people outside the crew, the app
+// writes a separate copy of each show to publicShows/{uid}_{showId} with ONLY the fields you set
+// to Public. The Firestore rules let any signed-in user read publicShows, so hidden fields never
+// leave your account.
+const normBand = b => String(b || "").toLowerCase().replace(/^the\s+/, "").replace(/[^a-z0-9]+/g, "");
+const PUBLIC_FIELDS = { ticketCost: ["ticket", "ticketQty", "ticketTotal"], merchCost: ["merchSpend"], photos: ["photos", "merch"], poster: ["poster"],
+  ratings: ["rating", "pit", "best"], notes: ["notes", "highlight", "setlist"], wentWith: ["wentWith"], spot: ["spot", "miles"] };
+function publicPayload(sh, set){
+  const o = { ownerUid: ME.uid, ownerHandle: PROFILE.handle || "", ownerName: PROFILE.name || "", ownerPhoto: PROFILE.photoURL || "", showId: sh.id,
+    date: sh.date || "", lineup: lineup(sh), bandKeys: [...new Set(lineup(sh).map(normBand).filter(Boolean))], venue: sh.venue || "", city: sh.city || "", tour: sh.tour || "", unsure: !!sh.unsure };
+  for (const [k, fields] of Object.entries(PUBLIC_FIELDS)) if (set[k] === "public") for (const fld of fields) {
+    let v = sh[fld]; if (v === undefined) v = null;
+    if (fld === "photos" || fld === "merch") v = items(sh, fld).map(m => ({ url: m.url, type: m.type || "image", bands: m.bands || [] }));
+    if (fld === "poster") v = sh.poster ? { url: pid(sh.poster) } : null;
+    o[fld] = v;
+  }
+  return o;
+}
+const stable = v => Array.isArray(v) ? "[" + v.map(stable).join(",") + "]" : v && typeof v === "object" ? "{" + Object.keys(v).sort().map(k => JSON.stringify(k) + ":" + stable(v[k])).join(",") + "}" : JSON.stringify(v ?? null);
+let pubTimer = null, pubBusy = false, pubAgain = false, pubForce = false;
+function schedulePublish(force){ if (force) pubForce = true; clearTimeout(pubTimer); pubTimer = setTimeout(publishAll, 2500); }
+async function publishAll(){
+  if (!ME || !PROFILE || !S.loaded) return;
+  if (pubBusy) { pubAgain = true; return; }
+  pubBusy = true;
+  try {
+    const set = MY();
+    const want = new Map();
+    if (set.publicShows === "public") for (const sh of S.shows) {
+      if (isUpcoming(sh) && set.upcoming !== "public") continue;
+      want.set(ME.uid + "_" + sh.id, publicPayload(sh, set));
+    }
+    const have = new Map((await getDocs(query(collection(fdb, "publicShows"), where("ownerUid", "==", ME.uid)))).docs.map(d => [d.id, d.data()]));
+    const ops = [];
+    for (const [id, data] of want) if (pubForce || !have.has(id) || stable(have.get(id)) !== stable(data)) ops.push(["set", id, data]);
+    for (const id of have.keys()) if (!want.has(id)) ops.push(["del", id]);
+    for (let i = 0; i < ops.length; i += 400) {
+      const b = writeBatch(fdb);
+      for (const [op, id, data] of ops.slice(i, i + 400)) op === "set" ? b.set(doc(fdb, "publicShows", id), data) : b.delete(doc(fdb, "publicShows", id));
+      await b.commit();
+    }
+    pubForce = false;
+  } catch (e) { console.warn("public profile sync", e.code || e); }
+  pubBusy = false;
+  if (pubAgain) { pubAgain = false; schedulePublish(); }
+}
+// Lowercased name on the profile doc so people can search by name.
+async function syncSearchFields(){
+  const nl = String(PROFILE.name || "").trim().toLowerCase();
+  if (PROFILE.nameLower === nl) return;
+  try { await updateDoc(doc(fdb, "users", ME.uid), { nameLower: nl }); PROFILE.nameLower = nl; } catch (_) {}
+}
+
+/* ---------- Search: people and bands ---------- */
+S.search = { mode: "people", q: "", people: null, bands: null, busy: false, profile: null, pub: null };
+let searchTimer = null, searchSeq = 0;
+function relationOf(uid){
+  if (ME && uid === ME.uid) return "me";
+  if (FR[uid]) return FR[uid].family ? "family" : "crew";
+  if (REQ.out.some(r => r.to === uid && r.status === "pending")) return "sent";
+  if (REQ.in.some(r => r.from === uid && r.status === "pending")) return "asked";
+  return "";
+}
+const relChip = rel => rel === "family" ? `<span class="chip fam">Family</span>` : rel === "crew" ? `<span class="chip tog">Crew</span>` : rel === "sent" ? `<span class="chip unsure">Request sent</span>` : rel === "asked" ? `<span class="chip unsure">Wants to connect</span>` : rel === "me" ? `<span class="chip">You</span>` : "";
+function runSearch(){
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(async () => {
+    const seq = ++searchSeq, q = S.search.q.trim();
+    if (S.search.mode === "people") S.search.people = q.replace(/^@/, "").length >= 2 ? await searchPeople(q) : null;
+    else S.search.bands = q.length >= 2 ? await searchBands(q) : null;
+    if (seq === searchSeq && S.tab === "search" && !S.search.profile) drawSearchResults();
+  }, 300);
+}
+async function searchPeople(q){
+  const h = q.replace(/^@/, "").toLowerCase(), out = new Map();
+  const take = snap => snap.docs.forEach(d => out.set(d.id, { uid: d.id, ...d.data() }));
+  try {
+    await Promise.all([
+      getDocs(query(collection(fdb, "users"), orderBy("handle"), where("handle", ">=", h), where("handle", "<=", h + "\uf8ff"), limit(12))).then(take),
+      getDocs(query(collection(fdb, "users"), orderBy("nameLower"), where("nameLower", ">=", h), where("nameLower", "<=", h + "\uf8ff"), limit(12))).then(take)]);
+  } catch (e) { console.warn("people search", e); }
+  // Friends always show up; anyone else only if they allow search.
+  for (const f of friendList()) if ([f.name, f.handle].some(x => String(x || "").toLowerCase().includes(h))) out.set(f.uid, { uid: f.uid, name: f.name, handle: f.handle, photoURL: f.photo, settings: f.settings });
+  return [...out.values()].filter(u => u.uid !== ME.uid && (FR[u.uid] || settingsOf(u).searchable === "public"))
+    .sort((a, b) => (!!FR[b.uid] - !!FR[a.uid]) || String(a.handle).localeCompare(String(b.handle)));
+}
+async function searchBands(q){
+  const key = normBand(q), groups = new Map();
+  const add = (sh, who) => {
+    const k = sh.date + "|" + normBand(sh.venue) + "|" + normBand(lineup(sh)[0]);
+    const g = groups.get(k) || { show: sh, people: [] }; groups.set(k, g);
+    if (!g.people.some(p => p.uid === who.uid)) g.people.push(who);
+    if (who.uid === ME.uid) g.show = sh;
+  };
+  const hit = sh => lineup(sh).some(b => normBand(b).includes(key));
+  for (const sh of S.shows) if (hit(sh)) add(sh, { uid: ME.uid, handle: PROFILE.handle, me: true, id: sh.id });
+  for (const f of friendList()) for (const sh of (f.shows || [])) if (hit(sh)) add(sh, { uid: f.uid, handle: f.handle, friend: true, id: sh.id });
+  try {
+    const snap = await getDocs(query(collection(fdb, "publicShows"), where("bandKeys", "array-contains", key), limit(100)));
+    for (const d of snap.docs) { const x = d.data(); if (x.ownerUid === ME.uid || FR[x.ownerUid]) continue; add({ ...x, id: x.showId }, { uid: x.ownerUid, handle: x.ownerHandle, pub: true, id: x.showId }); }
+  } catch (e) { console.warn("band search", e); }
+  const all = [...groups.values()];
+  return { up: all.filter(g => isUpcoming(g.show)).sort((a, b) => a.show.date.localeCompare(b.show.date)),
+           past: all.filter(g => !isUpcoming(g.show)).sort((a, b) => b.show.date.localeCompare(a.show.date)) };
+}
+function bandSuggestions(q){
+  const k = normBand(q); if (k.length < 2) return [];
+  const names = new Map();
+  for (const sh of [...S.shows, ...friendList().flatMap(f => f.shows || [])]) for (const b of lineup(sh)) if (normBand(b).includes(k)) names.set(normBand(b), b);
+  return [...names.values()].slice(0, 8);
+}
+function renderSearch(){
+  if (S.search.profile) return renderPublicProfile(S.search.profile);
+  const m = S.search.mode;
+  $("#view").innerHTML = `<div class="crew searchv">
+    <div class="seg vswitch" role="group" aria-label="Search for"><button data-smode="people" aria-pressed="${m === "people"}">People</button><button data-smode="bands" aria-pressed="${m === "bands"}">Bands</button></div>
+    <input class="search" id="sq" value="${esc(S.search.q)}" placeholder="${m === "people" ? "Name or @username" : "Band name"}" autocapitalize="none" spellcheck="false" aria-label="Search">
+    <div id="sres"></div></div>`;
+  drawSearchResults();
+}
+function drawSearchResults(){
+  const box = $("#sres"); if (!box) return;
+  const q = S.search.q.trim(), m = S.search.mode;
+  if (m === "people") {
+    const list = S.search.people;
+    if (!list) { box.innerHTML = `<div class="ro">Find friends by name or username. Only people who allow search show up, plus your own crew.</div>`; return; }
+    if (!list.length) { box.innerHTML = `<div class="empty"><h3>No one found</h3><div>Check the spelling, or ask them for their username.</div></div>`; return; }
+    box.innerHTML = `<div class="plist">${list.map(u => `<button class="prow tap" data-sprof="${esc(u.uid)}">${avatar(u.photoURL, u.name)}<div class="pt"><div class="nm">${esc(u.name || u.handle)}</div><div class="hd">@${esc(u.handle)} ${relChip(relationOf(u.uid))}</div></div></button>`).join("")}</div>`;
+    return;
+  }
+  const sug = bandSuggestions(q).filter(b => !ieq(b, q));
+  const res = S.search.bands;
+  let h = sug.length ? `<div class="tagrow" style="margin-bottom:10px">${sug.map(b => `<button class="tagbtn" data-sband="${esc(b)}">${esc(b)}</button>`).join("")}</div>` : "";
+  if (!res) h += `<div class="ro">Search a band to see every show of theirs logged by you, your crew, and people with public profiles.</div>`;
+  else if (!res.up.length && !res.past.length) h += `<div class="empty"><h3>No shows found</h3><div>Nobody you can see has logged "${esc(q)}" yet.</div></div>`;
+  else {
+    const row = g => { const sh = g.show, p = parse(sh.date), lu = lineup(sh), mine = g.people.find(x => x.me);
+      const who = g.people.map(x => `<button class="chip ${x.me ? "" : x.friend ? "tog" : "crewtag"}" data-sprof="${esc(x.uid)}">${x.me ? "You" : "@" + esc(x.handle)}</button>`).join("");
+      const open = mine ? `data-open="${esc(mine.id)}"` : g.people.find(x => x.friend) ? `data-fopen="${esc(g.people.find(x => x.friend).uid)}|${esc(g.people.find(x => x.friend).id)}"` : `data-sprof="${esc(g.people[0].uid)}"`;
+      return `<div class="bandhit"><button class="prow tap prow-show" ${open}><span class="pdate"><b class="num">${p.d}</b>${MONTHS[(p.m||1)-1]} ${p.y}</span>
+        <div class="pt"><div class="nm" style="font-size:20px">${esc(lu[0] || "Show")}</div>${lu.length > 1 ? `<div class="ro">w/ ${esc(lu.slice(1).join(" · "))}</div>` : ""}<div class="ro">${esc([sh.venue, sh.city].filter(Boolean).join(" — ") || "Venue unknown")}</div></div></button>
+        <div class="tagrow who"><span class="lbl">${g.people.length} went</span>${who}</div></div>`; };
+    if (res.up.length) h += `<section class="sect"><h3>Coming up <span class="lbl">${res.up.length}</span></h3>${res.up.map(row).join("")}</section>`;
+    if (res.past.length) h += `<section class="sect"><h3>Past shows <span class="lbl">${res.past.length}</span></h3>${res.past.map(row).join("")}</section>`;
+  }
+  box.innerHTML = h;
+}
+async function openProfile(uid){
+  if (uid === ME.uid) { S.tab = "me"; renderTab(); window.scrollTo(0, 0); return; }
+  if (FR[uid]) { S.tab = "crew"; S.crewSel = uid; S.crewView = "shows"; renderTab(); window.scrollTo(0, 0); return; }
+  S.tab = "search"; S.search.profile = uid; S.search.pub = null; renderTab(); window.scrollTo(0, 0);
+  try {
+    const [u, shows] = await Promise.all([getDoc(doc(fdb, "users", uid)), getDocs(query(collection(fdb, "publicShows"), where("ownerUid", "==", uid)))]);
+    S.search.pub = { uid, user: u.exists() ? u.data() : {}, shows: shows.docs.map(d => ({ ...d.data(), id: d.data().showId || d.id })) };
+  } catch (e) { S.search.pub = { uid, user: {}, shows: [], err: true }; }
+  if (S.search.profile === uid) renderPublicProfile(uid);
+}
+function renderPublicProfile(uid){
+  const P = S.search.pub;
+  const back = `<button class="btn ghost" data-sback style="justify-self:start">← Search</button>`;
+  if (!P || P.uid !== uid) { $("#view").innerHTML = `<div class="crew">${back}<div class="ro">Loading…</div></div>`; return; }
+  const u = P.user, set = settingsOf(u), rel = relationOf(uid);
+  const shows = [...P.shows].sort((a, b) => (b.date || "").localeCompare(a.date || "")), done = shows.filter(x => !isUpcoming(x));
+  const top = profileTop({ name: u.name, handle: u.handle, photo: u.photoURL, bio: u.bio, favBand: u.favBand }, false, null);
+  const act = rel === "sent" ? `<span class="chip unsure">Request sent</span>` : rel === "asked" ? `<button class="btn red" data-sacceptfrom="${esc(uid)}">Accept their request</button>` : `<button class="btn red" data-sadd="${esc(u.handle || "")}">Add to crew</button>`;
+  const bands = counts(done.flatMap(lineup)), venues = counts(done.map(x => x.venue || "")).filter(v => v.name);
+  const tile = (l, v) => `<div class="tile"><div class="lbl">${l}</div><div class="v num">${v}</div></div>`;
+  const stats = set.stats === "public" && shows.length ? `<div class="tiles">${tile("Shows", done.length)}${tile("Bands seen", bands.length)}${tile("Venues", venues.length)}</div>` : "";
+  const list = shows.length ? `<section class="sect"><h3>Shows <span class="lbl">${shows.length}</span></h3><div class="list">${shows.map(pubTicket).join("")}</div></section>`
+    : `<div class="empty"><h3>Nothing public</h3><div>@${esc(u.handle || "")} keeps their shows to their crew. Add them to see more once they accept.</div></div>`;
+  $("#view").innerHTML = `<div class="crew">${back}<section class="prof">${top}</section><div class="prof-act">${act}</div>${stats}${list}</div>`;
+}
+// Read-only card for a public show (only the fields its owner made public are present).
+function pubTicket(sh){
+  const p = parse(sh.date), lu = lineup(sh), up = isUpcoming(sh), r = Number(sh.rating) || 0;
+  const thumbs = [sh.poster && sh.poster.url, ...(sh.photos || []).map(m => m.url)].filter(Boolean).slice(0, 4);
+  return `<div class="ticket ${up ? "upcoming" : ""}" style="cursor:default">
+    <div class="stub"><div class="mo">${MONTHS[(p.m||1)-1].toUpperCase()}</div><div class="dd num">${p.d||"?"}</div><div class="dw">${DAYS[p.dt.getDay()]}</div></div>
+    <div class="tbody"><div class="head">${esc(lu[0] || "Show")}</div>${lu.length > 1 ? `<div class="sup"><b>w/</b> ${esc(lu.slice(1).join(" · "))}</div>` : ""}
+      <div class="venue">${esc([sh.venue, sh.city].filter(Boolean).join(" — ") || "Venue unknown")}</div>
+      <div class="chips">${up ? `<span class="chip up">Upcoming</span>` : ""}${!up && r ? `<span class="skulls">${[1,2,3,4,5].map(i => SKULLV(r, i)).join("")}</span>` : ""}
+        ${S.shows.some(o => sameShow(o, sh)) ? `<span class="chip tog">You were there</span>` : ""}${sh.spot ? `<span class="chip">${esc(sh.spot)}</span>` : ""}</div>
+      ${sh.notes ? `<div class="ro" style="margin-top:6px">${esc(sh.notes)}</div>` : ""}
+      ${thumbs.length ? `<div class="thumbs">${thumbs.map(x => `<img src="${esc(x)}" alt="" loading="lazy" onerror="this.remove()">`).join("")}</div>` : ""}</div></div>`;
+}
+function searchClick(t){
+  if (t.dataset.smode) { S.search.mode = t.dataset.smode; S.search.q = ""; renderSearch(); $("#sq").focus(); return true; }
+  if (t.dataset.sprof) { openProfile(t.dataset.sprof); return true; }
+  if (t.dataset.sband) { S.search.q = t.dataset.sband; renderSearch(); runSearch(); return true; }
+  if (t.hasAttribute("data-sback")) { S.search.profile = null; renderSearch(); return true; }
+  if (t.dataset.sadd !== undefined) { sendRequest(t.dataset.sadd).then(() => { if (S.search.profile) renderPublicProfile(S.search.profile); }); return true; }
+  if (t.dataset.sacceptfrom) { const r = REQ.in.find(x => x.from === t.dataset.sacceptfrom && x.status === "pending"); if (r) acceptRequest(r); return true; }
+  return false;
+}
+document.addEventListener("input", e => { if (e.target.id === "sq") { S.search.q = e.target.value; if (S.search.mode === "bands") { const box = $("#sres"); if (box && !S.search.bands) drawSearchResults(); } runSearch(); } });
 
 /* ---------- Calendar export (.ics + Google link) ---------- */
 // Shows have no start time, so each is an all-day event. UIDs are stable per show,
@@ -1371,7 +1572,7 @@ async function saveSetting(key, val){
   if (key === "defaultView") { S.showView = val; try { localStorage.setItem("pitlog.showView", val); } catch (_) {} }
   if (key === "defaultSort") { S.sort = val; try { localStorage.setItem("pitlog.sort", val); } catch (_) {} }
   if (key === "crewDefault") { S.crewOn = val === "on"; try { localStorage.setItem("pitlog.crewOn", S.crewOn ? "1" : "0"); } catch (_) {} }
-  try { await updateDoc(doc(fdb, "users", ME.uid), { ["settings." + key]: val }); toast("Saved"); }
+  try { await updateDoc(doc(fdb, "users", ME.uid), { ["settings." + key]: val }); toast("Saved"); schedulePublish(); }
   catch (e) { handleWriteErr(e); }
 }
 function downloadBackup(){
@@ -1470,7 +1671,7 @@ async function saveProfileEdit(){
     if (old && old !== patch.photoPath) removeFile(old);
     PEDIT = null; $("#modalRoot").innerHTML = "";
     $("#acct").innerHTML = avatar(PROFILE.photoURL, PROFILE.name);
-    toast(changing ? `You're now @${patch.handle}` : "Profile saved"); renderTab();
+    toast(changing ? `You're now @${patch.handle}` : "Profile saved"); renderTab(); syncSearchFields(); schedulePublish(true);
   } catch (err) { handleWriteErr(err); }
 }
 
@@ -1644,7 +1845,9 @@ function startApp(){
   if (ps.crewDefault) S.crewOn = ps.crewDefault === "on";
   showOnly("appRoot");
   const a = $("#acct"); a.hidden = false; a.innerHTML = avatar(PROFILE.photoURL, PROFILE.name);
+  $("#searchBtn").hidden = false;
   $("#addBtn").hidden = false;
+  syncSearchFields();
   render();
   const timer = setTimeout(() => { if (!S.loaded) { S.slow = true; render(); } }, 10000);
   UNSUBS.push(onSnapshot(myShows(), { includeMetadataChanges: false }, snap => {
@@ -1656,6 +1859,7 @@ function startApp(){
       if (fresh) { readForm(); for (const k of ["poster","photos","merch"]) draft[k] = fresh[k]; }
     }
     renderNext();
+    schedulePublish();
     if (!S.open) renderTab(); else renderSheet();
   }, err => { clearTimeout(timer); S.loaded = true; S.error = err.code === "permission-denied" ? "Your log is blocked — the Firestore rules aren't published yet." : "The log couldn't load. Reload to try again."; render(); }));
   const reqs = (field, key) => onSnapshot(query(collection(fdb, "friendRequests"), where(field, "==", ME.uid)), snap => {

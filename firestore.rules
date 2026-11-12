@@ -23,6 +23,14 @@ service cloud.firestore {
       }
     }
 
+    // Public copies of shows: only the fields each owner set to Public. Anyone signed in can read;
+    // only the owner can write, and only under their own uid prefix.
+    match /publicShows/{id} {
+      allow read: if signedIn();
+      allow create, update: if signedIn() && request.resource.data.ownerUid == me() && id.matches(me() + '_.+');
+      allow delete: if signedIn() && resource.data.ownerUid == me();
+    }
+
     match /handles/{handle} {
       allow read: if signedIn();
       allow create: if signedIn() && request.resource.data.uid == me()
