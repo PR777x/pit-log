@@ -29,8 +29,15 @@ const SPOTS = ["","Barricade","Pit","Floor","GA back","Balcony","Seated","Lawn",
 const MAX_BYTES = 20 * 1024 * 1024;
 const todayISO = (() => { const d = new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); })();
 
+const SKULL_D = "M12 2C6.9 2 3 5.7 3 10.5c0 2.6 1.2 4.6 3 5.9V19a1 1 0 0 0 1 1h1.5v-2h1.5v2h4v-2h1.5v2H17a1 1 0 0 0 1-1v-2.6c1.8-1.3 3-3.3 3-5.9C21 5.7 17.1 2 12 2Zm-3.5 7.5a2 2 0 1 1 0 4 2 2 0 0 1 0-4Zm7 0a2 2 0 1 1 0 4 2 2 0 0 1 0-4ZM12 13.6l1.2 2.2h-2.4L12 13.6Z";
 const SKULL = (on) => SKULLC(on?'var(--bone)':'var(--iron)');
-const SKULLC = (fill) => `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="${fill}" d="M12 2C6.9 2 3 5.7 3 10.5c0 2.6 1.2 4.6 3 5.9V19a1 1 0 0 0 1 1h1.5v-2h1.5v2h4v-2h1.5v2H17a1 1 0 0 0 1-1v-2.6c1.8-1.3 3-3.3 3-5.9C21 5.7 17.1 2 12 2Zm-3.5 7.5a2 2 0 1 1 0 4 2 2 0 0 1 0-4Zm7 0a2 2 0 1 1 0 4 2 2 0 0 1 0-4ZM12 13.6l1.2 2.2h-2.4L12 13.6Z"/></svg>`;
+const SKULLC = (fill) => `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="${fill}" d="${SKULL_D}"/></svg>`;
+// Skull i of 5 for a rating that can land on halves: full, left half, or empty.
+const SKULLV = (rating, i) => rating >= i ? SKULL(true) : rating >= i - 0.5
+  ? `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="var(--iron)" d="${SKULL_D}"/><path fill="var(--bone)" style="clip-path:inset(0 50% 0 0)" d="${SKULL_D}"/></svg>` : SKULL(false);
+const fmtRating = r => (Math.round(r * 2) / 2).toString();
+// Tap a step: full, tap it again for a half, again to clear.
+const stepRating = (cur, i) => cur === i ? i - 0.5 : cur === i - 0.5 ? 0 : i;
 
 let S = { shows: [], loaded: false, slow: false, error: "", tab: "shows", filter: "all", q: "",
   open: null, canWrite: true, year: "all", sort: (()=>{ try { const v = localStorage.getItem("pitlog.sort"); return ["newest","oldest","rating","venue","band"].includes(v) ? v : "newest"; } catch(_) { return "newest"; } })(), vault: { by: "band", sel: null, type: "all", q: "" },
@@ -112,7 +119,7 @@ function ticket(s, firsts, opts){
       <div class="chips">
         ${up ? `<span class="chip up">Upcoming</span>` : ""}
         ${s.unsure ? `<span class="chip unsure">Unconfirmed</span>` : ""}
-        ${!up && rating ? `<span class="skulls" aria-label="${rating} of 5">${[1,2,3,4,5].map(i=>SKULL(i<=rating)).join("")}</span>` : ""}
+        ${!up && rating ? `<span class="skulls" aria-label="${fmtRating(rating)} of 5">${[1,2,3,4,5].map(i=>SKULLV(rating, i)).join("")}</span>` : ""}
         ${crew(s).map(c=>{ const tg = tagFor(s, c); const h = tg && FR[tg.uid] ? FR[tg.uid].handle : ""; return `<span class="chip crew${tg?" tg":""}"${h?` title="@${esc(h)}"`:""}>${esc(c)}</span>`; }).join("")}
         ${firstsHere.length && firstsHere.length < lu.length ? `<span class="chip first">${firstsHere.length} new band${firstsHere.length>1?"s":""}</span>` : ""}
         ${s.spot ? `<span class="chip">${esc(s.spot)}</span>` : ""}
@@ -143,7 +150,7 @@ function sortShows(list){
 }
 function groupOf(s){
   const k = S.sort, p = parse(s.date);
-  if (k === "rating") { if (isUpcoming(s)) return ["Upcoming", ""]; const r = Number(s.rating)||0; return r ? [`${r} skull${r>1?"s":""}`, ""] : ["Unrated", ""]; }
+  if (k === "rating") { if (isUpcoming(s)) return ["Upcoming", ""]; const r = Number(s.rating)||0; return r ? [`${fmtRating(r)} skull${r>1?"s":""}`, ""] : ["Unrated", ""]; }
   if (k === "venue") return [s.venue || "Venue unknown", s.city || ""];
   if (k === "band") { const c = sortKey(lineup(s)[0]).charAt(0).toUpperCase(); return [/[A-Z]/.test(c) ? c : "#", ""]; }
   return [MONTHS[(p.m||1)-1], String(p.y||"")];
@@ -447,9 +454,10 @@ function renderSheet(fresh){
 
     <div class="sect"><h3>The night ${up?`<span class="chip up">Upcoming</span>`:""}</h3>
       <div class="grid2">
-        <div class="field"><span class="lbl">Rating</span><div class="picker" role="group" aria-label="Rating">${[1,2,3,4,5].map(i=>`<button data-rate="${i}" aria-pressed="${(Number(d.rating)||0)>=i}" aria-label="${i} skull${i>1?'s':''}" ${ro?"disabled":""}>${SKULL((Number(d.rating)||0)>=i)}</button>`).join("")}</div></div>
-        <div class="field"><span class="lbl">Pit intensity</span><div class="picker meter" role="group" aria-label="Pit intensity">${[1,2,3,4,5].map(i=>`<button data-pit="${i}" aria-pressed="${(Number(d.pit)||0)>=i}" aria-label="Level ${i}" ${ro?"disabled":""}><i style="background:${(Number(d.pit)||0)>=i?`color-mix(in srgb, var(--blood) ${40+i*12}%, var(--rust))`:'var(--slab)'}"></i></button>`).join("")}</div></div>
+        <div class="field"><span class="lbl">Rating${Number(d.rating) ? ` · ${fmtRating(Number(d.rating))}` : ""}</span><div class="picker" role="group" aria-label="Rating">${[1,2,3,4,5].map(i=>`<button data-rate="${i}" aria-pressed="${(Number(d.rating)||0)>=i-0.5}" aria-label="${i} skull${i>1?'s':''}" ${ro?"disabled":""}>${SKULLV(Number(d.rating)||0, i)}</button>`).join("")}</div></div>
+        <div class="field"><span class="lbl">Pit intensity${Number(d.pit) ? ` · ${fmtRating(Number(d.pit))}` : ""}</span><div class="picker meter" role="group" aria-label="Pit intensity">${[1,2,3,4,5].map(i=>{ const pv = Number(d.pit)||0, c = `color-mix(in srgb, var(--blood) ${40+i*12}%, var(--rust))`; return `<button data-pit="${i}" aria-pressed="${pv>=i-0.5}" aria-label="Level ${i}" ${ro?"disabled":""}><i style="background:${pv>=i ? c : pv>=i-0.5 ? `linear-gradient(90deg, ${c} 50%, var(--slab) 50%)` : 'var(--slab)'}"></i></button>`; }).join("")}</div></div>
       </div>
+      ${ro ? "" : `<div class="ro" style="margin-top:-4px">Tap a skull or bar again for a half, a third time to clear.</div>`}
       <div class="grid2">
         <label class="field"><span class="lbl">Where you stood</span><select id="f-spot" ${ro?"disabled":""}>${SPOTS.map(o=>`<option value="${esc(o)}" ${d.spot===o?"selected":""}>${o||"—"}</option>`).join("")}</select></label>
         <label class="field"><span class="lbl">Best band of the night</span><select id="f-best" ${ro?"disabled":""}><option value="">—</option>${lineup(d).map(b=>`<option ${d.best===b?"selected":""}>${esc(b)}</option>`).join("")}</select></label>
@@ -520,7 +528,7 @@ async function del(){
   if (!confirmDel) { confirmDel = true; renderSheet(); return; }
   const s = S.shows.find(x=>x.id===draft.id); if (!s) return;
   try { await deleteDoc(myShow(s.id)); } catch(e){ handleWriteErr(e); return; }
-  for (const p of [s.poster && s.poster.path, ...items(s,"photos").map(m=>m.path), ...items(s,"merch").map(m=>m.path)].filter(Boolean)) await removeFile(p);
+  for (const p of [!s.linkId && s.poster && s.poster.path, ...items(s,"photos").map(m=>m.path), ...items(s,"merch").map(m=>m.path)].filter(Boolean)) await removeFile(p);
   closeSheet(); toast("Show deleted");
 }
 
@@ -634,7 +642,7 @@ async function doUpload(kind, files, bands){
     await updateDoc(myShow(s.id), patch); if (draft && draft.id === s.id) { Object.assign(draft, patch); renderSheet(); }
     const saved = before > after ? ` · ${fmtBytes(before)} → ${fmtBytes(after)}` : "";
     toast(skipped ? `Added ${out.length}${saved}. Skipped ${skipped} that couldn't upload.` : `Added ${out.length}${saved}`, skipped ? 5000 : 3500);
-    if (kind === "poster" && old && old.path) await removeFile(old.path);
+    if (kind === "poster") { await pushPoster(s, patch.poster); if (old && old.path) await removeFile(old.path); }
   } catch(e){ handleWriteErr(e); }
 }
 
@@ -682,7 +690,8 @@ async function lbRemove(){
   const e = LB.list[LB.i]; const s = S.shows.find(x=>x.id===e.show.id); if (!s) return;
   const patch = e.kind === "poster" ? { poster: null } : { [e.kind]: items(s, e.kind).filter(m => m.id !== e.it.id) };
   try {
-    await updateDoc(myShow(s.id), patch);
+    await updateDoc(myShow(s.id), e.kind === "poster" && s.linkId && s.poster ? { ...patch, posterCleared: arrayUnion(s.poster.url) } : patch);
+    if (e.kind === "poster") await pushPoster(s, null);
     await removeFile(e.it.path);
     if (draft && draft.id === s.id) Object.assign(draft, patch);
     LB.list.splice(LB.i, 1); LB.confirm = false;
@@ -732,8 +741,8 @@ document.addEventListener("click", e => {
   else if (t.hasAttribute("data-close")) closeSheet();
   else if (t.hasAttribute("data-save")) save();
   else if (t.hasAttribute("data-del")) del();
-  else if (t.dataset.rate) { readForm(); const v = Number(t.dataset.rate); draft.rating = draft.rating === v ? 0 : v; renderSheet(); }
-  else if (t.dataset.pit) { readForm(); const v = Number(t.dataset.pit); draft.pit = draft.pit === v ? 0 : v; renderSheet(); }
+  else if (t.dataset.rate) { readForm(); const v = Number(t.dataset.rate); draft.rating = stepRating(Number(draft.rating)||0, v); renderSheet(); }
+  else if (t.dataset.pit) { readForm(); const v = Number(t.dataset.pit); draft.pit = stepRating(Number(draft.pit)||0, v); renderSheet(); }
   else if (t.dataset.lbi !== undefined) { if (S.open) { readForm(); openLightbox(SHEET_LIST, Number(t.dataset.lbi)); } else openLightbox(VIEW_LIST, Number(t.dataset.lbi)); }
 });
 function keepFocus(id, fn){ const el = $("#"+id); const pos = el.selectionStart; fn(); const n = $("#"+id); if (n) { n.focus(); try{n.setSelectionRange(pos,pos);}catch(_){} } }
@@ -860,17 +869,31 @@ async function familySync(){
         const lid = s.linkId || (p && p.linkId) || ("L" + rid());
         if (p) { if (p.linkId !== lid) await updateDoc(doc(fdb, "users", f.uid, "shows", p.id), { linkId: lid }); }
         else {
-          const copy = { linkId: lid, addedBy: ME.uid, wentWith: [], rating: 0, pit: 0, spot: "", best: "", highlight: "", setlist: "", notes: "", ticket: null, ticketQty: null, ticketTotal: null, merchSpend: null, miles: s.miles ?? null, poster: null, photos: [], merch: [] };
+          const copy = { linkId: lid, addedBy: ME.uid, wentWith: [], rating: 0, pit: 0, spot: "", best: "", highlight: "", setlist: "", notes: "", ticket: null, ticketQty: null, ticketTotal: null, merchSpend: null, miles: s.miles ?? null, poster: s.poster || null, photos: [], merch: [] };
           for (const k of SHARED) copy[k] = s[k] ?? (k === "lineup" ? [] : k === "unsure" ? false : "");
           await setDoc(doc(fdb, "users", f.uid, "shows", lid), copy); made++;
         }
         await updateDoc(myShow(s.id), { linkId: lid, familySynced: arrayUnion(f.uid) });
       }
     }
+    // Tour posters are shared across linked logs: fill in any linked copy that's missing yours.
+    for (const f of friendList().filter(f => f.family && f.loaded && !f.err)) for (const s of S.shows) {
+      if (!s.linkId || !s.poster) continue;
+      const p = f.shows.find(x => x.linkId === s.linkId);
+      if (p && !p.poster && !(Array.isArray(p.posterCleared) && p.posterCleared.includes(s.poster.url))) await updateDoc(doc(fdb, "users", f.uid, "shows", p.id), { poster: s.poster });
+    }
     if (made) toast(`Shared ${made} show${made > 1 ? "s" : ""} with your Crew Family`, 3000);
   } catch (e) { console.error("family sync", e); }
   famBusy = false;
   if (famAgain) { famAgain = false; scheduleFamilySync(); }
+}
+// Send a poster change (new, replaced or removed) to every linked copy of this show.
+async function pushPoster(show, poster){
+  if (!show || !show.linkId) return;
+  for (const f of friendList().filter(f => f.family)) {
+    const p = (f.shows || []).find(x => x.linkId === show.linkId);
+    if (p) { try { await updateDoc(doc(fdb, "users", f.uid, "shows", p.id), { poster: poster || null }); } catch (e) { console.error("push poster", e); } }
+  }
 }
 async function pushShared(show){
   if (!show || !show.linkId) return;
@@ -1467,7 +1490,8 @@ function startApp(){
   }, err => console.error("requests", err));
   UNSUBS.push(reqs("to", "in"), reqs("from", "out"));
 }
-function updateCrewBadge(){ const n = REQ.in.filter(r => r.status === "pending").length + (ME && S.loaded ? tagInbox().length : 0); $("#tab-crew").innerHTML = "Crew" + (n ? ` <span class="badge-n">${n}</span>` : ""); $("#tab-crew").setAttribute("aria-selected", S.tab === "crew"); }
+function updateCrewBadge(){ const n = REQ.in.filter(r => r.status === "pending").length + (ME && S.loaded ? tagInbox().length : 0)
+  + (ME ? friendList().filter(f => f.famState === "pending" && f.famBy && f.famBy !== ME.uid).length : 0); $("#tab-crew").innerHTML = "Crew" + (n ? ` <span class="badge-n">${n}</span>` : ""); $("#tab-crew").setAttribute("aria-selected", S.tab === "crew"); }
 
 $("#signinBtn").addEventListener("click", doSignIn);
 
