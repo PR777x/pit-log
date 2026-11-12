@@ -328,3 +328,4 @@ label.btn{display:inline-block}
 .av.sm{width:20px;height:20px;font-size:11px}
 .tagin{display:grid;gap:6px}
 .tagact{display:flex;gap:8px;flex-wrap:wrap}
+.hrow{display:flex;align-items:center;gap:6px}.hrow>span{color:var(--ash);font-family:var(--f-label)}.hrow input{flex:1}

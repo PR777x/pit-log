@@ -891,14 +891,14 @@ function openFriendSheet(uid, id){
 /* ---------- Friends: data ---------- */
 let UNSUBS = [];
 function watchFriend(uid, info){
-  if (FR[uid]) { Object.assign(FR[uid], info); return; }
+  if (FR[uid]) { if (!FR[uid].live) Object.assign(FR[uid], info); return; }
   const f = FR[uid] = { uid, shows: [], loaded: false, err: "", ...info };
   f.unsub = onSnapshot(collection(fdb, "users", uid, "shows"), snap => {
     f.shows = snap.docs.map(d => ({ id: d.id, ...d.data() })); f.loaded = true; f.err = "";
     if (f.family) scheduleFamilySync();
     rerenderSoft();
   }, err => { f.err = err.code === "permission-denied" ? "Their log isn't shared with you yet." : "Couldn't load their log."; f.loaded = true; rerenderSoft(); });
-  f.unsubP = onSnapshot(doc(fdb, "users", uid), p => { if (p.exists()) { const d = p.data(); Object.assign(f, { name: d.name || f.name, handle: d.handle || f.handle, photo: d.photoURL || f.photo, bio: d.bio || "", favBand: d.favBand || "" }); rerenderSoft(); } }, () => {});
+  f.unsubP = onSnapshot(doc(fdb, "users", uid), p => { if (p.exists()) { const d = p.data(); f.live = true; Object.assign(f, { name: d.name || f.name, handle: d.handle || f.handle, photo: d.photoURL || f.photo, bio: d.bio || "", favBand: d.favBand || "" }); rerenderSoft(); } }, () => {});
 }
 function dropFriend(uid){ const f = FR[uid]; if (!f) return; try { f.unsub && f.unsub(); f.unsubP && f.unsubP(); } catch(_){} delete FR[uid]; }
 
@@ -937,7 +937,7 @@ async function sendRequest(raw){
   } catch (e) { handleWriteErr(e); }
 }
 async function acceptRequest(r){
-  try { await updateDoc(doc(fdb, "friendRequests", r.id), { status: "accepted", acceptedAt: serverTimestamp() }); toast(`You and @${r.fromHandle} are connected`); }
+  try { await updateDoc(doc(fdb, "friendRequests", r.id), { status: "accepted", acceptedAt: serverTimestamp() }); toast(`You and @${(PEOPLE[r.from] && PEOPLE[r.from].handle) || r.fromHandle} are connected`); }
   catch (e) { handleWriteErr(e); }
 }
 async function removeRequest(id, msg){ try { await deleteDoc(doc(fdb, "friendRequests", id)); if (msg) toast(msg); } catch (e) { handleWriteErr(e); } }
@@ -1057,6 +1057,14 @@ async function dismissTag(key){
   try { await updateDoc(doc(fdb, "users", ME.uid), { tagSeen: arrayUnion(key) }); } catch (e) { handleWriteErr(e); }
 }
 
+// Current name/handle for someone in a pending request (the request stores what they were at the time).
+const PEOPLE = {};
+function person(uid, name, handle, photo){
+  const p = PEOPLE[uid];
+  if (!p) { PEOPLE[uid] = { name, handle, photo, loading: true }; getDoc(doc(fdb, "users", uid)).then(d => { if (d.exists()) { const x = d.data(); PEOPLE[uid] = { name: x.name || name, handle: x.handle || handle, photo: x.photoURL || photo }; rerenderSoft(); } }).catch(() => {}); }
+  return PEOPLE[uid];
+}
+
 /* ---------- Crew tab ---------- */
 const avatar = (p, name, cls) => p ? `<img class="av ${cls||""}" src="${esc(p)}" alt="" referrerpolicy="no-referrer">` : `<span class="av ${cls||""}">${esc((name||"?").trim().charAt(0).toUpperCase())}</span>`;
 
@@ -1072,9 +1080,9 @@ function renderCrew(){
       <div style="display:flex;flex-direction:column;gap:6px"><button class="btn" data-copyhandle>Copy</button><button class="btn ghost" data-myprofile2>Profile</button></div></section>
     <section class="sect" style="margin-top:0"><h3>Add a friend</h3>
       <form class="addrow" id="addForm" autocomplete="off"><input class="search" id="addHandle" placeholder="@username" value="${esc(S.crewAdd||"")}" autocapitalize="none" spellcheck="false" aria-label="Friend's username"><button class="btn red" type="submit">Send</button></form></section>`;
-  if (inc.length) html += `<section class="sect"><h3>Requests <span class="lbl">${inc.length}</span></h3><div class="plist">${inc.map(r => `
-      <div class="prow">${avatar(r.fromPhoto, r.fromName)}<div class="pt"><div class="nm">${esc(r.fromName || r.fromHandle)}</div><div class="hd">@${esc(r.fromHandle)}</div></div>
-      <button class="btn red" data-accept="${esc(r.id)}">Accept</button><button class="btn ghost" data-decline="${esc(r.id)}">Decline</button></div>`).join("")}</div></section>`;
+  if (inc.length) html += `<section class="sect"><h3>Requests <span class="lbl">${inc.length}</span></h3><div class="plist">${inc.map(r => { const q = person(r.from, r.fromName, r.fromHandle, r.fromPhoto); return `
+      <div class="prow">${avatar(q.photo, q.name)}<div class="pt"><div class="nm">${esc(q.name || q.handle)}</div><div class="hd">@${esc(q.handle)}</div></div>
+      <button class="btn red" data-accept="${esc(r.id)}">Accept</button><button class="btn ghost" data-decline="${esc(r.id)}">Decline</button></div>`; }).join("")}</div></section>`;
   const famInc = fl.filter(f => f.famState === "pending" && f.famBy && f.famBy !== ME.uid);
   if (famInc.length) html += `<section class="sect"><h3>Family invites <span class="lbl">${famInc.length}</span></h3><div class="plist">${famInc.map(f => `
       <div class="prow">${avatar(f.photo, f.name)}<div class="pt"><div class="nm">${esc(f.name || f.handle)}</div><div class="hd">@${esc(f.handle)} wants to link logs</div>
@@ -1087,9 +1095,9 @@ function renderCrew(){
       return `<button class="prow tap" data-friend="${esc(f.uid)}">${avatar(f.photo, f.name)}<div class="pt"><div class="nm">${esc(f.name || f.handle)}</div><div class="hd">@${esc(f.handle)}${f.family ? ` <span class="chip fam">Family</span>` : f.famState === "pending" ? ` <span class="chip unsure">Family pending</span>` : ""}</div>
         <div class="ro">${f.err ? esc(f.err) : !f.loaded ? "Loading…" : f.family ? `${f.shows.filter(s=>!isUpcoming(s)).length} shows · logs linked` : `${f.shows.filter(s=>!isUpcoming(s)).length} shows · ${tog} together`}</div></div><span class="ct">${tog || ""}</span></button>`; }).join("")}</div>`;
   html += `</section>`;
-  if (out.length) html += `<section class="sect"><h3>Sent</h3><div class="plist">${out.map(r => `
-      <div class="prow">${avatar(r.toPhoto, r.toName)}<div class="pt"><div class="nm">${esc(r.toName || r.toHandle)}</div><div class="hd">@${esc(r.toHandle)} · waiting</div></div>
-      <button class="btn ghost" data-decline="${esc(r.id)}">Cancel</button></div>`).join("")}</div></section>`;
+  if (out.length) html += `<section class="sect"><h3>Sent</h3><div class="plist">${out.map(r => { const q = person(r.to, r.toName, r.toHandle, r.toPhoto); return `
+      <div class="prow">${avatar(q.photo, q.name)}<div class="pt"><div class="nm">${esc(q.name || q.handle)}</div><div class="hd">@${esc(q.handle)} · waiting</div></div>
+      <button class="btn ghost" data-decline="${esc(r.id)}">Cancel</button></div>`; }).join("")}</div></section>`;
   html += `<section class="sect explain"><h3>How the crew works</h3>
     <div class="ro"><b>Crew</b>: friends who can see each other's shows (read-only). Turn on <b>Crew</b> on Shows, Calendar or Stats to mix their shows into your view. It's off by default.</div>
     <div class="ro"><b>Tagging</b>: in a show's "Went with", tap a friend to tag them. They'll see it under "You were tagged" and can add the show to their log in one tap. Names you logged before a friend joined can be linked to their account from their profile.</div>
@@ -1151,7 +1159,7 @@ function renderMe(){
 
 let PEDIT = null;
 function editProfile(){
-  PEDIT = { name: PROFILE.name || "", bio: PROFILE.bio || "", favBand: PROFILE.favBand || "", photoURL: PROFILE.photoURL || "", photoPath: PROFILE.photoPath || "", busy: false };
+  PEDIT = { name: PROFILE.name || "", handle: PROFILE.handle || "", bio: PROFILE.bio || "", favBand: PROFILE.favBand || "", photoURL: PROFILE.photoURL || "", photoPath: PROFILE.photoPath || "", busy: false };
   drawEdit();
 }
 function drawEdit(){
@@ -1167,10 +1175,12 @@ function drawEdit(){
     <label class="field"><span class="lbl">Name</span><input id="pf-name" maxlength="40" value="${esc(e.name)}"></label>
     <label class="field"><span class="lbl">Bio <span id="pf-count">${(e.bio||"").length}/140</span></span><textarea id="pf-bio" maxlength="140" placeholder="Doom, deathcore and barricade spots.">${esc(e.bio)}</textarea></label>
     <label class="field"><span class="lbl">Favorite band</span><input id="pf-fav" maxlength="40" value="${esc(e.favBand)}" placeholder="Katatonia"></label>
-    <div class="ro">Username: @${esc(PROFILE.handle)} (can't be changed)</div>
+    <label class="field"><span class="lbl">Username</span><div class="hrow"><span>@</span><input id="pf-handle" maxlength="20" value="${esc(e.handle)}" autocapitalize="none" spellcheck="false" ${handleLock() ? "disabled" : ""}></div></label>
+    <div class="ro">${handleLock() ? `You changed your username recently. You can change it again on ${handleLock()}.` : `Changing it keeps your shows, crew and tags. Your old username keeps pointing to you, so friends who type it still find you. You can change it once every ${HANDLE_COOLDOWN_DAYS} days.`}</div>
+    <div class="ro" style="opacity:.6">Account ID: <span class="num">${esc(ME.uid)}</span> (never changes)</div>
     <div class="mbtns"><button class="btn ghost" data-pcancel>Cancel</button><button class="btn red" data-psave ${e.busy ? "disabled" : ""}>Save</button></div>
   </div></div>`;
-  const keep = () => { PEDIT.name = $("#pf-name").value; PEDIT.bio = $("#pf-bio").value; PEDIT.favBand = $("#pf-fav").value; };
+  const keep = () => { PEDIT.handle = $("#pf-handle").value; PEDIT.name = $("#pf-name").value; PEDIT.bio = $("#pf-bio").value; PEDIT.favBand = $("#pf-fav").value; };
   root.querySelector("[data-pcancel]").onclick = () => { if (PEDIT.photoPath && PEDIT.photoPath !== PROFILE.photoPath) removeFile(PEDIT.photoPath); PEDIT = null; root.innerHTML = ""; };
   root.querySelector("[data-psave]").onclick = () => { keep(); saveProfileEdit(); };
   const gb = root.querySelector("[data-avgoogle]"); if (gb) gb.onclick = () => { keep(); dropPendingAvatar(); PEDIT.photoURL = g; PEDIT.photoPath = ""; drawEdit(); };
@@ -1201,17 +1211,40 @@ async function uploadAvatar(file){
   } catch (e) { console.error(e); toast(e && e.code === "storage/unauthorized" ? "Upload blocked: check the Storage rules" : "Couldn't use that image. Try a JPG or PNG.", 4000); }
   if (PEDIT) { PEDIT.busy = false; drawEdit(); }
 }
+const HANDLE_COOLDOWN_DAYS = 30;
+// Date the next username change is allowed, or "" if it's allowed now.
+function handleLock(){
+  const t = PROFILE && PROFILE.handleChangedAt; if (!t) return "";
+  const ms = typeof t.toMillis === "function" ? t.toMillis() : Number(t) || Date.parse(t) || 0; if (!ms) return "";
+  const next = ms + HANDLE_COOLDOWN_DAYS * 864e5;
+  return Date.now() < next ? new Date(next).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "";
+}
 async function saveProfileEdit(){
   const e = PEDIT, name = (e.name || "").trim();
   if (!name) { toast("Add your name"); return; }
   const patch = { name, bio: (e.bio || "").trim().slice(0, 140), favBand: (e.favBand || "").trim().slice(0, 40), photoURL: e.photoURL || "", photoPath: e.photoPath || "" };
+  const h = String(e.handle || "").trim().replace(/^@/, "").toLowerCase(), oldH = PROFILE.handle;
+  const changing = h && h !== oldH;
+  if (changing && handleLock()) { toast(`You can change your username again on ${handleLock()}`, 4000); return; }
+  if (changing && !HANDLE_RE.test(h)) { toast("Usernames are 3–20 lowercase letters, numbers or _", 4000); return; }
   try {
-    await updateDoc(doc(fdb, "users", ME.uid), patch);
+    if (changing) {
+      // The account is keyed by uid everywhere (friends, tags, family), so only the lookup changes.
+      // The old handle doc is kept so it still resolves to this account and nobody else can grab it.
+      const taken = await getDoc(doc(fdb, "handles", h));
+      if (taken.exists() && taken.data().uid !== ME.uid) { toast(`@${h} is taken. Try another.`, 4000); return; }
+      const ts = Date.now();
+      const b = writeBatch(fdb);
+      if (!taken.exists()) b.set(doc(fdb, "handles", h), { uid: ME.uid });
+      b.update(doc(fdb, "users", ME.uid), { ...patch, handle: h, handleChangedAt: ts, prevHandles: arrayUnion(oldH) });
+      await b.commit();
+      Object.assign(patch, { handle: h, handleChangedAt: ts, prevHandles: [...new Set([...(PROFILE.prevHandles || []), oldH])] });
+    } else await updateDoc(doc(fdb, "users", ME.uid), patch);
     const old = PROFILE.photoPath; Object.assign(PROFILE, patch);
     if (old && old !== patch.photoPath) removeFile(old);
     PEDIT = null; $("#modalRoot").innerHTML = "";
     $("#acct").innerHTML = avatar(PROFILE.photoURL, PROFILE.name);
-    toast("Profile saved"); renderTab();
+    toast(changing ? `You're now @${patch.handle}` : "Profile saved"); renderTab();
   } catch (err) { handleWriteErr(err); }
 }
 
