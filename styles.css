@@ -321,3 +321,10 @@ label.btn{display:inline-block}
 .authform .gbtn{border-color:var(--bone)}
 .linkbtn{background:none;border:0;color:var(--ash);font-size:13px;text-decoration:underline;justify-self:center;padding:6px}
 .linkbtn:hover{color:var(--bone)}
+/* crew tags */
+.chip.crew.tg{border-color:var(--moss);color:var(--moss);background:none}
+.tagbtn.tagf{display:inline-flex;align-items:center;gap:6px;text-transform:none;letter-spacing:.02em}
+.tagbtn.tagf[aria-pressed="true"]{border-color:var(--moss);background:color-mix(in srgb,var(--moss) 25%,var(--void));color:var(--bone)}
+.av.sm{width:20px;height:20px;font-size:11px}
+.tagin{display:grid;gap:6px}
+.tagact{display:flex;gap:8px;flex-wrap:wrap}

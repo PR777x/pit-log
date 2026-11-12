@@ -47,6 +47,16 @@ const fmtDate = iso => { const p = parse(iso); return p.y ? `${MONTHS[p.m-1]} ${
 const isUpcoming = s => (s.date||"") > todayISO;
 const lineup = s => Array.isArray(s.lineup) ? s.lineup.filter(Boolean) : [];
 const crew = s => Array.isArray(s.wentWith) ? s.wentWith.filter(Boolean) : [];
+// Crew tags: names in "Went with" linked to a friend's account. Stored on the show as
+// tagged: [{name, uid}] plus taggedUids: [uid] so friends can tell they were tagged.
+const tagsOf = s => Array.isArray(s && s.tagged) ? s.tagged.filter(t => t && t.uid && t.name) : [];
+const tagFor = (s, name) => tagsOf(s).find(t => String(t.name).toLowerCase() === String(name).toLowerCase());
+const firstName = f => String((f && (f.name || f.handle)) || "").trim().split(/\s+/)[0];
+function nameMatches(f, name){
+  const n = String(name || "").trim().toLowerCase().replace(/^@/, ""); if (!n || !f) return false;
+  const full = String(f.name || "").trim().toLowerCase();
+  return n === full || n === full.split(/\s+/)[0] || n === String(f.handle || "").toLowerCase();
+}
 const sorted = () => [...S.shows].sort((a,b) => (a.date||"").localeCompare(b.date||""));
 const inYear = s => S.year === "all" || parse(s.date).y === Number(S.year);
 const years = () => [...new Set([new Date().getFullYear(), ...S.shows.map(s=>parse(s.date).y).filter(Boolean)])].sort((a,b)=>b-a);
@@ -103,7 +113,7 @@ function ticket(s, firsts, opts){
         ${up ? `<span class="chip up">Upcoming</span>` : ""}
         ${s.unsure ? `<span class="chip unsure">Unconfirmed</span>` : ""}
         ${!up && rating ? `<span class="skulls" aria-label="${rating} of 5">${[1,2,3,4,5].map(i=>SKULL(i<=rating)).join("")}</span>` : ""}
-        ${crew(s).map(c=>`<span class="chip crew">${esc(c)}</span>`).join("")}
+        ${crew(s).map(c=>{ const tg = tagFor(s, c); const h = tg && FR[tg.uid] ? FR[tg.uid].handle : ""; return `<span class="chip crew${tg?" tg":""}"${h?` title="@${esc(h)}"`:""}>${esc(c)}</span>`; }).join("")}
         ${firstsHere.length && firstsHere.length < lu.length ? `<span class="chip first">${firstsHere.length} new band${firstsHere.length>1?"s":""}</span>` : ""}
         ${s.spot ? `<span class="chip">${esc(s.spot)}</span>` : ""}
         ${togetherChips(s, opts)}
@@ -371,6 +381,7 @@ function renderCal(){
 }
 
 function renderTab(){
+  updateCrewBadge();
   for (const t of ["shows","cal","vault","stats","crew"]) $("#tab-"+t).setAttribute("aria-selected", S.tab===t);
   if (S.tab === "me") renderMe(); else if (S.tab === "crew") renderCrew(); else if (S.tab === "shows") renderShows(); else if (S.tab === "cal") renderCal(); else if (S.tab === "vault") renderVault(); else renderStats();
 }
@@ -431,6 +442,7 @@ function renderSheet(fresh){
 
     <div class="sect"><h3>Went with</h3>
       <label class="field"><span class="lbl">Names, comma separated</span><input id="f-crew" value="${esc(crew(d).join(", "))}" placeholder="Who was in your crew?" ${ro?"disabled":""}></label>
+      ${tagPicker(d, ro)}
     </div>
 
     <div class="sect"><h3>The night ${up?`<span class="chip up">Upcoming</span>`:""}</h3>
@@ -480,6 +492,8 @@ function readForm(){
     ticketQty: n(v("f-ticketQty")), ticketTotal: n(v("f-ticketTotal")), merchSpend: n(v("f-merchSpend")), miles: n(v("f-miles")),
   });
   draft.ticket = perTicket({ ticketQty: draft.ticketQty, ticketTotal: draft.ticketTotal });
+  draft.tagged = tagsOf(draft).filter(t => draft.wentWith.some(n => ieq(n, t.name)));
+  draft.taggedUids = [...new Set(draft.tagged.map(t => t.uid))];
 }
 
 async function save(){
@@ -713,6 +727,7 @@ document.addEventListener("click", e => {
   else if (t.hasAttribute("data-editprofile")) editProfile();
   else if (t.hasAttribute("data-myprofile2")) { S.tab = "me"; renderTab(); window.scrollTo(0, 0); }
   else if (t.hasAttribute("data-crewtoggle")) { S.crewOn = !S.crewOn; try { localStorage.setItem("pitlog.crewOn", S.crewOn ? "1" : "0"); } catch (_) {} renderTab(); }
+  else if (t.dataset.tagf) { readForm(); toggleTag(t.dataset.tagf); }
   else if (crewClick(t)) {}
   else if (t.hasAttribute("data-close")) closeSheet();
   else if (t.hasAttribute("data-save")) save();
@@ -898,7 +913,7 @@ function syncFriends(){
   for (const uid of Object.keys(FR)) if (!keep.has(uid)) dropFriend(uid);
   rerenderSoft(); scheduleFamilySync();
 }
-function rerenderSoft(){ if (S.open || LB || $("#modalRoot").innerHTML) return; if (S.tab !== "vault") renderTab(); }
+function rerenderSoft(){ updateCrewBadge(); if (S.open || LB || $("#modalRoot").innerHTML) return; if (S.tab !== "vault") renderTab(); }
 
 async function sendRequest(raw){
   const h = String(raw||"").trim().replace(/^@/, "").toLowerCase();
@@ -927,6 +942,121 @@ async function acceptRequest(r){
 }
 async function removeRequest(id, msg){ try { await deleteDoc(doc(fdb, "friendRequests", id)); if (msg) toast(msg); } catch (e) { handleWriteErr(e); } }
 
+/* ---------- Crew tagging ---------- */
+const splitKey = k => { const i = k.indexOf("|"); return [k.slice(0, i), k.slice(i + 1)]; };
+function tagPicker(d, ro){
+  const fl = friendList(); if (!fl.length) return "";
+  const on = new Set(tagsOf(d).map(t => t.uid));
+  if (ro) { const tg = tagsOf(d); return tg.length ? `<div class="tagrow">${tg.map(t => `<span class="chip crew tg">${esc(t.name)}${FR[t.uid] ? ` · @${esc(FR[t.uid].handle)}` : ""}</span>`).join("")}</div>` : ""; }
+  return `<div class="field"><span class="lbl">Tag crew with an account</span><div class="tagrow">${fl.map(f =>
+    `<button type="button" class="tagbtn tagf" data-tagf="${esc(f.uid)}" aria-pressed="${on.has(f.uid)}">${avatar(f.photo, f.name, "sm")}@${esc(f.handle)}</button>`).join("")}</div></div>`;
+}
+function toggleTag(uid){
+  const f = FR[uid]; if (!f || !draft) return;
+  const names = crew(draft), tags = tagsOf(draft);
+  if (tags.some(t => t.uid === uid)) {
+    const gone = tags.filter(t => t.uid === uid).map(t => t.name.toLowerCase());
+    draft.wentWith = names.filter(n => !gone.includes(n.toLowerCase()));
+    draft.tagged = tags.filter(t => t.uid !== uid);
+  } else {
+    let name = names.find(n => nameMatches(f, n) && !tagFor(draft, n));
+    if (!name) { name = firstName(f); if (names.some(n => ieq(n, name))) name = f.name || f.handle; draft.wentWith = names.concat(name); }
+    draft.tagged = tags.concat({ name, uid });
+  }
+  draft.taggedUids = [...new Set(draft.tagged.map(t => t.uid))];
+  renderSheet();
+}
+
+// Names in your log that aren't linked to anyone yet, with how many shows each is on.
+function untaggedNames(){
+  const m = new Map();
+  for (const s of S.shows) for (const n of crew(s)) {
+    if (tagFor(s, n)) continue;
+    const k = n.toLowerCase(); const e = m.get(k) || { name: n, n: 0 }; e.n++; m.set(k, e);
+  }
+  return [...m.values()].sort((a, b) => b.n - a.n || a.name.localeCompare(b.name));
+}
+function linkedNames(uid){
+  const m = new Map();
+  for (const s of S.shows) for (const t of tagsOf(s)) if (t.uid === uid) { const k = t.name.toLowerCase(); const e = m.get(k) || { name: t.name, n: 0 }; e.n++; m.set(k, e); }
+  return [...m.values()].sort((a, b) => b.n - a.n);
+}
+async function writeTags(changes, msg){
+  if (!changes.length) return;
+  try {
+    for (let i = 0; i < changes.length; i += 400) {
+      const b = writeBatch(fdb);
+      for (const [id, tagged] of changes.slice(i, i + 400)) b.update(myShow(id), { tagged, taggedUids: [...new Set(tagged.map(t => t.uid))] });
+      await b.commit();
+    }
+    toast(msg, 3000);
+  } catch (e) { handleWriteErr(e); }
+}
+function linkName(name, uid){
+  const f = FR[uid]; if (!f) return;
+  const ch = S.shows.filter(s => crew(s).some(n => ieq(n, name)) && !tagFor(s, name))
+    .map(s => [s.id, tagsOf(s).concat({ name: crew(s).find(n => ieq(n, name)), uid })]);
+  writeTags(ch, `Tagged @${f.handle} on ${ch.length} show${ch.length === 1 ? "" : "s"}`);
+}
+function unlinkName(name, uid){
+  const ch = S.shows.filter(s => tagsOf(s).some(t => t.uid === uid && ieq(t.name, name)))
+    .map(s => [s.id, tagsOf(s).filter(t => !(t.uid === uid && ieq(t.name, name)))]);
+  writeTags(ch, `Unlinked "${name}" from ${ch.length} show${ch.length === 1 ? "" : "s"}`);
+}
+function pastTagsBlock(f){
+  const linked = linkedNames(f.uid), free = untaggedNames();
+  const sugg = free.filter(e => nameMatches(f, e.name)), rest = free.filter(e => !nameMatches(f, e.name));
+  const row = (e, btn) => `<div class="prow"><div class="pt"><div class="nm" style="font-size:18px">${esc(e.name)}</div><div class="ro">${e.n} show${e.n === 1 ? "" : "s"} in your log</div></div>${btn}</div>`;
+  const key = e => esc(f.uid + "|" + e.name);
+  let h = `<section class="sect"><h3>Tags</h3><div class="ro" style="margin-bottom:8px">Link names from your "Went with" lists to @${esc(f.handle)}. Every show with that name gets tagged.</div>`;
+  if (linked.length) h += `<div class="plist">${linked.map(e => row(e, `<button class="btn ghost" data-tagunlink="${key(e)}">Unlink</button>`)).join("")}</div>`;
+  if (sugg.length) h += `<div class="lbl" style="margin:10px 0 6px">Looks like @${esc(f.handle)}</div><div class="plist">${sugg.map(e => row(e, `<button class="btn red" data-taglink="${key(e)}">Link</button>`)).join("")}</div>`;
+  if (rest.length) h += `<details style="margin-top:10px"><summary class="lbl">Other names in your log (${rest.length})</summary><div class="plist" style="margin-top:6px">${rest.map(e => row(e, `<button class="btn" data-taglink="${key(e)}">Link</button>`)).join("")}</div></details>`;
+  if (!linked.length && !free.length) h += `<div class="ro">No names to link yet.</div>`;
+  return h + `</section>`;
+}
+// Crew tab nudge: a friend's name already appears on shows logged before they joined.
+function pastTagSuggestBlock(){
+  const free = untaggedNames(), rows = [];
+  for (const f of friendList()) for (const e of free) if (nameMatches(f, e.name)) rows.push({ f, e });
+  if (!rows.length) return "";
+  return `<section class="sect"><h3>Link past tags <span class="lbl">${rows.length}</span></h3><div class="plist">${rows.map(({ f, e }) => `
+    <div class="prow">${avatar(f.photo, f.name)}<div class="pt"><div class="nm" style="font-size:18px">"${esc(e.name)}" → @${esc(f.handle)}</div><div class="ro">On ${e.n} show${e.n === 1 ? "" : "s"} in your log</div></div>
+    <button class="btn red" data-taglink="${esc(f.uid + "|" + e.name)}">Link</button></div>`).join("")}</div></section>`;
+}
+
+// Friends' shows that tag you and aren't in your log yet.
+function tagInbox(){
+  const seen = new Set((PROFILE && PROFILE.tagSeen) || []), out = [];
+  for (const f of friendList()) for (const s of (f.shows || [])) {
+    if (!(Array.isArray(s.taggedUids) && s.taggedUids.includes(ME.uid))) continue;
+    if (seen.has(f.uid + "|" + s.id) || S.shows.some(o => sameShow(o, s))) continue;
+    out.push({ f, s });
+  }
+  return out.sort((a, b) => (b.s.date || "").localeCompare(a.s.date || ""));
+}
+function tagInboxBlock(){
+  const list = tagInbox(); if (!list.length) return "";
+  return `<section class="sect"><h3>You were tagged <span class="lbl">${list.length}</span></h3><div class="plist">${list.map(({ f, s }) => {
+    const k = esc(f.uid + "|" + s.id);
+    return `<div class="tagin">${showRow(s, f.uid, "@" + f.handle + " tagged you")}<div class="tagact"><button class="btn red" data-tagadd="${k}">Add to my log</button><button class="btn ghost" data-tagdis="${k}">Dismiss</button></div></div>`; }).join("")}</div></section>`;
+}
+async function addTaggedShow(uid, id){
+  const f = FR[uid]; const s = f && (f.shows || []).find(x => x.id === id); if (!s) return;
+  if (S.shows.some(o => sameShow(o, s))) { toast("That show is already in your log"); return; }
+  const tagged = [{ name: firstName(f), uid }];
+  for (const t of tagsOf(s)) if (t.uid !== ME.uid && FR[t.uid] && !tagged.some(x => x.uid === t.uid)) tagged.push({ name: firstName(FR[t.uid]), uid: t.uid });
+  const body = { wentWith: tagged.map(t => t.name), tagged, taggedUids: tagged.map(t => t.uid), rating: 0, pit: 0, spot: "", best: "", highlight: "", setlist: "", notes: "",
+    ticket: null, ticketQty: null, ticketTotal: null, merchSpend: null, miles: null, poster: null, photos: [], merch: [] };
+  for (const k of SHARED) body[k] = s[k] ?? (k === "lineup" ? [] : k === "unsure" ? false : "");
+  try { await addDoc(myShows(), body); toast(`Added ${lineup(s)[0] || "the show"} to your log`); } catch (e) { handleWriteErr(e); }
+}
+async function dismissTag(key){
+  PROFILE.tagSeen = [...new Set([...(PROFILE.tagSeen || []), key])];
+  rerenderSoft();
+  try { await updateDoc(doc(fdb, "users", ME.uid), { tagSeen: arrayUnion(key) }); } catch (e) { handleWriteErr(e); }
+}
+
 /* ---------- Crew tab ---------- */
 const avatar = (p, name, cls) => p ? `<img class="av ${cls||""}" src="${esc(p)}" alt="" referrerpolicy="no-referrer">` : `<span class="av ${cls||""}">${esc((name||"?").trim().charAt(0).toUpperCase())}</span>`;
 
@@ -950,6 +1080,7 @@ function renderCrew(){
       <div class="prow">${avatar(f.photo, f.name)}<div class="pt"><div class="nm">${esc(f.name || f.handle)}</div><div class="hd">@${esc(f.handle)} wants to link logs</div>
       <div class="ro">Every show either of you adds lands in both logs.</div></div>
       <button class="btn red" data-famok="${esc(f.uid)}">Approve</button><button class="btn ghost" data-famno="${esc(f.uid)}">Not now</button></div>`).join("")}</div></section>`;
+  html += tagInboxBlock() + pastTagSuggestBlock();
   html += `<section class="sect"><h3>The crew <span class="lbl">${fl.length}</span></h3>`;
   if (!fl.length) html += `<div class="empty"><h3>No crew yet</h3><div>Send a friend your username, or add theirs above. Once they accept, you can see each other's shows and the ones you hit together.</div></div>`;
   else html += `<div class="plist">${fl.map(f => { const tog = S.shows.filter(s => (f.shows||[]).some(o => sameShow(s,o))).length;
@@ -961,6 +1092,7 @@ function renderCrew(){
       <button class="btn ghost" data-decline="${esc(r.id)}">Cancel</button></div>`).join("")}</div></section>`;
   html += `<section class="sect explain"><h3>How the crew works</h3>
     <div class="ro"><b>Crew</b>: friends who can see each other's shows (read-only). Turn on <b>Crew</b> on Shows, Calendar or Stats to mix their shows into your view. It's off by default.</div>
+    <div class="ro"><b>Tagging</b>: in a show's "Went with", tap a friend to tag them. They'll see it under "You were tagged" and can add the show to their log in one tap. Names you logged before a friend joined can be linked to their account from their profile.</div>
     <div class="ro"><b>Crew Family</b>: links two logs. Any show either of you adds or edits (date, bands, venue) shows up in both. Ratings, notes, photos and spend stay your own. Both people have to approve, and either can turn it off. Invite someone from their profile.</div></section>`;
   $("#view").innerHTML = html + `</div>`;
 }
@@ -1105,6 +1237,7 @@ function renderFriend(f){
       <button data-crewview="together" aria-pressed="${v==="together"}">Together</button>
       <button data-crewview="bands" aria-pressed="${v==="bands"}">Shared bands</button></div>
     ${body}
+    ${f.err ? "" : pastTagsBlock(f)}
     ${familyBlock(f)}
     <div style="margin-top:18px"><button class="btn warn" data-unfriend="${esc(f.uid)}">${S.unfriendConfirm ? "Tap again to remove from crew" : "Remove from crew"}</button></div>
   </div>`;
@@ -1117,6 +1250,10 @@ function crewClick(t){
   if (t.dataset.friend) { S.crewSel = t.dataset.friend; S.crewView = "shows"; S.unfriendConfirm = false; S.famConfirm = false; renderCrew(); window.scrollTo(0, 0); return true; }
   if (t.hasAttribute("data-crewback")) { S.crewSel = null; renderCrew(); return true; }
   if (t.dataset.crewview) { S.crewView = t.dataset.crewview; renderCrew(); return true; }
+  if (t.dataset.taglink) { const [uid, name] = splitKey(t.dataset.taglink); linkName(name, uid); return true; }
+  if (t.dataset.tagunlink) { const [uid, name] = splitKey(t.dataset.tagunlink); unlinkName(name, uid); return true; }
+  if (t.dataset.tagadd) { const [uid, id] = splitKey(t.dataset.tagadd); addTaggedShow(uid, id); return true; }
+  if (t.dataset.tagdis) { dismissTag(t.dataset.tagdis); return true; }
   if (t.dataset.famprop) { setFamily(t.dataset.famprop, "pending"); return true; }
   if (t.dataset.famok) { setFamily(t.dataset.famok, "active"); return true; }
   if (t.dataset.famno) { setFamily(t.dataset.famno, "off"); return true; }
@@ -1261,7 +1398,7 @@ function startApp(){
   }, err => console.error("requests", err));
   UNSUBS.push(reqs("to", "in"), reqs("from", "out"));
 }
-function updateCrewBadge(){ const n = REQ.in.filter(r => r.status === "pending").length; $("#tab-crew").innerHTML = "Crew" + (n ? ` <span class="badge-n">${n}</span>` : ""); $("#tab-crew").setAttribute("aria-selected", S.tab === "crew"); }
+function updateCrewBadge(){ const n = REQ.in.filter(r => r.status === "pending").length + (ME && S.loaded ? tagInbox().length : 0); $("#tab-crew").innerHTML = "Crew" + (n ? ` <span class="badge-n">${n}</span>` : ""); $("#tab-crew").setAttribute("aria-selected", S.tab === "crew"); }
 
 $("#signinBtn").addEventListener("click", doSignIn);
 
