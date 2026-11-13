@@ -392,7 +392,26 @@ a.btn{text-decoration:none;display:inline-flex;align-items:center;justify-conten
 .dfil{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:space-between}
 .dfil select{background:var(--void);border:1px solid var(--iron);color:var(--bone);padding:8px 10px;font:inherit}
 .tagbtn.on{background:var(--blood);border-color:var(--blood);color:var(--bone)}
-.dmonth{font-family:var(--f-label);font-weight:700;text-transform:uppercase;letter-spacing:.16em;font-size:13px;color:var(--blood-hi);margin:18px 0 4px;padding-bottom:6px;border-bottom:1px solid var(--iron);position:sticky;top:58px;background:var(--void);z-index:5}
+.dsel{display:flex;align-items:center;gap:8px}.dsel select{min-width:0}
+.tourcard{border:1px solid var(--iron);background:var(--crypt);margin-top:10px;display:grid;gap:8px;padding:12px}
+.tourcard.haspv{border-left:3px solid var(--rust)}
+.tourhead{display:flex;gap:10px;align-items:flex-start;justify-content:space-between;background:none;border:0;padding:0;text-align:left;color:inherit;width:100%;cursor:pointer}
+.tourhead .th1{min-width:0;display:grid;gap:2px}
+.tourhead .nm{font-family:var(--f-display);font-size:22px;line-height:1.1;color:var(--bone);overflow-wrap:anywhere}
+.tourhead .tn{font-family:var(--f-label);font-weight:700;letter-spacing:.08em;text-transform:uppercase;font-size:13px;color:var(--blood-hi)}
+.tourhead .chev{flex:none;width:34px;height:34px;display:grid;place-items:center;border:1px solid var(--iron);font-size:22px;color:var(--bone)}
+.tdates{display:grid;gap:6px;border-top:1px solid var(--iron);padding-top:8px}
+.ddate{display:flex;gap:12px;padding:8px;background:var(--void);border:1px solid var(--iron)}
+.ddate.pv{border-color:var(--rust)}
+.ddate .pdate{flex:none;width:52px;text-align:center;font-size:12px}
+.ddate .chip{font-size:11px;padding:4px 8px}
+.pvline{color:var(--rust);font-size:13px;font-weight:600}
+.ddate .pt{min-width:0;display:grid;gap:3px}
+.ddate .dv{color:var(--bone);font-weight:600}
+.chip.pvc{color:var(--bone);border-color:var(--rust);background:rgba(201,118,47,.22)}
+.chip.dim{color:var(--ash)}
+.tfoot{display:flex;justify-content:flex-start}
+.btn.sm{padding:6px 10px;font-size:12px;min-height:34px}
 .dcount{margin-top:2px}
 .dtour{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--bone);padding:8px 10px;border:1px solid var(--iron);background:var(--crypt);cursor:pointer}
 .dtour input{width:18px;height:18px;accent-color:var(--blood-hi);flex:none}

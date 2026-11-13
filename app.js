@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=33";
+import { VENUES } from "./venues.js?v=34";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -1290,101 +1290,181 @@ function openSheetFrom(sh){
 }
 const ticketLink = url => url ? `<a class="chip tix" href="${esc(url)}" target="_blank" rel="noopener">Tickets ›</a>` : "";
 
-/* ---------- Discover: upcoming shows from the daily catalog, with one-tap add ---------- */
-const DISC = { months: null, data: new Map(), loading: false, shown: 3, list: [] };
-S.disc = { mode: "foryou", q: "", st: "", g: "", sameTour: false };
-try { const m = localStorage.getItem("pitlog.discMode"); if (m === "all" || m === "foryou") S.disc.mode = m; } catch (_) {}
-async function loadDiscover(){
-  if (DISC.loading) return; DISC.loading = true;
-  try {
-    if (!DISC.months) { const d = await getDoc(doc(fdb, "catalogMeta", "months")); DISC.months = d.exists() ? (d.data().list || []).filter(x => x.m >= todayISO.slice(0, 7)) : []; }
-    const want = DISC.months.slice(0, DISC.shown).filter(x => !DISC.data.has(x.m));
-    await Promise.all(want.map(async x => { try { const d = await getDoc(doc(fdb, "catalogMonths", x.m)); DISC.data.set(x.m, d.exists() ? JSON.parse(d.data().data || "[]") : []); } catch (e) { console.warn(e); DISC.data.set(x.m, []); } }));
-  } finally { DISC.loading = false; }
+/* ---------- Discover: upcoming tours from the daily catalog ----------
+   Dates are grouped into one card per tour (by headliner; co-headliners in either order count as one).
+   A card is flagged when the tour plays a venue you've been to; expanding it lists the dates with
+   those venues first. Tours you already have a date for are hidden by default, and any tour can be
+   hidden for good ("Don't show this tour"), which is saved to your profile so it sticks after refreshes. */
+const DISC = { months: null, data: new Map(), loading: null, groups: [], open: new Set(), limit: 60 };
+S.disc = { mode: "foryou", q: "", st: "", g: "", sort: "listed", sameTour: false, showHidden: false };
+try {
+  const m = localStorage.getItem("pitlog.discMode"); if (m === "all" || m === "foryou") S.disc.mode = m;
+  const so = localStorage.getItem("pitlog.discSort"); if (so) S.disc.sort = so;
+  S.disc.sameTour = localStorage.getItem("pitlog.discTour") === "1";
+} catch (_) {}
+const DSORTS = [["listed", "Recently listed"], ["soon", "Earliest show date"], ["late", "Latest show date"], ["band", "Band A–Z"], ["tour", "Tour name A–Z"], ["genre", "Genre"]];
+// Load every month at once so each tour card has all its dates (a handful of small reads per visit).
+function loadDiscover(){
+  if (DISC.loading) return DISC.loading;
+  DISC.loading = (async () => {
+    const d = await getDoc(doc(fdb, "catalogMeta", "months"));
+    DISC.months = d.exists() ? (d.data().list || []).filter(x => x.m >= todayISO.slice(0, 7)) : [];
+    await Promise.all(DISC.months.map(async x => { try { const md = await getDoc(doc(fdb, "catalogMonths", x.m)); DISC.data.set(x.m, md.exists() ? JSON.parse(md.data().data || "[]") : []); } catch (e) { console.warn(e); DISC.data.set(x.m, []); } }));
+  })().catch(e => { console.warn("discover", e); DISC.months = DISC.months || []; DISC.loading = null; });
+  return DISC.loading;
 }
-function discReasons(){
-  const bucket = new Set(bucketOf(PROFILE).map(normBand)), mine = new Set(S.shows.filter(s => !isUpcoming(s)).flatMap(lineup).map(normBand));
+const tourGroupKey = (lu, co) => { const k = lu.map(normBand); return co && k[1] ? "c:" + [k[0], k[1]].sort().join("+") : "h:" + (k[0] || ""); };
+const hiddenTours = () => (PROFILE && Array.isArray(PROFILE.hiddenTours) ? PROFILE.hiddenTours : []);
+const venueKey = v => normV(String(v || "").replace(/\(.*?\)/g, ""));
+function discContext(){
+  const bucket = new Set(bucketOf(PROFILE).map(normBand)), past = S.shows.filter(s => !isUpcoming(s));
+  const mine = new Set(past.flatMap(lineup).map(normBand));
+  const venues = new Map(); for (const s of past) { const k = venueKey(s.venue); if (k.length >= 3) venues.set(k, (venues.get(k) || 0) + 1); }
   const crewSeen = new Map(), crewUp = [];
   for (const f of friendList()) for (const sh of (f.shows || [])) { for (const b of lineup(sh)) if (!crewSeen.has(normBand(b))) crewSeen.set(normBand(b), f.handle); if (isUpcoming(sh)) crewUp.push({ sh, handle: f.handle }); }
-  return { bucket, mine, crewSeen, crewUp };
+  const myUp = new Set(); for (const s of S.shows) if (isUpcoming(s) && lineup(s).length) myUp.add(tourGroupKey(lineup(s), s.coHead));
+  return { bucket, mine, venues, crewSeen, crewUp, myUp, hidden: new Set(hiddenTours().map(h => h.k)) };
 }
-function renderDiscover(){
-  const d = S.disc;
-  $("#view").innerHTML = `<div class="disc">
-    <div class="seg vswitch" role="group" aria-label="Which shows"><button data-dmode="foryou" aria-pressed="${d.mode === "foryou"}">For you</button><button data-dmode="all" aria-pressed="${d.mode === "all"}">All upcoming</button></div>
-    <input class="search" id="dq" value="${esc(d.q)}" placeholder="Band, venue or city" autocapitalize="none" spellcheck="false" aria-label="Filter shows">
-    <div class="dfil">
-      <div class="tagrow" role="group" aria-label="State">${["", "PA", "NJ", "DE", "NY"].map(x => `<button class="tagbtn${d.st === x ? " on" : ""}" data-dst="${x}" aria-pressed="${d.st === x}">${x || "All states"}</button>`).join("")}</div>
-      <select id="dg" aria-label="Genre"><option value="">All genres</option>${["Metal", "Rock", "Alternative", "Punk"].map(g => `<option ${d.g === g ? "selected" : ""}>${g}</option>`).join("")}</select>
-    </div>
-    <div id="dres"><div class="ro">Loading shows…</div></div></div>`;
-  loadDiscover().then(drawDiscover);
-}
-function drawDiscover(){
-  const box = $("#dres"); if (!box || S.tab !== "disc") return;
-  if (!DISC.months || !DISC.months.length) { box.innerHTML = `<div class="empty"><h3>No shows yet</h3><div>Upcoming shows from Ticketmaster are loaded every morning. Check back after the next update.</div></div>`; return; }
-  const d = S.disc, q = d.q.trim().toLowerCase(), R = discReasons();
-  const all = DISC.months.slice(0, DISC.shown).flatMap(x => DISC.data.get(x.m) || []);
-  // Tours you're already going to: by tour name when there is one, otherwise by headliner.
-  // Their other dates are hidden by default so the list focuses on shows you don't have yet.
-  const tourKey = (tour, lu) => tour ? "t:" + normBand(tour) : lu[0] ? "h:" + normBand(lu[0]) : "";
-  const myTours = new Set();
-  for (const sh of S.shows) if (isUpcoming(sh)) { if (sh.tour) myTours.add(tourKey(sh.tour, [])); if (lineup(sh)[0]) myTours.add(tourKey("", lineup(sh))); }
-  const loggedIds = new Set();
-  for (const r of all) { const sh = { date: r.d, lineup: r.l }; if (haveShow(sh)) { loggedIds.add(r.i); myTours.add(tourKey(r.t, r.l)); myTours.add(tourKey("", r.l)); } }
-  let hiddenTour = 0;
-  const rows = [];
-  for (const r of all) {
+const pastVenue = (C, v) => { const k = venueKey(v); if (k.length < 3) return 0; if (C.venues.has(k)) return C.venues.get(k);
+  for (const [pk, n] of C.venues) if (pk.length >= 5 && (pk.includes(k) || k.includes(pk))) return n; return 0; };
+function buildGroups(){
+  const C = discContext(), d = S.disc, q = d.q.trim().toLowerCase(), groups = new Map();
+  for (const m of DISC.months || []) for (const r of DISC.data.get(m.m) || []) {
     if (r.d < todayISO) continue;
+    const key = tourGroupKey(r.l, r.c);
+    const g = groups.get(key) || { key, dates: [], all: 0, tours: new Map(), genres: new Map() }; groups.set(key, g);
+    g.all++;
+    if (r.t) g.tours.set(r.t, (g.tours.get(r.t) || 0) + 1);
+    if (r.g) g.genres.set(r.g, (g.genres.get(r.g) || 0) + 1);
     if (d.st && !(r.y || "").endsWith(", " + d.st)) continue;
     if (d.g && r.g !== d.g) continue;
     if (q && ![...r.l, r.v, r.y, r.t].join(" ").toLowerCase().includes(q)) continue;
-    if (!d.sameTour && !loggedIds.has(r.i) && (myTours.has(tourKey(r.t, r.l)) || myTours.has(tourKey("", r.l)))) { hiddenTour++; continue; }
-    const keys = r.l.map(normBand);
-    const tags = [];
-    const going = R.crewUp.filter(x => x.sh.date === r.d && lineup(x.sh).some(b => keys.includes(normBand(b)))).map(x => x.handle);
-    if (keys.some(k => R.bucket.has(k))) tags.push(["bk", "Bucket list"]);
-    if (going.length) tags.push(["tog", [...new Set(going)].map(h => "@" + h).join(", ") + " going"]);
-    if (keys.some(k => R.mine.has(k))) tags.push(["", "You've seen them"]);
-    else { const h = keys.map(k => R.crewSeen.get(k)).find(Boolean); if (h) tags.push(["", "@" + h + " has seen them"]); }
-    if (r.f && r.f >= addDaysIso(todayISO, -7)) tags.push(["new", "Just announced"]);
     const sh = catShow({ id: r.i, date: r.d, lineup: r.l, coHead: !!r.c, venue: r.v, city: r.y, tour: r.t, url: r.u, time: r.h, status: r.s });
-    const mine = haveShow(sh);
-    if (d.mode === "foryou" && !tags.some(t => t[0] !== "new") && !mine) continue;
-    rows.push({ sh, tags, mine, g: r.g, s: r.s });
+    sh.firstSeen = r.f || ""; sh.pv = pastVenue(C, r.v); sh.mine = haveShow(sh); sh.genre = r.g || "";
+    g.dates.push(sh);
   }
-  const more = DISC.shown < DISC.months.length;
-  const tourNote = hiddenTour || d.sameTour ? `<label class="dtour"><input type="checkbox" id="dtour" ${d.sameTour ? "checked" : ""}> Show other dates of tours you're already going to${!d.sameTour ? ` <span class="ro">(${hiddenTour} hidden)</span>` : ""}</label>` : "";
-  const moreBtn = more ? `<button class="btn ghost dmore" data-dmore>Show ${MONTHS[Number(DISC.months[DISC.shown].m.slice(5)) - 1]} ${DISC.months[DISC.shown].m.slice(0, 4)} and later</button>` : "";
-  if (!rows.length) {
-    box.innerHTML = tourNote + `<div class="empty"><h3>Nothing here${d.q || d.st || d.g ? " with those filters" : ""}</h3><div>${d.mode === "foryou" ? "For you shows bands on your bucket list and bands you or your crew have seen. Try All upcoming, or add bands to your bucket list on your profile." : "Try another filter."}</div></div>${moreBtn}`;
+  const out = { shown: [], hiddenByMe: 0, hiddenGoing: 0, C };
+  for (const g of groups.values()) {
+    if (!g.dates.length) continue;
+    const top = mostCommon(g.tours), first = g.dates.slice().sort((a, b) => lineup(b).length - lineup(a).length)[0];
+    g.tour = top || ""; g.genre = mostCommon(g.genres) || ""; g.show = { ...first, tour: g.tour };
+    g.dates.sort((a, b) => a.date.localeCompare(b.date));
+    g.first = g.dates[0].date; g.last = g.dates[g.dates.length - 1].date;
+    g.listed = g.dates.reduce((m, x) => x.firstSeen > m ? x.firstSeen : m, "");
+    g.pv = g.dates.filter(x => x.pv); g.mine = g.dates.some(x => x.mine) || C.myUp.has(g.key);
+    const keys = new Set(g.dates.flatMap(x => lineup(x)).map(normBand));
+    g.bk = [...keys].some(k => C.bucket.has(k)); g.seen = [...keys].some(k => C.mine.has(k));
+    g.crewSeen = [...keys].map(k => C.crewSeen.get(k)).find(Boolean) || "";
+    g.crewGoing = [...new Set(C.crewUp.filter(x => g.dates.some(dt => dt.date === x.sh.date && lineup(x.sh).some(b => keys.has(normBand(b))))).map(x => x.handle))];
+    g.isNew = g.listed && g.listed >= addDaysIso(todayISO, -7);
+    g.states = [...new Set(g.dates.map(x => (x.city.match(/, ([A-Z]{2})$/) || [])[1]).filter(Boolean))];
+    if (C.hidden.has(g.key) && !d.showHidden) { out.hiddenByMe++; continue; }
+    if (g.mine && !d.sameTour) { out.hiddenGoing++; continue; }
+    if (d.mode === "foryou" && !(g.bk || g.seen || g.crewSeen || g.crewGoing.length || g.pv.length)) continue;
+    out.shown.push(g);
+  }
+  const name = g => (lineup(g.show)[0] || "").replace(/^the\s+/i, "").toLowerCase();
+  const sorts = {
+    listed: (a, b) => (b.listed || "").localeCompare(a.listed || "") || a.first.localeCompare(b.first),
+    soon: (a, b) => a.first.localeCompare(b.first),
+    late: (a, b) => b.last.localeCompare(a.last),
+    band: (a, b) => name(a).localeCompare(name(b)) || a.first.localeCompare(b.first),
+    tour: (a, b) => (!a.tour - !b.tour) || a.tour.localeCompare(b.tour) || name(a).localeCompare(name(b)),
+    genre: (a, b) => (!a.genre - !b.genre) || a.genre.localeCompare(b.genre) || a.first.localeCompare(b.first),
+  };
+  // Within any sort, tours with a "for you" reason float up a little only in "Recently listed".
+  out.shown.sort(sorts[d.sort] || sorts.listed);
+  return out;
+}
+function mostCommon(map){ let best = "", n = 0; for (const [k, v] of map) if (v > n) { best = k; n = v; } return best; }
+function renderDiscover(){
+  const d = S.disc;
+  $("#view").innerHTML = `<div class="disc">
+    <div class="seg vswitch" role="group" aria-label="Which tours"><button data-dmode="foryou" aria-pressed="${d.mode === "foryou"}">For you</button><button data-dmode="all" aria-pressed="${d.mode === "all"}">All upcoming</button></div>
+    <input class="search" id="dq" value="${esc(d.q)}" placeholder="Band, tour, venue or city" autocapitalize="none" spellcheck="false" aria-label="Filter tours">
+    <div class="tagrow" role="group" aria-label="State">${["", "PA", "NJ", "DE", "NY"].map(x => `<button class="tagbtn${d.st === x ? " on" : ""}" data-dst="${x}" aria-pressed="${d.st === x}">${x || "All states"}</button>`).join("")}</div>
+    <div class="dfil">
+      <label class="dsel"><span class="lbl">Sort</span><select id="dsort">${DSORTS.map(([v, l]) => `<option value="${v}" ${d.sort === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+      <label class="dsel"><span class="lbl">Genre</span><select id="dg"><option value="">All</option>${["Metal", "Rock", "Alternative", "Punk"].map(g => `<option ${d.g === g ? "selected" : ""}>${g}</option>`).join("")}</select></label>
+    </div>
+    <div id="dres"><div class="ro">Loading tours…</div></div></div>`;
+  loadDiscover().then(drawDiscover);
+}
+const shortDate = iso => { const p = parse(iso); return `${MONTHS[p.m - 1]} ${p.d}`; };
+const rangeText = g => g.first === g.last ? fmtDate(g.first) : `${shortDate(g.first)} – ${shortDate(g.last)}${parse(g.first).y !== parse(g.last).y || parse(g.last).y !== parse(todayISO).y ? ", " + parse(g.last).y : ""}`;
+function dateRow(sh, gi, di){
+  const p = parse(sh.date);
+  return `<div class="ddate${sh.pv ? " pv" : ""}"><span class="pdate"><b class="num">${p.d}</b>${MONTHS[p.m - 1]} · ${DAYS[p.dt.getDay()]}${sh.time ? " " + esc(fmtTime(sh.time)) : ""}</span>
+    <div class="pt"><div class="dv">${esc(sh.venue)}</div>${sh.pv ? `<div class="pvline">★ You've been here${sh.pv > 1 ? ` (${sh.pv} shows)` : ""}</div>` : ""}<div class="ro">${esc(sh.city)}${sh.status ? ` · ${esc(sh.status === "offsale" ? "off sale" : sh.status)}` : ""}</div>
+      <div class="tagrow">${sh.mine ? `<span class="chip tog">In your log</span>` : `${ticketLink(sh.url)}<button class="chip catadd" data-dadd="${gi}:${di}">+ Add to my shows</button>`}</div></div></div>`;
+}
+function drawDiscover(){
+  const box = $("#dres"); if (!box || S.tab !== "disc") return;
+  if (!DISC.months || !DISC.months.length) { box.innerHTML = `<div class="empty"><h3>No tours yet</h3><div>Upcoming shows from Ticketmaster load every morning. Check back after the next update.</div></div>`; return; }
+  const d = S.disc, res = buildGroups(), list = res.shown;
+  DISC.groups = list;
+  const notes = [];
+  if (res.hiddenGoing || d.sameTour) notes.push(`<label class="dtour"><input type="checkbox" id="dtour" ${d.sameTour ? "checked" : ""}> Show tours you already have a date for${!d.sameTour ? ` <span class="ro">(${res.hiddenGoing})</span>` : ""}</label>`);
+  if (res.hiddenByMe || d.showHidden) notes.push(`<label class="dtour"><input type="checkbox" id="dshowhid" ${d.showHidden ? "checked" : ""}> Show tours you hid${!d.showHidden ? ` <span class="ro">(${res.hiddenByMe})</span>` : ""}</label>`);
+  if (!list.length) {
+    box.innerHTML = notes.join("") + `<div class="empty"><h3>Nothing here${d.q || d.st || d.g ? " with those filters" : ""}</h3><div>${d.mode === "foryou" ? "For you shows tours by bands on your bucket list, bands you or your crew have seen, and tours stopping at venues you've been to. Try All upcoming, or add bands to your bucket list on your profile." : "Try another filter."}</div></div>`;
     return;
   }
-  DISC.list = rows.map(x => x.sh);
-  let h = "", cur = "";
-  rows.slice(0, 300).forEach((x, i) => {
-    const sh = x.sh, p = parse(sh.date), m = sh.date.slice(0, 7), sup = support(sh);
-    if (m !== cur) { cur = m; h += `<h3 class="dmonth">${MONTHS[p.m - 1]} ${p.y}</h3>`; }
-    h += `<div class="bandhit dshow"><button class="prow tap prow-show" ${x.mine ? "" : `data-dadd="${i}"`} aria-label="${x.mine ? "" : "Add "}${esc(headline(sh))}"><span class="pdate"><b class="num">${p.d}</b>${DAYS[p.dt.getDay()]}${sh.time ? " " + esc(fmtTime(sh.time)) : ""}</span>
-      <div class="pt"><div class="nm" style="font-size:20px">${esc(headline(sh))}</div>${sup.length ? `<div class="ro">w/ ${esc(sup.join(" · "))}</div>` : ""}
-      <div class="ro">${esc([sh.venue, sh.city].filter(Boolean).join(" — "))}${sh.tour ? ` · ${esc(sh.tour)}` : ""}</div></div></button>
-      <div class="tagrow who">${x.tags.map(([c, t]) => `<span class="chip ${c === "bk" ? "bkc" : c === "tog" ? "tog" : c === "new" ? "up" : ""}">${esc(t)}</span>`).join("")}${x.s ? `<span class="chip">${esc(x.s === "rescheduled" ? "Rescheduled" : x.s === "postponed" ? "Postponed" : x.s === "offsale" ? "Off sale" : x.s)}</span>` : ""}
-        ${x.mine ? `<span class="chip tog">In your log</span>` : `${ticketLink(sh.url)}<button class="chip catadd" data-dadd="${i}">+ Add to my shows</button>`}</div></div>`;
-  });
-  box.innerHTML = tourNote + `<div class="ro dcount">${rows.length} show${rows.length === 1 ? "" : "s"}${rows.length > 300 ? " (showing the first 300; filter to narrow)" : ""}</div>${h}${moreBtn}<div class="ro" style="margin-top:14px">Listings from Ticketmaster, updated every morning. Smaller venues that sell elsewhere won't appear.</div>`;
+  const hid = res.C.hidden;
+  const cards = list.slice(0, DISC.limit).map((g, gi) => {
+    const sh = g.show, sup = support(sh), open = DISC.open.has(g.key) || g.dates.length === 1;
+    const dates = g.dates.slice().sort((a, b) => (b.pv > 0) - (a.pv > 0) || a.date.localeCompare(b.date));
+    const tags = [];
+    if (g.bk) tags.push(`<span class="chip bkc">Bucket list</span>`);
+    if (g.pv.length) tags.push(`<span class="chip pvc">At ${g.pv.length === 1 ? esc(g.pv[0].venue) : g.pv.length + " venues"} you've been to</span>`);
+    if (g.crewGoing.length) tags.push(`<span class="chip tog">${g.crewGoing.map(h => "@" + esc(h)).join(", ")} going</span>`);
+    if (g.seen) tags.push(`<span class="chip">You've seen them</span>`); else if (g.crewSeen) tags.push(`<span class="chip">@${esc(g.crewSeen)} has seen them</span>`);
+    if (g.isNew) tags.push(`<span class="chip up">Just announced</span>`);
+    if (g.mine) tags.push(`<span class="chip tog">In your log</span>`);
+    if (g.genre) tags.push(`<span class="chip dim">${esc(g.genre)}</span>`);
+    const isHidden = hid.has(g.key);
+    return `<article class="tourcard${g.pv.length ? " haspv" : ""}${open ? " open" : ""}">
+      <button class="tourhead" ${g.dates.length > 1 ? `data-dtoggle="${gi}" aria-expanded="${open}"` : "tabindex=\"-1\""}>
+        <div class="th1"><div class="nm">${esc(headline(sh))}</div>${sup.length ? `<div class="ro">w/ ${esc(sup.slice(0, 4).join(" · "))}${sup.length > 4 ? " …" : ""}</div>` : ""}
+          ${g.tour ? `<div class="tn">${esc(g.tour)}</div>` : ""}
+          <div class="ro">${esc(rangeText(g))} · ${g.dates.length} date${g.dates.length > 1 ? "s" : ""}${g.dates.length < g.all ? ` (of ${g.all})` : ""}${g.states.length ? " · " + esc(g.states.join(", ")) : ""}</div></div>
+        ${g.dates.length > 1 ? `<span class="chev" aria-hidden="true">${open ? "−" : "+"}</span>` : ""}</button>
+      <div class="tagrow">${tags.join("")}</div>
+      ${open ? `<div class="tdates">${dates.map(x => dateRow(x, gi, g.dates.indexOf(x))).join("")}</div>` : ""}
+      <div class="tfoot">${isHidden ? `<button class="btn ghost sm" data-dunhide="${gi}">Show this tour again</button>` : `<button class="btn ghost sm" data-dhide="${gi}">Don't show this tour</button>`}</div>
+    </article>`;
+  }).join("");
+  box.innerHTML = notes.join("") + `<div class="ro dcount">${list.length} tour${list.length === 1 ? "" : "s"} · ${list.reduce((n, g) => n + g.dates.length, 0)} dates</div>${cards}
+    ${list.length > DISC.limit ? `<button class="btn ghost dmore" data-dmore>Show more tours (${list.length - DISC.limit} left)</button>` : ""}
+    <div class="ro" style="margin-top:14px">Listings from Ticketmaster, updated every morning. Smaller venues that sell elsewhere won't appear.</div>`;
 }
 const addDaysIso = (iso, n) => { const p = parse(iso), d = new Date(Date.UTC(p.y, p.m - 1, p.d + n)); return d.toISOString().slice(0, 10); };
 const fmtTime = t => { const [h, m] = t.split(":").map(Number); if (isNaN(h)) return ""; return `${(h % 12) || 12}${m ? ":" + String(m).padStart(2, "0") : ""}${h < 12 ? "a" : "p"}`; };
+async function setHiddenTour(g, hide){
+  let list = hiddenTours().filter(h => h.k !== g.key);
+  if (hide) list = [{ k: g.key, n: headline(g.show) + (g.tour ? " — " + g.tour : "") }, ...list].slice(0, 300);
+  PROFILE.hiddenTours = list; cacheProfile(); drawDiscover();
+  toast(hide ? `Hidden: ${headline(g.show)}. Bring it back with "Show tours you hid".` : "Tour is back in Discover", 3000);
+  try { await updateDoc(doc(fdb, "users", ME.uid), { hiddenTours: list }); } catch (e) { console.warn(e); toast("Couldn't save that. Check your connection."); }
+}
 document.addEventListener("click", e => {
-  const t = e.target.closest && e.target.closest("[data-dmode],[data-dst],[data-dmore],[data-dadd]"); if (!t || S.tab !== "disc") return;
-  if (t.dataset.dmode) { S.disc.mode = t.dataset.dmode; try { localStorage.setItem("pitlog.discMode", S.disc.mode); } catch (_) {} document.querySelectorAll("[data-dmode]").forEach(b => b.setAttribute("aria-pressed", b === t)); drawDiscover(); }
+  const t = e.target.closest && e.target.closest("[data-dmode],[data-dst],[data-dmore],[data-dadd],[data-dtoggle],[data-dhide],[data-dunhide]"); if (!t || S.tab !== "disc") return;
+  if (t.dataset.dmode) { S.disc.mode = t.dataset.dmode; try { localStorage.setItem("pitlog.discMode", S.disc.mode); } catch (_) {} document.querySelectorAll("[data-dmode]").forEach(b => b.setAttribute("aria-pressed", b === t)); DISC.limit = 60; drawDiscover(); }
   else if (t.dataset.dst !== undefined) { S.disc.st = t.dataset.dst; document.querySelectorAll("[data-dst]").forEach(b => { b.classList.toggle("on", b === t); b.setAttribute("aria-pressed", b === t); }); drawDiscover(); }
-  else if (t.hasAttribute("data-dmore")) { DISC.shown += 3; t.disabled = true; t.textContent = "Loading…"; loadDiscover().then(drawDiscover); }
-  else if (t.dataset.dadd !== undefined) { const sh = DISC.list[Number(t.dataset.dadd)]; if (sh) openSheetFrom(sh); }
+  else if (t.hasAttribute("data-dmore")) { DISC.limit += 60; drawDiscover(); }
+  else if (t.dataset.dtoggle !== undefined) { const g = DISC.groups[Number(t.dataset.dtoggle)]; if (!g) return; DISC.open.has(g.key) ? DISC.open.delete(g.key) : DISC.open.add(g.key); drawDiscover(); }
+  else if (t.dataset.dhide !== undefined) { const g = DISC.groups[Number(t.dataset.dhide)]; if (g) setHiddenTour(g, true); }
+  else if (t.dataset.dunhide !== undefined) { const g = DISC.groups[Number(t.dataset.dunhide)]; if (g) setHiddenTour(g, false); }
+  else if (t.dataset.dadd) { const [gi, di] = t.dataset.dadd.split(":").map(Number); const sh = DISC.groups[gi] && DISC.groups[gi].dates[di]; if (sh) openSheetFrom(sh); }
 });
 document.addEventListener("input", e => { if (e.target.id === "dq") { S.disc.q = e.target.value; clearTimeout(DISC.t); DISC.t = setTimeout(drawDiscover, 150); } });
-document.addEventListener("change", e => { if (e.target.id === "dg") { S.disc.g = e.target.value; drawDiscover(); } if (e.target.id === "dtour") { S.disc.sameTour = e.target.checked; try { localStorage.setItem("pitlog.discTour", S.disc.sameTour ? "1" : ""); } catch (_) {} drawDiscover(); } });
-try { S.disc.sameTour = localStorage.getItem("pitlog.discTour") === "1"; } catch (_) {}
+document.addEventListener("change", e => {
+  if (S.tab !== "disc") return;
+  if (e.target.id === "dg") { S.disc.g = e.target.value; drawDiscover(); }
+  if (e.target.id === "dsort") { S.disc.sort = e.target.value; try { localStorage.setItem("pitlog.discSort", S.disc.sort); } catch (_) {} drawDiscover(); }
+  if (e.target.id === "dtour") { S.disc.sameTour = e.target.checked; try { localStorage.setItem("pitlog.discTour", S.disc.sameTour ? "1" : ""); } catch (_) {} drawDiscover(); }
+  if (e.target.id === "dshowhid") { S.disc.showHidden = e.target.checked; drawDiscover(); }
+});
 
 /* ---------- Logged-show matches for a new show ----------
    As you type a band or tour name, look through shows already logged (yours, your crew's, public ones)
