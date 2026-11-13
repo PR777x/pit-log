@@ -57,9 +57,12 @@ jobs:
         if: steps.gate.outputs.ok == 'true'
         env:
           RESEND: ${{ secrets.RESEND_API_KEY }}
+        # Only saves a new version when the key actually changed (each version is billed past the first few).
         run: |
+          cur=$(npx -y firebase-tools@latest functions:secrets:access RESEND_API_KEY --project pit-log 2>/dev/null || true)
+          if [ "$cur" = "$RESEND" ]; then echo "Resend key unchanged"; exit 0; fi
           printf '%s' "$RESEND" > "$RUNNER_TEMP/resend.txt"
-          npx -y firebase-tools@latest functions:secrets:set RESEND_API_KEY --data-file="$RUNNER_TEMP/resend.txt" --project pit-log --force --non-interactive
+          npx -y firebase-tools@latest functions:secrets:set RESEND_API_KEY --data-file="$RUNNER_TEMP/resend.txt" --project pit-log --force --non-interactive || echo "::warning::secret saved check failed; continuing"
           rm -f "$RUNNER_TEMP/resend.txt"
       - name: Save the Ticketmaster key in Secret Manager
         if: steps.gate.outputs.ok == 'true'
@@ -67,9 +70,16 @@ jobs:
           TM: ${{ secrets.TICKETMASTER_API_KEY }}
         # Optional: without it the daily show catalog job just skips. "none" keeps the deploy working.
         run: |
-          printf '%s' "${TM:-none}" > "$RUNNER_TEMP/tm.txt"
-          npx -y firebase-tools@latest functions:secrets:set TICKETMASTER_API_KEY --data-file="$RUNNER_TEMP/tm.txt" --project pit-log --force --non-interactive
+          want="${TM:-none}"
+          cur=$(npx -y firebase-tools@latest functions:secrets:access TICKETMASTER_API_KEY --project pit-log 2>/dev/null || true)
+          if [ "$cur" = "$want" ]; then echo "Ticketmaster key unchanged"; exit 0; fi
+          printf '%s' "$want" > "$RUNNER_TEMP/tm.txt"
+          npx -y firebase-tools@latest functions:secrets:set TICKETMASTER_API_KEY --data-file="$RUNNER_TEMP/tm.txt" --project pit-log --force --non-interactive || echo "::warning::secret saved check failed; continuing"
           rm -f "$RUNNER_TEMP/tm.txt"
       - name: Deploy functions
         if: steps.gate.outputs.ok == 'true'
         run: npx -y firebase-tools@latest deploy --only functions,firestore:rules --project pit-log --force --non-interactive
+      - name: Clean up old key versions
+        if: steps.gate.outputs.ok == 'true'
+        continue-on-error: true
+        run: npx -y firebase-tools@latest functions:secrets:prune --force --project pit-log --non-interactive
