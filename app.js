@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=34";
+import { VENUES } from "./venues.js?v=35";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -1296,9 +1296,11 @@ const ticketLink = url => url ? `<a class="chip tix" href="${esc(url)}" target="
    those venues first. Tours you already have a date for are hidden by default, and any tour can be
    hidden for good ("Don't show this tour"), which is saved to your profile so it sticks after refreshes. */
 const DISC = { months: null, data: new Map(), loading: null, groups: [], open: new Set(), limit: 60 };
-S.disc = { mode: "foryou", q: "", st: "", g: "", sort: "listed", sameTour: false, showHidden: false };
+S.disc = { mode: "foryou", q: "", st: "", g: "", sort: "listed", minDates: 1, sameTour: false, showHidden: false };
+const DMODES = [["all", "All bands"], ["foryou", "For you"], ["mine", "My bands"], ["seen", "Seen"], ["bucket", "Bucket list"]];
 try {
-  const m = localStorage.getItem("pitlog.discMode"); if (m === "all" || m === "foryou") S.disc.mode = m;
+  const m = localStorage.getItem("pitlog.discMode"); if (DMODES.some(x => x[0] === m)) S.disc.mode = m;
+  const md = Number(localStorage.getItem("pitlog.discMin")); if (md > 1) S.disc.minDates = md;
   const so = localStorage.getItem("pitlog.discSort"); if (so) S.disc.sort = so;
   S.disc.sameTour = localStorage.getItem("pitlog.discTour") === "1";
 } catch (_) {}
@@ -1334,6 +1336,8 @@ function buildGroups(){
     const key = tourGroupKey(r.l, r.c);
     const g = groups.get(key) || { key, dates: [], all: 0, tours: new Map(), genres: new Map() }; groups.set(key, g);
     g.all++;
+    // Card title comes from the fullest listing of the whole tour, so filters don't change it.
+    if (!g.rep || r.l.length > g.rep.l.length || (r.l.length === g.rep.l.length && r.t && !g.rep.t)) g.rep = r;
     if (r.t) g.tours.set(r.t, (g.tours.get(r.t) || 0) + 1);
     if (r.g) g.genres.set(r.g, (g.genres.get(r.g) || 0) + 1);
     if (d.st && !(r.y || "").endsWith(", " + d.st)) continue;
@@ -1346,8 +1350,8 @@ function buildGroups(){
   const out = { shown: [], hiddenByMe: 0, hiddenGoing: 0, C };
   for (const g of groups.values()) {
     if (!g.dates.length) continue;
-    const top = mostCommon(g.tours), first = g.dates.slice().sort((a, b) => lineup(b).length - lineup(a).length)[0];
-    g.tour = top || ""; g.genre = mostCommon(g.genres) || ""; g.show = { ...first, tour: g.tour };
+    const top = mostCommon(g.tours), r0 = g.rep;
+    g.tour = top || ""; g.genre = mostCommon(g.genres) || ""; g.show = catShow({ id: r0.i, date: r0.d, lineup: r0.l, coHead: !!r0.c, venue: r0.v, city: r0.y, tour: g.tour, url: r0.u });
     g.dates.sort((a, b) => a.date.localeCompare(b.date));
     g.first = g.dates[0].date; g.last = g.dates[g.dates.length - 1].date;
     g.listed = g.dates.reduce((m, x) => x.firstSeen > m ? x.firstSeen : m, "");
@@ -1361,6 +1365,11 @@ function buildGroups(){
     if (C.hidden.has(g.key) && !d.showHidden) { out.hiddenByMe++; continue; }
     if (g.mine && !d.sameTour) { out.hiddenGoing++; continue; }
     if (d.mode === "foryou" && !(g.bk || g.seen || g.crewSeen || g.crewGoing.length || g.pv.length)) continue;
+    if (d.mode === "mine" && !(g.bk || g.seen)) continue;
+    if (d.mode === "seen" && !g.seen) continue;
+    if (d.mode === "bucket" && !g.bk) continue;
+    // Tour size counts every date in the region, not just the ones left after the state/genre/search filters.
+    if (g.all < (d.minDates || 1)) { out.smallTours = (out.smallTours || 0) + 1; continue; }
     out.shown.push(g);
   }
   const name = g => (lineup(g.show)[0] || "").replace(/^the\s+/i, "").toLowerCase();
@@ -1380,11 +1389,12 @@ function mostCommon(map){ let best = "", n = 0; for (const [k, v] of map) if (v 
 function renderDiscover(){
   const d = S.disc;
   $("#view").innerHTML = `<div class="disc">
-    <div class="seg vswitch" role="group" aria-label="Which tours"><button data-dmode="foryou" aria-pressed="${d.mode === "foryou"}">For you</button><button data-dmode="all" aria-pressed="${d.mode === "all"}">All upcoming</button></div>
+    <div class="tagrow dmodes" role="group" aria-label="Which bands">${DMODES.map(([v, l]) => `<button class="tagbtn${d.mode === v ? " on" : ""}" data-dmode="${v}" aria-pressed="${d.mode === v}">${l}</button>`).join("")}</div>
     <input class="search" id="dq" value="${esc(d.q)}" placeholder="Band, tour, venue or city" autocapitalize="none" spellcheck="false" aria-label="Filter tours">
     <div class="tagrow" role="group" aria-label="State">${["", "PA", "NJ", "DE", "NY"].map(x => `<button class="tagbtn${d.st === x ? " on" : ""}" data-dst="${x}" aria-pressed="${d.st === x}">${x || "All states"}</button>`).join("")}</div>
     <div class="dfil">
       <label class="dsel"><span class="lbl">Sort</span><select id="dsort">${DSORTS.map(([v, l]) => `<option value="${v}" ${d.sort === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+      <label class="dsel"><span class="lbl">Dates</span><select id="dmin">${[[1, "Any"], [2, "2+"], [3, "3+"], [5, "5+"], [10, "10+"]].map(([v, l]) => `<option value="${v}" ${Number(d.minDates || 1) === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>
       <label class="dsel"><span class="lbl">Genre</span><select id="dg"><option value="">All</option>${["Metal", "Rock", "Alternative", "Punk"].map(g => `<option ${d.g === g ? "selected" : ""}>${g}</option>`).join("")}</select></label>
     </div>
     <div id="dres"><div class="ro">Loading tours…</div></div></div>`;
@@ -1407,7 +1417,10 @@ function drawDiscover(){
   if (res.hiddenGoing || d.sameTour) notes.push(`<label class="dtour"><input type="checkbox" id="dtour" ${d.sameTour ? "checked" : ""}> Show tours you already have a date for${!d.sameTour ? ` <span class="ro">(${res.hiddenGoing})</span>` : ""}</label>`);
   if (res.hiddenByMe || d.showHidden) notes.push(`<label class="dtour"><input type="checkbox" id="dshowhid" ${d.showHidden ? "checked" : ""}> Show tours you hid${!d.showHidden ? ` <span class="ro">(${res.hiddenByMe})</span>` : ""}</label>`);
   if (!list.length) {
-    box.innerHTML = notes.join("") + `<div class="empty"><h3>Nothing here${d.q || d.st || d.g ? " with those filters" : ""}</h3><div>${d.mode === "foryou" ? "For you shows tours by bands on your bucket list, bands you or your crew have seen, and tours stopping at venues you've been to. Try All upcoming, or add bands to your bucket list on your profile." : "Try another filter."}</div></div>`;
+    const why = { foryou: "For you shows tours by bands on your bucket list, bands you or your crew have seen, and tours stopping at venues you've been to.",
+      mine: "My bands shows tours by bands you've seen or have on your bucket list.", seen: "Seen shows tours by bands you've logged before.",
+      bucket: "Bucket list shows tours by bands on your bucket list. Add bands on your profile." }[d.mode] || "";
+    box.innerHTML = notes.join("") + `<div class="empty"><h3>Nothing here${d.q || d.st || d.g || d.minDates > 1 ? " with those filters" : ""}</h3><div>${esc(why)} ${res.smallTours ? `${res.smallTours} tour${res.smallTours > 1 ? "s have" : " has"} fewer than ${d.minDates} dates. ` : ""}Try All bands or loosen a filter.</div></div>`;
     return;
   }
   const hid = res.C.hidden;
@@ -1449,7 +1462,7 @@ async function setHiddenTour(g, hide){
 }
 document.addEventListener("click", e => {
   const t = e.target.closest && e.target.closest("[data-dmode],[data-dst],[data-dmore],[data-dadd],[data-dtoggle],[data-dhide],[data-dunhide]"); if (!t || S.tab !== "disc") return;
-  if (t.dataset.dmode) { S.disc.mode = t.dataset.dmode; try { localStorage.setItem("pitlog.discMode", S.disc.mode); } catch (_) {} document.querySelectorAll("[data-dmode]").forEach(b => b.setAttribute("aria-pressed", b === t)); DISC.limit = 60; drawDiscover(); }
+  if (t.dataset.dmode) { S.disc.mode = t.dataset.dmode; try { localStorage.setItem("pitlog.discMode", S.disc.mode); } catch (_) {} document.querySelectorAll("[data-dmode]").forEach(b => { b.classList.toggle("on", b === t); b.setAttribute("aria-pressed", b === t); }); DISC.limit = 60; drawDiscover(); }
   else if (t.dataset.dst !== undefined) { S.disc.st = t.dataset.dst; document.querySelectorAll("[data-dst]").forEach(b => { b.classList.toggle("on", b === t); b.setAttribute("aria-pressed", b === t); }); drawDiscover(); }
   else if (t.hasAttribute("data-dmore")) { DISC.limit += 60; drawDiscover(); }
   else if (t.dataset.dtoggle !== undefined) { const g = DISC.groups[Number(t.dataset.dtoggle)]; if (!g) return; DISC.open.has(g.key) ? DISC.open.delete(g.key) : DISC.open.add(g.key); drawDiscover(); }
@@ -1461,6 +1474,7 @@ document.addEventListener("input", e => { if (e.target.id === "dq") { S.disc.q =
 document.addEventListener("change", e => {
   if (S.tab !== "disc") return;
   if (e.target.id === "dg") { S.disc.g = e.target.value; drawDiscover(); }
+  if (e.target.id === "dmin") { S.disc.minDates = Number(e.target.value) || 1; try { localStorage.setItem("pitlog.discMin", String(S.disc.minDates)); } catch (_) {} DISC.limit = 60; drawDiscover(); }
   if (e.target.id === "dsort") { S.disc.sort = e.target.value; try { localStorage.setItem("pitlog.discSort", S.disc.sort); } catch (_) {} drawDiscover(); }
   if (e.target.id === "dtour") { S.disc.sameTour = e.target.checked; try { localStorage.setItem("pitlog.discTour", S.disc.sameTour ? "1" : ""); } catch (_) {} drawDiscover(); }
   if (e.target.id === "dshowhid") { S.disc.showHidden = e.target.checked; drawDiscover(); }

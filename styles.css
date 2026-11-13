@@ -392,7 +392,8 @@ a.btn{text-decoration:none;display:inline-flex;align-items:center;justify-conten
 .dfil{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:space-between}
 .dfil select{background:var(--void);border:1px solid var(--iron);color:var(--bone);padding:8px 10px;font:inherit}
 .tagbtn.on{background:var(--blood);border-color:var(--blood);color:var(--bone)}
-.dsel{display:flex;align-items:center;gap:8px}.dsel select{min-width:0}
+.dsel{display:flex;align-items:center;gap:6px}
+.dmodes .tagbtn{flex:1 1 auto;text-align:center}.dsel select{min-width:0}
 .tourcard{border:1px solid var(--iron);background:var(--crypt);margin-top:10px;display:grid;gap:8px;padding:12px}
 .tourcard.haspv{border-left:3px solid var(--rust)}
 .tourhead{display:flex;gap:10px;align-items:flex-start;justify-content:space-between;background:none;border:0;padding:0;text-align:left;color:inherit;width:100%;cursor:pointer}
