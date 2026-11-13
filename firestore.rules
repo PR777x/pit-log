@@ -19,7 +19,7 @@ service cloud.firestore {
         allow create: if signedIn() && family(me(), uid) && request.resource.data.addedBy == me();
         allow update: if signedIn() && family(me(), uid)
           && request.resource.data.diff(resource.data).affectedKeys()
-               .hasOnly(['date', 'lineup', 'venue', 'city', 'tour', 'unsure', 'linkId', 'syncedAt', 'poster']);
+               .hasOnly(['date', 'lineup', 'venue', 'city', 'tour', 'unsure', 'coHead', 'linkId', 'syncedAt', 'poster']);
       }
     }
 

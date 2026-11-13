@@ -33,8 +33,9 @@ function prettyDate(iso){
   return `${DAYS[dt.getUTCDay()]}, ${MONTHS[m - 1]} ${d}, ${y}`;
 }
 // A trimmed copy of a show for the email queue (never costs, notes or photos).
-const showSummary = (s, id) => ({ id: id || s.id || "", date: s.date || "", lineup: lineup(s).slice(0, 4), venue: s.venue || "", city: s.city || "" });
-const showLine = s => `${lineup(s)[0] || "A show"}${lineup(s).length > 1 ? " w/ " + lineup(s).slice(1, 3).join(", ") : ""}`;
+const showSummary = (s, id) => ({ id: id || s.id || "", date: s.date || "", lineup: lineup(s).slice(0, 4), coHead: !!s.coHead, venue: s.venue || "", city: s.city || "" });
+const showLine = s => { const lu = lineup(s), co = !!s.coHead && lu.length > 1, sup = lu.slice(co ? 2 : 1, co ? 4 : 3);
+  return `${co ? lu[0] + " & " + lu[1] : lu[0] || "A show"}${sup.length ? " w/ " + sup.join(", ") : ""}`; };
 const placeLine = s => [prettyDate(s.date), [s.venue, s.city].filter(Boolean).join(", ")].filter(Boolean).join(" · ");
 
 const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));

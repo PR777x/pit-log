@@ -1,5 +1,20 @@
 {
   "functions": [
-    { "source": "functions", "codebase": "default", "runtime": "nodejs22", "ignore": ["node_modules", "test.js", "*.log"] }
+    {
+      "source": "functions",
+      "codebase": "default",
+      "runtime": "nodejs22",
+      "ignore": [
+        "node_modules",
+        "test.js",
+        "*.log"
+      ]
+    }
+  ],
+  "firestore": [
+    {
+      "database": "pit-log",
+      "rules": "firestore.rules"
+    }
   ]
 }

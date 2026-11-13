@@ -365,6 +365,15 @@ a.btn{text-decoration:none;display:inline-flex;align-items:center;justify-conten
 .luslot{display:flex;align-items:center;gap:8px}
 .lunum{min-width:24px;font-family:var(--f-label);font-weight:700;font-size:12px;letter-spacing:.08em;color:var(--ash);text-align:right}
 .luslot:first-child .lunum{color:var(--blood-hi)}
+.lu2 .lunum{transition:color .15s}.lugrid:has(#f-cohead:checked) .lu2 .lunum{color:var(--blood-hi)}
+.cohead{display:flex;align-items:center;gap:10px;margin:0 0 4px 32px;font-size:13px;color:var(--ash);cursor:pointer;user-select:none}
+.cohead input{position:absolute;opacity:0;width:1px;height:1px}
+.cohead .sw{position:relative;flex:none;width:34px;height:20px;border-radius:10px;background:var(--slab);border:1px solid var(--iron);transition:background .15s,border-color .15s}
+.cohead .sw::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:var(--ash);transition:transform .15s,background .15s}
+.cohead input:checked + .sw{background:var(--blood-hi);border-color:var(--blood-hi)}
+.cohead input:checked + .sw::after{transform:translateX(14px);background:var(--bone)}
+.cohead input:checked ~ span:last-child{color:var(--bone)}
+.cohead input:focus-visible + .sw{outline:2px solid var(--bone);outline-offset:2px}
 .luslot input{flex:1}
 .addband{justify-self:start;margin-top:4px}
 .acwrap{position:relative}

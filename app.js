@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=25";
+import { VENUES } from "./venues.js?v=26";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -58,6 +58,10 @@ const parse = (iso) => { const [y,m,d] = (iso||"").split("-").map(Number); retur
 const fmtDate = iso => { const p = parse(iso); return p.y ? `${MONTHS[p.m-1]} ${p.d}, ${p.y}` : ""; };
 const isUpcoming = s => (s.date||"") > todayISO;
 const lineup = s => Array.isArray(s.lineup) ? s.lineup.filter(Boolean) : [];
+// Co-headliner: band #2 shares top billing ("A & B"); support starts at band #3.
+const isCoHead = s => !!(s && s.coHead) && lineup(s).length > 1;
+const headline = s => { const lu = lineup(s); return isCoHead(s) ? lu[0] + " & " + lu[1] : (lu[0] || ""); };
+const support = s => lineup(s).slice(isCoHead(s) ? 2 : 1);
 const crew = s => Array.isArray(s.wentWith) ? s.wentWith.filter(Boolean) : [];
 // Crew tags: names in "Went with" linked to a friend's account. Stored on the show as
 // tagged: [{name, uid}] plus taggedUids: [uid] so friends can tell they were tagged.
@@ -103,7 +107,7 @@ function renderNext(){
   el.hidden = false;
   el.innerHTML = `<div class="cd num">${days === 0 ? "!" : days}</div>
     <div><div class="lbl">${days === 0 ? "Tonight" : days === 1 ? "Day until next show" : "Days until next show"}</div>
-    <div class="who">${esc(lineup(nx).join(" · "))}</div>
+    <div class="who">${esc([headline(nx), ...support(nx)].filter(Boolean).join(" · "))}</div>
     <div class="where">${esc([nx.venue, nx.city].filter(Boolean).join(", ") || "Venue TBD")}${nx.unsure ? " · not locked in" : ""}</div></div>`;
 }
 
@@ -111,14 +115,14 @@ function renderNext(){
 function ticket(s, firsts, opts){
   opts = opts || {};
   const p = parse(s.date), up = isUpcoming(s), lu = lineup(s);
-  const sup = lu.slice(1), firstsHere = (firsts[s.id]||[]), rating = Number(s.rating)||0;
+  const sup = support(s), firstsHere = (firsts[s.id]||[]), rating = Number(s.rating)||0;
   const media = [...items(s,"photos"), ...items(s,"merch")];
   const vids = media.filter(m=>m.type==="video").length;
   const thumbs = [pid(s.poster), ...media.filter(m=>m.type!=="video").map(m=>m.id)].filter(Boolean).slice(0,5);
   return `<button class="ticket ${up?'upcoming':''}${opts.friend && S.tab!=="crew" ? " crewt" : ""}" ${opts.friend ? `data-fopen="${esc(opts.friend)}|${esc(s.id)}"` : `data-open="${esc(s.id)}"`} aria-label="Open ${esc(lu[0]||'show')}">
     <div class="stub"><div class="mo">${MONTHS[(p.m||1)-1].toUpperCase()}</div><div class="dd num">${p.d||"?"}</div><div class="dw">${DAYS[p.dt.getDay()]}</div></div>
     <div class="tbody">
-      <div class="head">${esc(lu[0]||"Untitled show")}</div>
+      <div class="head">${esc(headline(s)||"Untitled show")}</div>
       ${sup.length ? `<div class="sup"><b>w/</b> ${esc(sup.join(" · "))}</div>` : ""}
       <div class="venue">${esc([s.venue, s.city].filter(Boolean).join(" — ") || "Venue unknown")}</div>
       <div class="chips">
@@ -467,7 +471,7 @@ function renderSheet(fresh){
   $("#sheetRoot").innerHTML = `<div class="sheet" role="dialog" aria-modal="true" aria-label="Show details"><div class="panel">
     <div class="ptop"><button class="btn ghost" data-close>← Back</button>
       ${ro ? `<span class="ro">${S.openFriend ? esc((FR[S.openFriend]?.name || "Friend") + "'s show · read-only") : "Read-only"}</span>` : `<button class="btn red" data-save ${busy?"disabled":""}>${isNew?"Add show":"Save"}</button>`}</div>
-    <div class="ptitle">${esc(lineup(d)[0] || "New show")}</div>
+    <div class="ptitle">${esc(headline(d) || "New show")}</div>
     <div class="psub">${esc([d.venue, d.city].filter(Boolean).join(" · "))}${d.date?` · ${esc(new Date(parse(d.date).dt).toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric",year:"numeric"}))}`:""}</div>
 
     <div class="sect"><h3>The bill</h3>
@@ -532,7 +536,7 @@ function readForm(){
   const n = s => s === "" ? null : Number(s);
   Object.assign(draft, {
     date: v("f-date"), tour: v("f-tour").trim(), lineup: [...document.querySelectorAll(".lu-in")].map(x => x.value.trim()).filter(Boolean), venue: v("f-venue").trim(), city: v("f-city").trim(),
-    unsure: !!$("#f-unsure")?.checked, wentWith: list(v("f-crew")), spot: v("f-spot"), best: v("f-best"),
+    unsure: !!$("#f-unsure")?.checked, coHead: !!$("#f-cohead")?.checked, wentWith: list(v("f-crew")), spot: v("f-spot"), best: v("f-best"),
     highlight: v("f-highlight").trim(), setlist: v("f-setlist"), notes: v("f-notes"),
     ticketQty: n(v("f-ticketQty")), ticketTotal: n(v("f-ticketTotal")), merchSpend: n(v("f-merchSpend")), miles: (x => x == null ? null : KM() ? Math.round(x / 1.609344) : x)(n(v("f-miles"))),
   });
@@ -803,6 +807,7 @@ document.addEventListener("change", e => {
   const up = e.target.dataset && e.target.dataset.upkind;
   if (up) { const files = [...(e.target.files || [])]; e.target.value = ""; readForm(); handleFiles(up, files); return; }
   if (e.target.classList && e.target.classList.contains("lu-in") && draft) { readForm(); refreshBest(); }
+  if (e.target.id === "f-cohead" && draft) { readForm(); const n = $(".lu2 .lunum"); if (n) n.textContent = draft.coHead ? "CO" : "2"; const t = $(".ptitle"); if (t) t.textContent = headline(draft) || "New show"; }
   if (e.target.id === "avatarFile") { const f = e.target.files && e.target.files[0]; e.target.value = ""; if (f) uploadAvatar(f); }
   if (e.target.id === "importFile") { const f = e.target.files && e.target.files[0]; e.target.value = ""; if (f) importFile(f); }
 });
@@ -886,7 +891,7 @@ function crewStats(){
 }
 
 /* ---------- Crew Family (linked logs) ---------- */
-const SHARED = ["date", "lineup", "venue", "city", "tour", "unsure"];
+const SHARED = ["date", "lineup", "venue", "city", "tour", "unsure", "coHead"];
 const reqWith = uid => REQ.in.concat(REQ.out).find(r => r.status === "accepted" && (r.from === uid || r.to === uid));
 async function setFamily(uid, state){
   const r = reqWith(uid); if (!r) return;
@@ -915,7 +920,7 @@ async function familySync(){
         if (p) { if (p.linkId !== lid) await updateDoc(doc(fdb, "users", f.uid, "shows", p.id), { linkId: lid }); }
         else {
           const copy = { linkId: lid, addedBy: ME.uid, wentWith: [], rating: 0, pit: 0, spot: "", best: "", highlight: "", setlist: "", notes: "", ticket: null, ticketQty: null, ticketTotal: null, merchSpend: null, miles: s.miles ?? null, poster: s.poster || null, photos: [], merch: [] };
-          for (const k of SHARED) copy[k] = s[k] ?? (k === "lineup" ? [] : k === "unsure" ? false : "");
+          for (const k of SHARED) copy[k] = s[k] ?? (k === "lineup" ? [] : k === "unsure" || k === "coHead" ? false : "");
           await setDoc(doc(fdb, "users", f.uid, "shows", lid), copy); made++;
         }
         await updateDoc(myShow(s.id), { linkId: lid, familySynced: arrayUnion(f.uid) });
@@ -942,7 +947,7 @@ async function pushPoster(show, poster){
 }
 async function pushShared(show){
   if (!show || !show.linkId) return;
-  const patch = { syncedAt: serverTimestamp() }; for (const k of SHARED) patch[k] = show[k] ?? (k === "lineup" ? [] : k === "unsure" ? false : "");
+  const patch = { syncedAt: serverTimestamp() }; for (const k of SHARED) patch[k] = show[k] ?? (k === "lineup" ? [] : k === "unsure" || k === "coHead" ? false : "");
   for (const f of friendList().filter(f => f.family)) {
     const p = (f.raw || f.shows || []).find(x => x.linkId === show.linkId);
     if (p) { try { await updateDoc(doc(fdb, "users", f.uid, "shows", p.id), patch); } catch (e) { console.error("push shared", e); } }
@@ -1041,7 +1046,7 @@ const PUBLIC_FIELDS = { ticketCost: ["ticket", "ticketQty", "ticketTotal"], merc
   ratings: ["rating", "pit", "best"], notes: ["notes", "highlight", "setlist"], wentWith: ["wentWith"], spot: ["spot", "miles"] };
 function publicPayload(sh, set){
   const o = { ownerUid: ME.uid, ownerHandle: PROFILE.handle || "", ownerName: PROFILE.name || "", ownerPhoto: PROFILE.photoURL || "", showId: sh.id,
-    date: sh.date || "", lineup: lineup(sh), bandKeys: [...new Set(lineup(sh).map(normBand).filter(Boolean))], venue: sh.venue || "", city: sh.city || "", tour: sh.tour || "", unsure: !!sh.unsure };
+    date: sh.date || "", lineup: lineup(sh), bandKeys: [...new Set(lineup(sh).map(normBand).filter(Boolean))], venue: sh.venue || "", city: sh.city || "", tour: sh.tour || "", unsure: !!sh.unsure, coHead: !!sh.coHead };
   for (const [k, fields] of Object.entries(PUBLIC_FIELDS)) if (set[k] === "public") for (const fld of fields) {
     let v = sh[fld]; if (v === undefined) v = null;
     if (fld === "photos" || fld === "merch") v = items(sh, fld).map(m => ({ url: m.url, type: m.type || "image", bands: m.bands || [] }));
@@ -1172,7 +1177,7 @@ function drawSearchResults(){
       const who = g.people.map(x => `<button class="chip ${x.me ? "" : x.friend ? "tog" : "crewtag"}" data-sprof="${esc(x.uid)}">${x.me ? "You" : "@" + esc(x.handle)}</button>`).join("");
       const open = mine ? `data-open="${esc(mine.id)}"` : g.people.find(x => x.friend) ? `data-fopen="${esc(g.people.find(x => x.friend).uid)}|${esc(g.people.find(x => x.friend).id)}"` : `data-sprof="${esc(g.people[0].uid)}"`;
       return `<div class="bandhit"><button class="prow tap prow-show" ${open}><span class="pdate"><b class="num">${p.d}</b>${MONTHS[(p.m||1)-1]} ${p.y}</span>
-        <div class="pt"><div class="nm" style="font-size:20px">${esc(lu[0] || "Show")}</div>${lu.length > 1 ? `<div class="ro">w/ ${esc(lu.slice(1).join(" · "))}</div>` : ""}<div class="ro">${esc([sh.venue, sh.city].filter(Boolean).join(" — ") || "Venue unknown")}</div></div></button>
+        <div class="pt"><div class="nm" style="font-size:20px">${esc(headline(sh) || "Show")}</div>${support(sh).length ? `<div class="ro">w/ ${esc(support(sh).join(" · "))}</div>` : ""}<div class="ro">${esc([sh.venue, sh.city].filter(Boolean).join(" — ") || "Venue unknown")}</div></div></button>
         <div class="tagrow who"><span class="lbl">${g.people.length} went</span>${who}</div></div>`; };
     if (res.up.length) h += `<section class="sect"><h3>Coming up <span class="lbl">${res.up.length}</span></h3>${res.up.map(row).join("")}</section>`;
     if (res.past.length) h += `<section class="sect"><h3>Past shows <span class="lbl">${res.past.length}</span></h3>${res.past.map(row).join("")}</section>`;
@@ -1232,11 +1237,11 @@ document.addEventListener("input", e => { if (e.target.id === "sq") { S.search.q
 // Four band boxes (headliner first) with an "Add another band" button for bigger bills.
 function lineupFields(d, ro){
   const lu = lineup(d);
-  if (ro) return `<div class="field"><span class="lbl">Lineup</span><div class="ro" style="color:var(--bone)">${lu.map(esc).join(" · ") || "—"}</div></div>`;
+  if (ro) return `<div class="field"><span class="lbl">Lineup</span><div class="ro" style="color:var(--bone)">${[headline(d), ...support(d)].filter(Boolean).map(esc).join(" · ") || "—"}</div>${isCoHead(d) ? `<div class="ro">Co-headliners</div>` : ""}</div>`;
   const n = Math.max(4, lu.length + (S.luExtra || 0));
   const slots = Array.from({ length: n }, (_, i) => lu[i] || "");
   return `<div class="field"><span class="lbl">Lineup</span><div class="lugrid">${slots.map((b, i) =>
-    `<label class="acwrap luslot"><span class="lunum">${i ? i + 1 : "HL"}</span><input class="lu-in" data-ac="band" autocomplete="off" value="${esc(b)}" placeholder="${i ? `Band ${i + 1}` : "Headliner"}" aria-label="${i ? `Band ${i + 1}` : "Headliner"}"><div class="acbox" hidden></div></label>`).join("")}</div>
+    `<label class="acwrap luslot${i === 1 ? " lu2" : ""}"><span class="lunum">${i === 1 && d.coHead ? "CO" : i ? i + 1 : "HL"}</span><input class="lu-in" data-ac="band" autocomplete="off" value="${esc(b)}" placeholder="${i ? `Band ${i + 1}` : "Headliner"}" aria-label="${i ? `Band ${i + 1}` : "Headliner"}"><div class="acbox" hidden></div></label>${i === 1 ? `<label class="cohead"><input type="checkbox" id="f-cohead" ${d.coHead ? "checked" : ""}><span class="sw" aria-hidden="true"></span><span>Band 2 is a co-headliner</span></label>` : ""}`).join("")}</div>
     <button type="button" class="btn ghost addband" data-addband>+ Add another band</button></div>`;
 }
 function refreshBest(){
@@ -1298,7 +1303,7 @@ const icsDay = iso => String(iso || "").replace(/-/g, "");
 const nextDay = iso => { const p = parse(iso); const d = new Date(p.y, p.m - 1, p.d + 1); return d.getFullYear() + String(d.getMonth() + 1).padStart(2, "0") + String(d.getDate()).padStart(2, "0"); };
 const icsText = v => String(v || "").replace(/\\/g, "\\\\").replace(/\r?\n/g, "\\n").replace(/([,;])/g, "\\$1");
 function icsFold(line){ const out = []; let l = line; while (l.length > 74) { out.push(l.slice(0, 74)); l = " " + l.slice(74); } out.push(l); return out.join("\r\n"); }
-function eventTitle(s){ const lu = lineup(s); return (lu[0] || "Show") + (lu.length > 1 ? " w/ " + lu.slice(1).join(", ") : "") + (s.unsure ? " (maybe)" : ""); }
+function eventTitle(s){ const sup = support(s); return (headline(s) || "Show") + (sup.length ? " w/ " + sup.join(", ") : "") + (s.unsure ? " (maybe)" : ""); }
 function eventDetails(s){
   const lu = lineup(s), bits = [];
   if (s.tour) bits.push("Tour: " + s.tour);
@@ -1485,7 +1490,7 @@ async function addTaggedShow(uid, id, full){
   const body = { wentWith: names, tagged, taggedUids: tagged.map(t => t.uid), rating: 0, pit: 0, spot: "", best: "", highlight: "", setlist: "", notes: "",
     ticket: null, ticketQty: null, ticketTotal: null, merchSpend: null, miles: null, poster: null, photos: [], merch: [],
     copiedFrom: { uid, id, full: !!full } };
-  for (const k of SHARED) body[k] = s[k] ?? (k === "lineup" ? [] : k === "unsure" ? false : "");
+  for (const k of SHARED) body[k] = s[k] ?? (k === "lineup" ? [] : k === "unsure" || k === "coHead" ? false : "");
   const newId = rid();
   busy = true;
   try {
@@ -1587,7 +1592,7 @@ function showRow(s, ownerUid, label){
   if (!s) return "";
   const p = parse(s.date), lu = lineup(s), opener = ownerUid ? `data-fopen="${esc(ownerUid)}|${esc(s.id)}"` : `data-open="${esc(s.id)}"`;
   return `<button class="prow tap prow-show" ${opener}><span class="pdate"><b class="num">${p.d}</b>${MONTHS[(p.m||1)-1]} ${p.y}</span>
-    <div class="pt"><div class="lbl">${esc(label)}</div><div class="nm" style="font-size:22px">${esc(lu[0] || "Show")}</div><div class="ro">${esc(s.venue || "Venue unknown")}</div></div></button>`;
+    <div class="pt"><div class="lbl">${esc(label)}</div><div class="nm" style="font-size:22px">${esc(headline(s) || "Show")}</div><div class="ro">${esc(s.venue || "Venue unknown")}</div></div></button>`;
 }
 function profileBlock(p, isMe, f, extra){
   const shows = p.shows || [], done = shows.filter(s => !isUpcoming(s)).sort((a,b) => (b.date||"").localeCompare(a.date||""));

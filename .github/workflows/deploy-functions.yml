@@ -7,7 +7,7 @@ name: Deploy email alerts
 on:
   push:
     branches: [main]
-    paths: ["functions/**", "firebase.json", ".github/workflows/deploy-functions.yml"]
+    paths: ["functions/**", "firebase.json", "firestore.rules", ".github/workflows/deploy-functions.yml"]
   workflow_dispatch:
 
 jobs:
@@ -63,4 +63,4 @@ jobs:
           rm -f "$RUNNER_TEMP/resend.txt"
       - name: Deploy functions
         if: steps.gate.outputs.ok == 'true'
-        run: npx -y firebase-tools@latest deploy --only functions --project pit-log --force --non-interactive
+        run: npx -y firebase-tools@latest deploy --only functions,firestore:rules --project pit-log --force --non-interactive
