@@ -35,10 +35,24 @@ jobs:
         if: steps.gate.outputs.ok == 'true'
         working-directory: functions
         run: node test.js
-      - uses: google-github-actions/auth@v2
+      - name: Prepare deploy credentials
         if: steps.gate.outputs.ok == 'true'
-        with:
-          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        env:
+          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        # Pasting the key on a phone can add stray line breaks. Real newlines inside the key are
+        # stored as the two characters \n, so stripping actual line breaks is always safe.
+        # Also accepts the key base64-encoded.
+        run: |
+          node -e '
+            const fs = require("fs");
+            let raw = process.env.SA.replace(/[\r\n\t]/g, "").trim();
+            if (!raw.startsWith("{")) raw = Buffer.from(raw, "base64").toString("utf8");
+            const key = JSON.parse(raw);
+            if (key.type !== "service_account" || !key.private_key || !key.client_email) { console.error("That secret is not a service account key."); process.exit(1); }
+            fs.writeFileSync(process.argv[1], JSON.stringify(key), { mode: 0o600 });
+            console.log("Key OK for", key.client_email);
+          ' "$RUNNER_TEMP/sa.json"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/sa.json" >> "$GITHUB_ENV"
       - name: Save the Resend key in Secret Manager
         if: steps.gate.outputs.ok == 'true'
         env:
