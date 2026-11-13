@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=26";
+import { VENUES } from "./venues.js?v=27";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -439,7 +439,7 @@ let draft = null, confirmDel = false, busy = false;
 let SHEET_LIST = [];
 
 function openSheet(id){
-  S.openFriend = null; S.luExtra = 0;
+  S.openFriend = null; S.luExtra = 0; MATCH.dateTouched = false; MATCH.dismissed = new Set(); MATCH.list = [];
   const s = id === "__new" ? { id:"__new", date: todayISO, lineup: [], wentWith: [], photos: [], merch: [] } : S.shows.find(x=>x.id===id);
   if (!s) return;
   closeLightbox();
@@ -480,6 +480,7 @@ function renderSheet(fresh){
         <label class="field"><span class="lbl">Tour name</span><input id="f-tour" value="${esc(d.tour||"")}" placeholder="Name of the tour" ${ro?"disabled":""}></label>
       </div>
       ${lineupFields(d, ro)}
+      ${isNew && !ro ? `<div id="matchbox" class="matchbox" aria-live="polite" hidden></div>` : ""}
       <div class="grid2">
         <label class="field acwrap"><span class="lbl">Venue</span><input id="f-venue" data-ac="venue" autocomplete="off" value="${esc(d.venue||"")}" placeholder="Search or type a venue" ${ro?"disabled":""}><div class="acbox" hidden></div></label>
         <label class="field"><span class="lbl">City</span><input id="f-city" value="${esc(d.city||"")}" ${ro?"disabled":""}></label>
@@ -1042,11 +1043,13 @@ async function removeRequest(id, msg){ try { await deleteDoc(doc(fdb, "friendReq
 // to Public. The Firestore rules let any signed-in user read publicShows, so hidden fields never
 // leave your account.
 const normBand = b => String(b || "").toLowerCase().replace(/^the\s+/, "").replace(/[^a-z0-9]+/g, "");
+const STOPW = new Set(["the", "and", "tour", "world", "north", "american", "america", "with", "special", "guests", "2023", "2024", "2025", "2026", "2027", "2028"]);
+const tourWords = t => [...new Set(String(t || "").toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length >= 3 && !STOPW.has(w)))].slice(0, 10);
 const PUBLIC_FIELDS = { ticketCost: ["ticket", "ticketQty", "ticketTotal"], merchCost: ["merchSpend"], photos: ["photos", "merch"], poster: ["poster"],
   ratings: ["rating", "pit", "best"], notes: ["notes", "highlight", "setlist"], wentWith: ["wentWith"], spot: ["spot", "miles"] };
 function publicPayload(sh, set){
   const o = { ownerUid: ME.uid, ownerHandle: PROFILE.handle || "", ownerName: PROFILE.name || "", ownerPhoto: PROFILE.photoURL || "", showId: sh.id,
-    date: sh.date || "", lineup: lineup(sh), bandKeys: [...new Set(lineup(sh).map(normBand).filter(Boolean))], venue: sh.venue || "", city: sh.city || "", tour: sh.tour || "", unsure: !!sh.unsure, coHead: !!sh.coHead };
+    date: sh.date || "", lineup: lineup(sh), bandKeys: [...new Set(lineup(sh).map(normBand).filter(Boolean))], venue: sh.venue || "", city: sh.city || "", tour: sh.tour || "", tourWords: tourWords(sh.tour), unsure: !!sh.unsure, coHead: !!sh.coHead };
   for (const [k, fields] of Object.entries(PUBLIC_FIELDS)) if (set[k] === "public") for (const fld of fields) {
     let v = sh[fld]; if (v === undefined) v = null;
     if (fld === "photos" || fld === "merch") v = items(sh, fld).map(m => ({ url: m.url, type: m.type || "image", bands: m.bands || [] }));
@@ -1233,6 +1236,82 @@ function searchClick(t){
 }
 document.addEventListener("input", e => { if (e.target.id === "sq") { S.search.q = e.target.value; if (S.search.mode === "bands") { const box = $("#sres"); if (box && !S.search.bands) drawSearchResults(); } runSearch(); } });
 
+/* ---------- Logged-show matches for a new show ----------
+   As you type a band or tour name, look through shows already logged (yours, your crew's, public ones)
+   and offer to fill in the rest: full lineup, tour, venue, city and date. */
+const MATCH = { timer: 0, pub: new Map(), dismissed: new Set(), list: [], dateTouched: false };
+function scheduleMatches(){ clearTimeout(MATCH.timer); MATCH.timer = setTimeout(updateMatches, 250); }
+function matchInputs(){
+  const bands = [...document.querySelectorAll(".lu-in")].map(x => normBand(x.value)).filter(k => k.length >= 3);
+  const tour = normBand($("#f-tour")?.value || ""), date = $("#f-date")?.value || "";
+  return { bands, tour: tour.length >= 4 ? tour : "", words: tourWords($("#f-tour")?.value || "").slice(0, 3), date };
+}
+async function fetchPublicBand(key, field){
+  field = field || "bandKeys";
+  const ck = field + ":" + key;
+  if (MATCH.pub.has(ck)) return;
+  MATCH.pub.set(ck, []);
+  try { const snap = await getDocs(query(collection(fdb, "publicShows"), where(field, "array-contains", key), limit(60)));
+    MATCH.pub.set(ck, snap.docs.map(d => d.data()).filter(x => x.ownerUid !== ME.uid && !FR[x.ownerUid]).map(x => ({ ...x, id: x.showId, _who: { uid: x.ownerUid, handle: x.ownerHandle } })));
+  } catch (e) { console.warn("match lookup", e); }
+}
+async function updateMatches(){
+  const box = $("#matchbox"); if (!box || !draft || draft.id !== "__new") return;
+  const inp = matchInputs();
+  if (!inp.bands.length && !inp.tour) { box.hidden = true; box.innerHTML = ""; return; }
+  await Promise.all([...inp.bands.map(k => fetchPublicBand(k)), ...inp.words.map(w => fetchPublicBand(w, "tourWords"))]);
+  if (!$("#matchbox")) return;
+  const bandHit = sh => lineup(sh).some(b => { const k = normBand(b); return inp.bands.some(t => k === t || k.startsWith(t)); });
+  const tourHit = sh => inp.tour && sh.tour && normBand(sh.tour).includes(inp.tour);
+  const groups = new Map();
+  const add = (sh, who) => {
+    if (!sh || !sh.date || !lineup(sh).length) return;
+    const bh = bandHit(sh), th = tourHit(sh); if (!bh && !th) return;
+    const k = sh.date + "|" + normBand(sh.venue) + "|" + normBand(lineup(sh)[0]);
+    if (MATCH.dismissed.has(k)) return;
+    const g = groups.get(k) || { key: k, show: sh, people: [], tour: th, band: bh }; groups.set(k, g);
+    if (lineup(sh).length > lineup(g.show).length || (!g.show.tour && sh.tour) || (!g.show.venue && sh.venue)) g.show = { ...g.show, ...Object.fromEntries(["lineup", "tour", "venue", "city", "coHead"].filter(f => sh[f] && (f !== "lineup" || lineup(sh).length > lineup(g.show).length)).map(f => [f, sh[f]])) };
+    if (who.me) g.mine = sh.id; else if (!g.people.some(p => p.uid === who.uid)) g.people.push(who);
+  };
+  for (const sh of S.shows) add(sh, { me: true });
+  for (const f of friendList()) for (const sh of (f.shows || [])) add(sh, { uid: f.uid, handle: f.handle });
+  for (const ck of [...inp.bands.map(k => "bandKeys:" + k), ...inp.words.map(w => "tourWords:" + w)]) for (const sh of (MATCH.pub.get(ck) || [])) add(sh, sh._who);
+  const day = d => Math.abs((parse(d).dt - parse(todayISO).dt) / 864e5);
+  const rank = g => (g.show.date === inp.date ? 0 : 1e6) + (g.tour && g.band ? 0 : 1e5) + (g.mine && g.show.date !== inp.date ? 5e5 : 0) + day(g.show.date) - g.people.length * 10;
+  MATCH.list = [...groups.values()].sort((a, b) => rank(a) - rank(b)).slice(0, 3);
+  if (!MATCH.list.length) { box.hidden = true; box.innerHTML = ""; return; }
+  box.hidden = false;
+  box.innerHTML = `<div class="lbl">Already logged — tap to fill in the rest</div>` + MATCH.list.map((g, i) => {
+    const sh = g.show, same = sh.date === inp.date, sup = support(sh);
+    const who = g.mine ? "In your log" : (g.people.slice(0, 2).map(p => "@" + p.handle).join(", ") + (g.people.length > 2 ? ` +${g.people.length - 2}` : "")) + " logged this";
+    const tag = same ? `<span class="chip up">Same date</span>` : g.tour && inp.tour ? `<span class="chip">Same tour</span>` : "";
+    return `<div class="mcard"><div class="mm-b"><div class="mm-h">${esc(headline(sh))}</div>${sup.length ? `<div class="ro">w/ ${esc(sup.join(" · "))}</div>` : ""}
+      <div class="ro">${esc(fmtDate(sh.date))}${sh.venue ? " · " + esc([sh.venue, sh.city].filter(Boolean).join(", ")) : ""}${sh.tour ? " · " + esc(sh.tour) : ""}</div>
+      <div class="ro mm-w">${tag}${esc(who)}</div></div>
+      <div class="mm-a">${g.mine && same ? `<button type="button" class="btn" data-open="${esc(g.mine)}">Open it</button>` : `<button type="button" class="btn red" data-matchfill="${i}">Use</button>`}
+      <button type="button" class="btn ghost" data-matchskip="${i}" aria-label="Not this show">✕</button></div></div>`; }).join("");
+}
+function applyMatch(i){
+  const g = MATCH.list[i]; if (!g || !draft) return;
+  readForm();
+  const sh = g.show, inp = matchInputs();
+  // Same stop (or you haven't picked a date yet): take everything. Different date you set yourself: same tour, other stop,
+  // so only take the lineup and tour, not the venue or date.
+  const whole = !MATCH.dateTouched || inp.date === sh.date || !draft.date;
+  const typed = lineup(draft), lu = lineup(sh).slice();
+  for (const b of typed) if (!lu.some(x => normBand(x) === normBand(b))) lu.push(b);
+  draft.lineup = lu; draft.coHead = !!sh.coHead;
+  if (sh.tour && (!draft.tour || normBand(sh.tour).includes(normBand(draft.tour)))) draft.tour = sh.tour;
+  if (whole) { draft.date = sh.date; if (sh.venue) draft.venue = sh.venue; if (sh.city) draft.city = sh.city; }
+  else { if (!draft.venue && sh.venue && inp.date === sh.date) draft.venue = sh.venue; }
+  S.luExtra = 0; MATCH.dismissed.add(g.key); renderSheet();
+  toast(whole ? "Filled in from the logged show" : "Filled in the lineup and tour — venue and date are yours", 3000);
+}
+document.addEventListener("click", e => {
+  const f = e.target.closest && e.target.closest("[data-matchfill]"); if (f) { applyMatch(Number(f.dataset.matchfill)); return; }
+  const k = e.target.closest && e.target.closest("[data-matchskip]"); if (k) { const g = MATCH.list[Number(k.dataset.matchskip)]; if (g) MATCH.dismissed.add(g.key); updateMatches(); }
+});
+
 /* ---------- Lineup fields + venue/band suggestions ---------- */
 // Four band boxes (headliner first) with an "Add another band" button for bigger bills.
 function lineupFields(d, ro){
@@ -1282,14 +1361,16 @@ function showAc(input){
 }
 function hideAllAc(except){ for (const b of document.querySelectorAll(".acbox")) if (b !== except) b.hidden = true; }
 document.addEventListener("focusin", e => { if (e.target.dataset && e.target.dataset.ac) { hideAllAc(e.target.parentElement.querySelector(".acbox")); showAc(e.target); } });
-document.addEventListener("input", e => { if (e.target.dataset && e.target.dataset.ac) showAc(e.target); if (e.target.id === "f-city") e.target.dataset.auto = "0"; });
+document.addEventListener("input", e => { if (e.target.dataset && e.target.dataset.ac) showAc(e.target); if (e.target.id === "f-city") e.target.dataset.auto = "0";
+  if (e.target.id === "f-date") MATCH.dateTouched = true;
+  if (draft && draft.id === "__new" && (e.target.id === "f-date" || e.target.id === "f-tour" || e.target.classList.contains("lu-in"))) scheduleMatches(); });
 document.addEventListener("focusout", e => { if (e.target.dataset && e.target.dataset.ac) setTimeout(() => { const box = e.target.parentElement && e.target.parentElement.querySelector(".acbox"); if (box && !box.contains(document.activeElement)) box.hidden = true; }, 180); });
 // pointerdown so the pick lands before the input loses focus
 document.addEventListener("pointerdown", e => {
   const b = e.target.closest && e.target.closest("[data-acpick]"); if (!b) return;
   e.preventDefault();
   const box = b.closest(".acbox"), input = box.parentElement.querySelector("[data-ac]"), o = box._opts[Number(b.dataset.acpick)];
-  input.value = o.label; box.hidden = true;
+  input.value = o.label; box.hidden = true; if (draft && draft.id === "__new" && input.dataset.ac === "band") scheduleMatches();
   if (input.dataset.ac === "venue" && o.city) { const c = $("#f-city"); if (c && (!c.value.trim() || c.dataset.auto === "1")) { c.value = o.city; c.dataset.auto = "1"; } }
   if (input.classList.contains("lu-in")) { readForm(); refreshBest(); const ins = [...document.querySelectorAll(".lu-in")], nx = ins[ins.indexOf(input) + 1]; if (nx && !nx.value) nx.focus(); else input.blur(); }
   else input.blur();
