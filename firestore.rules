@@ -25,6 +25,16 @@ service cloud.firestore {
 
     // Public copies of shows: only the fields each owner set to Public. Anyone signed in can read;
     // only the owner can write, and only under their own uid prefix.
+    // Show catalog: written once a day by the server (Ticketmaster listings); anyone signed in can read.
+    match /catalog/{id} {
+      allow read: if signedIn();
+      allow write: if false;
+    }
+    match /catalogMeta/{id} {
+      allow read: if signedIn();
+      allow write: if false;
+    }
+
     match /publicShows/{id} {
       allow read: if signedIn();
       allow create, update: if signedIn() && request.resource.data.ownerUid == me() && id.matches(me() + '_.+');

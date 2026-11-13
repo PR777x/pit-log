@@ -61,6 +61,15 @@ jobs:
           printf '%s' "$RESEND" > "$RUNNER_TEMP/resend.txt"
           npx -y firebase-tools@latest functions:secrets:set RESEND_API_KEY --data-file="$RUNNER_TEMP/resend.txt" --project pit-log --force --non-interactive
           rm -f "$RUNNER_TEMP/resend.txt"
+      - name: Save the Ticketmaster key in Secret Manager
+        if: steps.gate.outputs.ok == 'true'
+        env:
+          TM: ${{ secrets.TICKETMASTER_API_KEY }}
+        # Optional: without it the daily show catalog job just skips. "none" keeps the deploy working.
+        run: |
+          printf '%s' "${TM:-none}" > "$RUNNER_TEMP/tm.txt"
+          npx -y firebase-tools@latest functions:secrets:set TICKETMASTER_API_KEY --data-file="$RUNNER_TEMP/tm.txt" --project pit-log --force --non-interactive
+          rm -f "$RUNNER_TEMP/tm.txt"
       - name: Deploy functions
         if: steps.gate.outputs.ok == 'true'
         run: npx -y firebase-tools@latest deploy --only functions,firestore:rules --project pit-log --force --non-interactive

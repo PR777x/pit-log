@@ -169,5 +169,50 @@ const sentTo = who => emails.filter(e => e.to[0] === who + "@example.com");
   emails.length = 0; await F.runRecap(); await F.runDigest();
   assert.strictEqual(sentTo("pat").length, 1, "one email that day, not two");
 
+  // 8. Show catalog (Ticketmaster)
+  const C = require("./catalog");
+  const ev = (id, date, name, bands, venue, city = "Philadelphia", st = "PA", status = "onsale") => ({ id, name, url: "https://tm.example/" + id,
+    dates: { start: { localDate: date, localTime: "19:00:00" }, status: { code: status } }, classifications: [{ genre: { name: "Metal" } }],
+    _embedded: { venues: [{ name: venue, city: { name: city }, state: { stateCode: st } }], attractions: bands.map(n => ({ name: n })) } });
+  const g = C.fromTM(ev("a", L.addDays(today, 30), "Gojira & Mastodon: Mega Monsters Tour", ["Gojira", "Mastodon", "Lorna Shore"], "Xfinity Mobile Arena"));
+  assert.strictEqual(g.tour, "Mega Monsters Tour"); assert.strictEqual(g.coHead, true); assert.deepStrictEqual(g.bandKeys, ["gojira", "mastodon", "lornashore"]);
+  assert.strictEqual(C.fromTM(ev("p", L.addDays(today, 30), "PARKING: Gojira", ["Gojira"], "Xfinity Mobile Arena")), null, "parking passes skipped");
+  assert.strictEqual(C.fromTM(ev("v", L.addDays(today, 30), "Gojira - VIP Packages", ["Gojira"], "Xfinity Mobile Arena")), null, "VIP listings skipped");
+  let tmEvents = { PA: [ev("a", L.addDays(today, 30), "Gojira & Mastodon: Mega Monsters Tour", ["Gojira", "Mastodon", "Lorna Shore"], "Xfinity Mobile Arena"),
+                        ev("a2", L.addDays(today, 30), "Gojira & Mastodon: Mega Monsters Tour - Presale", ["Gojira", "Mastodon"], "Xfinity Mobile Arena"),
+                        ev("b", L.addDays(today, 45), "Insomnium", ["Insomnium", "Omnium Gatherum"], "Reverb", "Reading"),
+                        ev("x", L.addDays(today, 50), "Some Pop Act", ["Pop Star"], "Liacouras Center")] };
+  const calls = [];
+  const tmFetch = async url => { const u = new URL(url); calls.push(u.searchParams.get("apikey"));
+    const st = u.searchParams.get("stateCode"), from = u.searchParams.get("startDateTime").slice(0, 10), to = u.searchParams.get("endDateTime").slice(0, 10);
+    const list = (tmEvents[st] || []).filter(e => e.dates.start.localDate >= from && e.dates.start.localDate < to);
+    return { ok: true, status: 200, json: async () => ({ _embedded: list.length ? { events: list } : undefined, page: { totalPages: 1, number: 0 } }) }; };
+  const nop = async () => {};
+  assert.deepStrictEqual(await F.runCatalog({ apiKey: "none", fetchImpl: tmFetch, pause: nop }), { skipped: true });
+  let c1 = await F.runCatalog({ apiKey: "k", fetchImpl: tmFetch, pause: nop });
+  assert.strictEqual(c1.added, 3, "presale listing merged into the same show"); assert.ok(calls.length > 40 && calls.every(k => k === "k"));
+  const cat = () => [...store.keys()].filter(k => k.startsWith("catalog/")).map(k => store.get(k));
+  const goj = cat().find(c => c.bandKeys.includes("gojira"));
+  assert.strictEqual(goj.lineup.length, 3); assert.strictEqual(goj.firstSeen, today); assert.strictEqual(goj.key, undefined);
+  // second day, nothing changed: no writes
+  let c2 = await F.runCatalog({ apiKey: "k", fetchImpl: tmFetch, pause: nop, now: new Date(Date.now() + 864e5) });
+  assert.strictEqual(c2.added + c2.updated + c2.removed, 0, "unchanged shows aren't rewritten");
+  // a time change updates the show but keeps firstSeen; a vanished future show is removed
+  tmEvents.PA[2] = { ...tmEvents.PA[2], dates: { ...tmEvents.PA[2].dates, start: { localDate: tmEvents.PA[2].dates.start.localDate, localTime: "20:00:00" } } };
+  tmEvents.PA = tmEvents.PA.filter(e => e.id !== "x");
+  let c3 = await F.runCatalog({ apiKey: "k", fetchImpl: tmFetch, pause: nop });
+  assert.strictEqual(c3.updated, 1); assert.strictEqual(c3.removed, 1); assert.strictEqual(cat().length, 2);
+  assert.strictEqual(cat().find(c => c.bandKeys.includes("insomnium")).firstSeen, today);
+  // Ticketmaster returns nothing: catalog left alone
+  const saved = tmEvents; tmEvents = {};
+  assert.deepStrictEqual(await F.runCatalog({ apiKey: "k", fetchImpl: tmFetch, pause: nop }), { aborted: true }); assert.strictEqual(cat().length, 2);
+  tmEvents = saved;
+  // weekly recap mentions new announcements for bands Pat has logged (Insomnium), not ones he hasn't
+  store.set("users/pat/shows/old-ins", { date: L.addDays(today, -400), lineup: ["Insomnium"], venue: "Reverb" });
+  emails.length = 0; await F.runRecap();
+  const wr = sentTo("pat")[0]; assert.match(wr.html, /Just announced: bands you've seen/); assert.match(wr.html, /Insomnium w\/ Omnium Gatherum/);
+  assert.ok(!/Gojira/.test(wr.html.split("Just announced")[1] || ""), "only bands you've logged");
+  assert.match(wr.html, /tm\.example\/b/);
+
   console.log("All email function tests passed.");
 })().catch(e => { console.error(e); process.exit(1); });

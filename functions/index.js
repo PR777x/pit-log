@@ -14,11 +14,13 @@ const { getAuth } = require("firebase-admin/auth");
 const { getFirestore, FieldValue } = require("firebase-admin/firestore");
 const crypto = require("crypto");
 const L = require("./lib");
+const C = require("./catalog");
 
 initializeApp();
 const DB_ID = "pit-log";
 const db = getFirestore(DB_ID);
 const RESEND_API_KEY = defineSecret("RESEND_API_KEY");
+const TICKETMASTER_API_KEY = defineSecret("TICKETMASTER_API_KEY");
 const FROM = "Pit Log <alerts@thepitlog.com>";
 setGlobalOptions({ region: "us-central1", maxInstances: 3 });
 
@@ -208,6 +210,9 @@ async function runRecap(now = new Date()){
   const today = L.todayET(now), horizon = L.addDays(today, 90), crewHorizon = L.addDays(today, 60);
   const users = await db.collection("users").get();
   let sent = 0;
+  const recentDoc = await db.doc("catalogMeta/recent").get();
+  let recent = []; try { recent = JSON.parse((recentDoc.exists && recentDoc.data().data) || "[]"); } catch (_) {}
+  const weekAgo = L.addDays(today, -7);
   for (const u of users.docs) {
     const p = L.prefs(u.data()); if (p.emailWeekly === "off") continue;
     const uid = u.id;
@@ -217,8 +222,13 @@ async function runRecap(now = new Date()){
       db.collection("friendRequests").where("from", "==", uid).where("family", "==", "pending").get(),
       db.collection("friendRequests").where("to", "==", uid).where("family", "==", "pending").get()]);
     const requests = reqs.docs.length + [...famA.docs, ...famB.docs].filter(d => d.data().familyBy && d.data().familyBy !== uid).length;
-    const mine = (await db.collection(`users/${uid}/shows`).get()).docs.map(d => ({ id: d.id, ...d.data() }))
-      .filter(s => s.date && s.date >= today && s.date <= horizon).sort((a, b) => a.date.localeCompare(b.date));
+    const allMine = (await db.collection(`users/${uid}/shows`).get()).docs.map(d => ({ id: d.id, ...d.data() }));
+    const mine = allMine.filter(s => s.date && s.date >= today && s.date <= horizon).sort((a, b) => a.date.localeCompare(b.date));
+    // Just announced (this week) for bands this person has logged, minus shows they already have.
+    const myBands = new Set(allMine.flatMap(s => L.lineup(s)).map(C.normBand).filter(Boolean));
+    const announced = recent.filter(r => r.f >= weekAgo && r.d >= today && r.l.some(b => myBands.has(C.normBand(b))))
+      .filter(r => !allMine.some(s => L.sameShow(s, { date: r.d, lineup: r.l, venue: r.v })))
+      .slice(0, 8).map(r => ({ ...L.showSummary({ date: r.d, lineup: r.l, coHead: !!r.c, venue: r.v, city: r.y }), url: r.u }));
     const upcoming = mine.map(s => ({ raw: s, show: L.showSummary(s, s.id), crew: [] }));
     const crewUpcoming = [];
     for (const f of await friendsOf(uid)) {
@@ -235,7 +245,7 @@ async function runRecap(now = new Date()){
     const inbox = p.emailDigest === "off" ? { docs: [] } : await db.collection(`users/${uid}/inbox`).where("sent", "==", false).limit(200).get();
     const items = [];
     for (const d of inbox.docs) { const it = d.data(); if (it.show && it.show.id && !(await db.doc(`users/${it.from}/shows/${it.show.id}`).get()).exists) continue; items.push(it); }
-    const rc = L.buildRecap({ requests, upcoming, crewUpcoming, items, today });
+    const rc = L.buildRecap({ requests, upcoming, crewUpcoming, items, announced, today });
     if (rc.empty) continue; // nothing at all to say: no email
     const ok = await send(uid, "weekly", { subject: rc.subject, title: "Your week on Pit Log", intro: L.esc(rc.summary), body: rc.body, button: { label: "Open Pit Log", url: L.SITE } });
     if (ok) {
@@ -247,6 +257,34 @@ async function runRecap(now = new Date()){
   }
   logger.info(`weekly recap sent to ${sent} people`);
 }
+/* ---------- show catalog (daily, from Ticketmaster) ---------- */
+async function runCatalog({ apiKey, now = new Date(), fetchImpl, pause } = {}){
+  const key = apiKey !== undefined ? apiKey : TICKETMASTER_API_KEY.value();
+  if (!key || key === "none") { logger.info("show catalog: no Ticketmaster key yet, skipping"); return { skipped: true }; }
+  const today = L.todayET(now);
+  const [idxDoc, recDoc] = await Promise.all([db.doc("catalogMeta/index").get(), db.doc("catalogMeta/recent").get()]);
+  let index = {}, recent = [];
+  try { index = JSON.parse((idxDoc.exists && idxDoc.data().data) || "{}"); } catch (_) {}
+  try { recent = JSON.parse((recDoc.exists && recDoc.data().data) || "[]"); } catch (_) {}
+  const { shows, calls } = await C.fetchAll({ apiKey: key, today, fetchImpl, pause, log: m => logger.warn(m) });
+  // If Ticketmaster hiccups and returns nothing, don't treat that as "every show was cancelled".
+  if (!shows.length && Object.keys(index).length) { logger.error(`show catalog: 0 shows from ${calls} calls; leaving the catalog alone`); return { aborted: true }; }
+  const p = C.plan({ shows, index, recent, today });
+  const ops = [...p.writes.map(w => ({ ref: db.doc(`catalog/${w.id}`), data: (({ isNew, key: _k, ...rest }) => ({ ...rest, updatedAt: today }))(w) })),
+               ...p.deletes.map(id => ({ ref: db.doc(`catalog/${id}`), del: true }))];
+  for (let i = 0; i < ops.length; i += 400) {
+    const b = db.batch();
+    for (const o of ops.slice(i, i + 400)) o.del ? b.delete(o.ref) : b.set(o.ref, o.data);
+    await b.commit();
+  }
+  await db.doc("catalogMeta/index").set({ data: JSON.stringify(p.nextIndex), count: Object.keys(p.nextIndex).length, updated: today });
+  await db.doc("catalogMeta/recent").set({ data: JSON.stringify(p.nextRecent), count: p.nextRecent.length, updated: today });
+  logger.info(`show catalog: ${shows.length} listings from ${calls} calls; ${p.added} new, ${p.writes.length - p.added} updated, ${p.deletes.length} removed`);
+  return { added: p.added, updated: p.writes.length - p.added, removed: p.deletes.length, total: Object.keys(p.nextIndex).length };
+}
+exports.refreshCatalog = onSchedule({ schedule: "17 5 * * *", timeZone: "America/New_York", secrets: [TICKETMASTER_API_KEY], timeoutSeconds: 540, memory: "512MiB" }, () => runCatalog());
+module.exports.runCatalog = runCatalog;
+
 exports.weeklyRecap = onSchedule({ schedule: "0 10 * * 0", timeZone: "America/New_York", secrets: [RESEND_API_KEY], timeoutSeconds: 540 }, () => runRecap());
 module.exports.runRecap = runRecap;
 

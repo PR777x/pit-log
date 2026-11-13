@@ -21,3 +21,15 @@ Sent from alerts@thepitlog.com through Resend. Deployed by `.github/workflows/de
 - Each person controls these in Profile → Settings → Notifications; every email has one-tap unsubscribe links (`/u`).
 - `node functions/test.js` runs the functions offline against an in-memory fake of Firestore.
 Setup needs: Firebase Blaze plan, a verified thepitlog.com domain in Resend, and the repo secrets `FIREBASE_SERVICE_ACCOUNT` and `RESEND_API_KEY`.
+
+## Show catalog (newly announced concerts)
+`refreshCatalog` runs every morning (5:17 AM Eastern) and pulls Metal / Rock / Alternative / Punk
+listings in PA, NJ, DE and NY for the next 15 months from the Ticketmaster Discovery API.
+- Each show is stored once in `catalog/{id}` (parking, VIP and presale duplicates are merged or skipped).
+  Unchanged shows aren't rewritten; shows that vanish before their date are removed; past ones are kept ~a year.
+- `catalogMeta/recent` holds the last two weeks of new announcements (used for "Just announced").
+- The app uses it when adding a show (matching shows), in band search, and in Search → Bands → Just announced.
+  The Sunday recap lists new announcements for bands each person has logged.
+- Needs a free Ticketmaster key (developer.ticketmaster.com → Consumer Key) saved as the GitHub
+  secret `TICKETMASTER_API_KEY`. Without it the job skips quietly.
+- To change genres or states, edit `GENRES` / `STATES` in `functions/catalog.js`.

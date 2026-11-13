@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=27";
+import { VENUES } from "./venues.js?v=28";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -1131,6 +1131,7 @@ async function searchBands(q){
   const add = (sh, who) => {
     const k = sh.date + "|" + normBand(sh.venue) + "|" + normBand(lineup(sh)[0]);
     const g = groups.get(k) || { show: sh, people: [] }; groups.set(k, g);
+    if (who.catalog) { g.catalog = sh; return; }
     if (!g.people.some(p => p.uid === who.uid)) g.people.push(who);
     if (who.uid === ME.uid) g.show = sh;
   };
@@ -1141,6 +1142,7 @@ async function searchBands(q){
     const snap = await getDocs(query(collection(fdb, "publicShows"), where("bandKeys", "array-contains", key), limit(100)));
     for (const d of snap.docs) { const x = d.data(); if (x.ownerUid === ME.uid || FR[x.ownerUid]) continue; add({ ...x, id: x.showId }, { uid: x.ownerUid, handle: x.ownerHandle, pub: true, id: x.showId }); }
   } catch (e) { console.warn("band search", e); }
+  if (key.length >= 3) for (const sh of await fetchCatalog("bandKeys", key)) add(sh, { catalog: true });
   const all = [...groups.values()];
   return { up: all.filter(g => isUpcoming(g.show)).sort((a, b) => a.show.date.localeCompare(b.show.date)),
            past: all.filter(g => !isUpcoming(g.show)).sort((a, b) => b.show.date.localeCompare(a.show.date)) };
@@ -1173,19 +1175,23 @@ function drawSearchResults(){
   const sug = bandSuggestions(q).filter(b => !ieq(b, q));
   const res = S.search.bands;
   let h = sug.length ? `<div class="tagrow" style="margin-bottom:10px">${sug.map(b => `<button class="tagbtn" data-sband="${esc(b)}">${esc(b)}</button>`).join("")}</div>` : "";
-  if (!res) h += `<div class="ro">Search a band to see every show of theirs logged by you, your crew, and people with public profiles.</div>`;
+  if (!res) h += `<div class="ro">Search a band to see every show of theirs: logged by you, your crew and public profiles, plus newly announced dates.</div><div id="justann"></div>`;
   else if (!res.up.length && !res.past.length) h += `<div class="empty"><h3>No shows found</h3><div>Nobody you can see has logged "${esc(q)}" yet.</div></div>`;
   else {
-    const row = g => { const sh = g.show, p = parse(sh.date), lu = lineup(sh), mine = g.people.find(x => x.me);
+    CAT.list = [];
+    const row = g => { const sh = g.show, p = parse(sh.date), lu = lineup(sh), mine = g.people.find(x => x.me), up = isUpcoming(sh);
       const who = g.people.map(x => `<button class="chip ${x.me ? "" : x.friend ? "tog" : "crewtag"}" data-sprof="${esc(x.uid)}">${x.me ? "You" : "@" + esc(x.handle)}</button>`).join("");
-      const open = mine ? `data-open="${esc(mine.id)}"` : g.people.find(x => x.friend) ? `data-fopen="${esc(g.people.find(x => x.friend).uid)}|${esc(g.people.find(x => x.friend).id)}"` : `data-sprof="${esc(g.people[0].uid)}"`;
+      const ci = g.catalog ? CAT.list.push(g.catalog) - 1 : -1;
+      const open = mine ? `data-open="${esc(mine.id)}"` : ci >= 0 && !g.people.length ? `data-catadd="${ci}"` : g.people.find(x => x.friend) ? `data-fopen="${esc(g.people.find(x => x.friend).uid)}|${esc(g.people.find(x => x.friend).id)}"` : `data-sprof="${esc(g.people[0].uid)}"`;
+      const extra = (g.catalog ? `${up ? ticketLink(g.catalog.url) : ""}${!mine ? `<button class="chip catadd" data-catadd="${ci}">+ Add to my log</button>` : ""}` : "");
       return `<div class="bandhit"><button class="prow tap prow-show" ${open}><span class="pdate"><b class="num">${p.d}</b>${MONTHS[(p.m||1)-1]} ${p.y}</span>
         <div class="pt"><div class="nm" style="font-size:20px">${esc(headline(sh) || "Show")}</div>${support(sh).length ? `<div class="ro">w/ ${esc(support(sh).join(" · "))}</div>` : ""}<div class="ro">${esc([sh.venue, sh.city].filter(Boolean).join(" — ") || "Venue unknown")}</div></div></button>
-        <div class="tagrow who"><span class="lbl">${g.people.length} went</span>${who}</div></div>`; };
+        <div class="tagrow who"><span class="lbl">${g.people.length ? `${g.people.length} ${up ? "going" : "went"}` : "Announced"}</span>${who}${extra}</div></div>`; };
     if (res.up.length) h += `<section class="sect"><h3>Coming up <span class="lbl">${res.up.length}</span></h3>${res.up.map(row).join("")}</section>`;
     if (res.past.length) h += `<section class="sect"><h3>Past shows <span class="lbl">${res.past.length}</span></h3>${res.past.map(row).join("")}</section>`;
   }
   box.innerHTML = h;
+  if (!res && m === "bands") drawJustAnnounced();
 }
 async function openProfile(uid){
   if (uid === ME.uid) { S.tab = "me"; renderTab(); window.scrollTo(0, 0); return; }
@@ -1229,12 +1235,55 @@ function searchClick(t){
   if (t.dataset.smode) { S.search.mode = t.dataset.smode; S.search.q = ""; renderSearch(); $("#sq").focus(); return true; }
   if (t.dataset.sprof) { openProfile(t.dataset.sprof); return true; }
   if (t.dataset.sband) { S.search.q = t.dataset.sband; renderSearch(); runSearch(); return true; }
+  if (t.dataset.catadd !== undefined) { const sh = CAT.list[Number(t.dataset.catadd)]; if (sh) openSheetFrom(sh); return true; }
   if (t.hasAttribute("data-sback")) { S.search.profile = null; renderSearch(); return true; }
   if (t.dataset.sadd !== undefined) { sendRequest(t.dataset.sadd).then(() => { if (S.search.profile) renderPublicProfile(S.search.profile); }); return true; }
   if (t.dataset.sacceptfrom) { const r = REQ.in.find(x => x.from === t.dataset.sacceptfrom && x.status === "pending"); if (r) acceptRequest(r); return true; }
   return false;
 }
 document.addEventListener("input", e => { if (e.target.id === "sq") { S.search.q = e.target.value; if (S.search.mode === "bands") { const box = $("#sres"); if (box && !S.search.bands) drawSearchResults(); } runSearch(); } });
+
+/* ---------- Show catalog: announced shows pulled daily from Ticketmaster (server side) ---------- */
+const CAT = { q: new Map(), recent: null, list: [] };
+const catShow = x => ({ id: "cat_" + x.id, date: x.date || "", lineup: Array.isArray(x.lineup) ? x.lineup : [], coHead: !!x.coHead, venue: x.venue || "", city: x.city || "",
+  tour: x.tour || "", url: x.url || "", time: x.time || "", status: x.status || "", catalog: true });
+async function fetchCatalog(field, key){
+  const ck = field + ":" + key;
+  if (CAT.q.has(ck)) return CAT.q.get(ck);
+  const p = getDocs(query(collection(fdb, "catalog"), where(field, "array-contains", key), limit(60)))
+    .then(snap => snap.docs.map(d => catShow({ id: d.id, ...d.data() })).filter(x => x.status !== "cancelled"))
+    .catch(e => { console.warn("catalog", e); return []; });
+  CAT.q.set(ck, p); return p;
+}
+async function loadRecent(){
+  if (CAT.recent) return CAT.recent;
+  try { const d = await getDoc(doc(fdb, "catalogMeta", "recent")); CAT.recent = d.exists() ? JSON.parse(d.data().data || "[]") : []; }
+  catch (e) { console.warn("recent", e); CAT.recent = []; }
+  return CAT.recent;
+}
+// "Just announced" (last 2 weeks) for bands in your log or your crew's.
+async function drawJustAnnounced(){
+  const recent = await loadRecent(), box = $("#justann"); if (!box) return;
+  const mine = new Set(S.shows.flatMap(lineup).map(normBand)), crewB = new Set(friendList().flatMap(f => (f.shows || []).flatMap(lineup)).map(normBand));
+  const have = r => S.shows.some(s => s.date === r.d && lineup(s).some(b => r.l.some(x => normBand(x) === normBand(b))));
+  const hits = recent.filter(r => r.d >= todayISO && !have(r)).map(r => ({ r, you: r.l.some(b => mine.has(normBand(b))), crew: r.l.some(b => crewB.has(normBand(b))) }))
+    .filter(x => x.you || x.crew).sort((a, b) => (b.you - a.you) || b.r.f.localeCompare(a.r.f) || a.r.d.localeCompare(b.r.d)).slice(0, 15);
+  CAT.list = hits.map(x => catShow({ id: x.r.i, date: x.r.d, lineup: x.r.l, coHead: !!x.r.c, venue: x.r.v, city: x.r.y, tour: x.r.t, url: x.r.u }));
+  if (!recent.length) { box.innerHTML = ""; return; }
+  box.innerHTML = `<section class="sect"><h3>Just announced</h3><div class="ro" style="margin:-4px 0 8px">New dates for bands you and your crew have seen. Checked every morning.</div>${hits.length ? hits.map((x, i) => {
+    const sh = CAT.list[i], p = parse(sh.date), sup = support(sh);
+    return `<div class="bandhit"><button class="prow tap prow-show" data-catadd="${i}"><span class="pdate"><b class="num">${p.d}</b>${MONTHS[(p.m||1)-1]} ${p.y}</span>
+      <div class="pt"><div class="nm" style="font-size:20px">${esc(headline(sh))}</div>${sup.length ? `<div class="ro">w/ ${esc(sup.join(" · "))}</div>` : ""}<div class="ro">${esc([sh.venue, sh.city].filter(Boolean).join(" — "))}</div></div></button>
+      <div class="tagrow who"><span class="lbl">${x.you ? "You've seen them" : "Your crew's seen them"}</span>${ticketLink(sh.url)}<button class="chip catadd" data-catadd="${i}">+ Add to my log</button></div></div>`; }).join("")
+    : `<div class="ro">Nothing new in the last two weeks for bands in your log.</div>`}</section>`;
+}
+// Open a new show already filled in from an announced (or someone else's) show.
+function openSheetFrom(sh){
+  openSheet("__new");
+  Object.assign(draft, { date: sh.date, lineup: lineup(sh).slice(), coHead: !!sh.coHead, venue: sh.venue || "", city: sh.city || "", tour: sh.tour || "" });
+  MATCH.dateTouched = true; renderSheet();
+}
+const ticketLink = url => url ? `<a class="chip tix" href="${esc(url)}" target="_blank" rel="noopener">Tickets ›</a>` : "";
 
 /* ---------- Logged-show matches for a new show ----------
    As you type a band or tour name, look through shows already logged (yours, your crew's, public ones)
@@ -1259,7 +1308,8 @@ async function updateMatches(){
   const box = $("#matchbox"); if (!box || !draft || draft.id !== "__new") return;
   const inp = matchInputs();
   if (!inp.bands.length && !inp.tour) { box.hidden = true; box.innerHTML = ""; return; }
-  await Promise.all([...inp.bands.map(k => fetchPublicBand(k)), ...inp.words.map(w => fetchPublicBand(w, "tourWords"))]);
+  const [,, ...catLists] = await Promise.all([Promise.all(inp.bands.map(k => fetchPublicBand(k))), Promise.all(inp.words.map(w => fetchPublicBand(w, "tourWords"))),
+    ...inp.bands.map(k => fetchCatalog("bandKeys", k)), ...inp.words.map(w => fetchCatalog("tourWords", w))]);
   if (!$("#matchbox")) return;
   const bandHit = sh => lineup(sh).some(b => { const k = normBand(b); return inp.bands.some(t => k === t || k.startsWith(t)); });
   const tourHit = sh => inp.tour && sh.tour && normBand(sh.tour).includes(inp.tour);
@@ -1271,19 +1321,21 @@ async function updateMatches(){
     if (MATCH.dismissed.has(k)) return;
     const g = groups.get(k) || { key: k, show: sh, people: [], tour: th, band: bh }; groups.set(k, g);
     if (lineup(sh).length > lineup(g.show).length || (!g.show.tour && sh.tour) || (!g.show.venue && sh.venue)) g.show = { ...g.show, ...Object.fromEntries(["lineup", "tour", "venue", "city", "coHead"].filter(f => sh[f] && (f !== "lineup" || lineup(sh).length > lineup(g.show).length)).map(f => [f, sh[f]])) };
-    if (who.me) g.mine = sh.id; else if (!g.people.some(p => p.uid === who.uid)) g.people.push(who);
+    if (who.me) g.mine = sh.id; else if (who.catalog) g.catalog = sh.url || true; else if (!g.people.some(p => p.uid === who.uid)) g.people.push(who);
   };
   for (const sh of S.shows) add(sh, { me: true });
   for (const f of friendList()) for (const sh of (f.shows || [])) add(sh, { uid: f.uid, handle: f.handle });
   for (const ck of [...inp.bands.map(k => "bandKeys:" + k), ...inp.words.map(w => "tourWords:" + w)]) for (const sh of (MATCH.pub.get(ck) || [])) add(sh, sh._who);
+  for (const list of catLists) for (const sh of list) add(sh, { catalog: true });
   const day = d => Math.abs((parse(d).dt - parse(todayISO).dt) / 864e5);
-  const rank = g => (g.show.date === inp.date ? 0 : 1e6) + (g.tour && g.band ? 0 : 1e5) + (g.mine && g.show.date !== inp.date ? 5e5 : 0) + day(g.show.date) - g.people.length * 10;
+  // Same date first; then shows on the same tour; announced/upcoming before old ones.
+  const rank = g => (g.show.date === inp.date ? 0 : 1e6) + (g.tour && g.band ? 0 : 1e5) + (g.mine && g.show.date !== inp.date ? 5e5 : 0) + (g.show.date < todayISO ? 2e4 : 0) + day(g.show.date) - g.people.length * 10 - (g.catalog ? 5 : 0);
   MATCH.list = [...groups.values()].sort((a, b) => rank(a) - rank(b)).slice(0, 3);
   if (!MATCH.list.length) { box.hidden = true; box.innerHTML = ""; return; }
   box.hidden = false;
-  box.innerHTML = `<div class="lbl">Already logged — tap to fill in the rest</div>` + MATCH.list.map((g, i) => {
+  box.innerHTML = `<div class="lbl">Matching shows — tap to fill in the rest</div>` + MATCH.list.map((g, i) => {
     const sh = g.show, same = sh.date === inp.date, sup = support(sh);
-    const who = g.mine ? "In your log" : (g.people.slice(0, 2).map(p => "@" + p.handle).join(", ") + (g.people.length > 2 ? ` +${g.people.length - 2}` : "")) + " logged this";
+    const who = g.mine ? "In your log" : g.people.length ? (g.people.slice(0, 2).map(p => "@" + p.handle).join(", ") + (g.people.length > 2 ? ` +${g.people.length - 2}` : "")) + " logged this" : "Announced on Ticketmaster";
     const tag = same ? `<span class="chip up">Same date</span>` : g.tour && inp.tour ? `<span class="chip">Same tour</span>` : "";
     return `<div class="mcard"><div class="mm-b"><div class="mm-h">${esc(headline(sh))}</div>${sup.length ? `<div class="ro">w/ ${esc(sup.join(" · "))}</div>` : ""}
       <div class="ro">${esc(fmtDate(sh.date))}${sh.venue ? " · " + esc([sh.venue, sh.city].filter(Boolean).join(", ")) : ""}${sh.tour ? " · " + esc(sh.tour) : ""}</div>
