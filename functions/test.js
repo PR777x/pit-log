@@ -50,34 +50,46 @@ const sentTo = who => emails.filter(e => e.to[0] === who + "@example.com");
   store.set("users/stacie", { name: "Stacie", handle: "stacie", settings: { emailTags: "off" } });
   store.set("users/ken", { name: "Ken", handle: "kenny", settings: { upcoming: "private" } });
 
-  // 1. Crew request -> email to the person asked
+  const inbox = uid => [...store.keys()].filter(k => k.startsWith(`users/${uid}/inbox/`)).map(k => store.get(k));
+  const clearInbox = () => { for (const k of [...store.keys()]) if (/\/inbox\//.test(k)) store.delete(k); };
+  // 1. Crew request -> nothing sent right away; it's queued for the person asked
   const req = { from: "pat", to: "stacie", status: "pending" };
   store.set("friendRequests/pat_stacie", req);
   await F.onCrewRequest({ data: { data: () => req } });
-  assert.strictEqual(sentTo("stacie").length, 1); assert.match(sentTo("stacie")[0].subject, /Pat wants to add you/);
-  // accepted -> email back to Pat
+  assert.strictEqual(emails.length, 0, "no instant emails");
+  assert.deepStrictEqual(inbox("stacie").map(i => [i.type, i.fromHandle]), [["request", "pat"]]);
+  // accepted -> queued for Pat; the 6 PM digest delivers both
   const acc = { ...req, status: "accepted" }; store.set("friendRequests/pat_stacie", acc);
   await F.onCrewRequestChange({ data: { before: { data: () => req }, after: { data: () => acc } } });
+  assert.strictEqual(emails.length, 0);
+  await F.runDigest();
+  assert.match(sentTo("stacie")[0].subject, /@pat wants you in their crew/); assert.match(sentTo("stacie")[0].html, /1 crew request/);
   assert.match(sentTo("pat")[0].subject, /@stacie accepted/);
+  assert.strictEqual(emails.length, 2, "only the two people with news get an email");
+  // Crew Family invite + approval, also through the digest
+  emails.length = 0;
+  const f0 = { from: "pat", to: "stacie", status: "accepted" }, f1 = { ...f0, family: "pending", familyBy: "pat" };
+  await F.onCrewRequestChange({ data: { before: { data: () => f0 }, after: { data: () => f1 } } });
+  await F.onCrewRequestChange({ data: { before: { data: () => f1 }, after: { data: () => ({ ...f1, family: "active" }) } } });
+  assert.strictEqual(emails.length, 0); await F.runDigest();
+  assert.match(sentTo("stacie")[0].subject, /invited you to Crew Family/); assert.match(sentTo("pat")[0].html, /approved Crew Family/);
+  emails.length = 0; clearInbox();
   store.set("friendRequests/pat_carly", { from: "pat", to: "carly", status: "accepted" });
   store.set("friendRequests/ken_pat", { from: "ken", to: "pat", status: "accepted" });
 
-  // 2. Tags: Carly gets an email; Stacie turned tag emails off
-  emails.length = 0;
+  // 2. Tags: queued for Carly (no instant email); Stacie turned tags off
   await write("users/pat/shows/s1", null, { date: soon, lineup: ["Insomnium", "Amorphis"], venue: "Reverb", city: "Reading, PA", taggedUids: ["carly", "stacie"], notes: "secret", ticketTotal: 90 });
-  assert.strictEqual(sentTo("carly").length, 1); assert.match(sentTo("carly")[0].subject, /tagged you at Insomnium/);
-  assert.strictEqual(sentTo("stacie").length, 0);
-  assert.ok(!sentTo("carly")[0].html.includes("secret") && !sentTo("carly")[0].html.includes("90"), "no private details in emails");
-  // editing the show again doesn't re-send tags or re-queue activity
+  assert.strictEqual(emails.length, 0, "tags aren't emailed right away");
+  assert.ok(inbox("carly").some(i => i.type === "tagged")); assert.ok(!inbox("stacie").some(i => i.type === "tagged"));
+  // editing the show again doesn't re-queue tags or activity
   const before = store.get("users/pat/shows/s1");
   await write("users/pat/shows/s1", before, { ...before, rating: 4 });
-  assert.strictEqual(sentTo("carly").length, 1);
+  assert.strictEqual(inbox("carly").filter(i => i.type === "tagged").length, 1);
 
   // 3. Activity queue: Carly and Stacie get "added", Ken (who has the same show) gets "together", and so does Pat
-  const inbox = uid => [...store.keys()].filter(k => k.startsWith(`users/${uid}/inbox/`)).map(k => store.get(k));
-  assert.deepStrictEqual(inbox("carly").map(i => i.type), ["added"]);
+  assert.deepStrictEqual(inbox("carly").map(i => i.type).sort(), ["added", "tagged"]);
   assert.deepStrictEqual(inbox("stacie").map(i => i.type), ["added"]);
-  assert.strictEqual(inbox("carly")[0].show.notes, undefined, "queued show has no notes");
+  assert.strictEqual(inbox("carly").find(i => i.type === "added").show.notes, undefined, "queued show has no notes");
   store.set("users/ken/shows/k1", { date: soon, lineup: ["Insomnium"], venue: "Reverb" });
   await write("users/pat/shows/s2", null, { date: soon, lineup: ["Amorphis"], venue: "Reverb" });
   assert.ok(inbox("ken").some(i => i.type === "together" && i.fromHandle === "pat"));
@@ -99,6 +111,7 @@ const sentTo = who => emails.filter(e => e.to[0] === who + "@example.com");
   assert.match(d.html, /@pat<\/b> added 14 shows, 2 coming up/); assert.match(d.html, /and 11 more/);
   assert.strictEqual(inbox("carly").length, 0, "digest clears the queue");
   assert.ok(sentTo("ken")[0] && /going too/.test(sentTo("ken")[0].html));
+  assert.match(d.html, /You were tagged/); assert.ok(!d.html.includes("secret") && !/\b90\b/.test(d.html), "no private details in emails");
   // running again sends nothing new to Carly except tomorrow's reminder
   emails.length = 0; await F.runDigest();
   assert.ok(!/added/.test((sentTo("carly")[0] || {}).html || ""));
@@ -117,18 +130,22 @@ const sentTo = who => emails.filter(e => e.to[0] === who + "@example.com");
   for (const k of [...store.keys()]) if (/\/shows\//.test(k) && [soon, tomorrow].includes(store.get(k).date)) store.delete(k); // no reminders due
   emails.length = 0; await F.runDigest();
   assert.strictEqual(emails.length, 0, "no news, no email");
-  // b) re-sending a crew request the same day doesn't email again
+  // b) re-sending a crew request the same day only counts once
   store.set("users/dana", { name: "Dana", handle: "dana" });
   const r2 = { from: "dana", to: "carly", status: "pending" };
   await F.onCrewRequest({ data: { data: () => r2 } }); await F.onCrewRequest({ data: { data: () => r2 } });
-  assert.strictEqual(sentTo("carly").length, 1, "one request email per person per day");
-  // c) bulk tagging (linking old tags): 1 email now, the rest go into the next digest
-  emails.length = 0;
+  assert.strictEqual(inbox("carly").filter(i => i.type === "request").length, 1, "one request per person per day");
+  // c) bulk tagging (linking old tags) + the request: still ONE email that evening
   for (let i = 0; i < 10; i++) await write(`users/pat/shows/old${i}`, { date: L.addDays(today, -300 - i), lineup: ["Old " + i] }, { date: L.addDays(today, -300 - i), lineup: ["Old " + i], taggedUids: ["carly"] });
-  assert.strictEqual(sentTo("carly").length, 0, "Carly was already emailed a tag from Pat in the last 2 hours");
-  assert.strictEqual(inbox("carly").filter(i => i.type === "tagged").length, 10);
+  assert.strictEqual(emails.length, 0);
   emails.length = 0; await F.runDigest();
   assert.strictEqual(sentTo("carly").length, 1); assert.match(sentTo("carly")[0].html, /You were tagged/); assert.match(sentTo("carly")[0].html, /and 4 more/);
+  assert.match(sentTo("carly")[0].subject, /@dana wants you in their crew/);
+  // d2) tags turned off: nothing queued
+  store.set("users/carly", { name: "Carly", handle: "carly_r", settings: { emailTags: "off" } });
+  await write("users/pat/shows/t9", { date: L.addDays(today, -5), lineup: ["T9"] }, { date: L.addDays(today, -5), lineup: ["T9"], taggedUids: ["carly"] });
+  assert.ok(!inbox("carly").some(i => i.type === "tagged"));
+  store.set("users/carly", { name: "Carly", handle: "carly_r" });
   // d) shows deleted before the digest aren't reported
   await write("users/pat/shows/gone", null, { date: soon, lineup: ["Deleted Band"], venue: "TLA" });
   await write("users/pat/shows/gone", store.get("users/pat/shows/gone"), null);

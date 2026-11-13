@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=30";
+import { VENUES } from "./venues.js?v=31";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -1829,11 +1829,11 @@ function settingsBlock(){
     ${grp("privacy", "Privacy", `<div class="ro" style="margin:4px 0 10px">Choose who sees each part of your log. Family only means people you've linked with Crew Family. Public covers your whole crew today, and anyone on Pit Log if public profiles are added later.</div>
       ${PRIVACY.map(([k, l, h]) => selectRow(k, l, h, LEVELS, set[k])).join("")}`)}
     ${grp("notify", "Notifications", `<div class="ro" style="margin:4px 0 10px">Emails come from alerts@thepitlog.com and go to ${esc((ME && ME.email) || "the address you sign in with")}.</div>` + [
-      selectRow("emailRequests", "Crew and Family requests", "When someone asks to join your crew, accepts, or invites you to Crew Family.", [["on", "Email me"], ["off", "Off"]], set.emailRequests),
-      selectRow("emailTags", "Tags", "When someone tags you on a show.", [["on", "Email me"], ["off", "Off"]], set.emailTags),
-      selectRow("emailDigest", "Crew activity", "Shows your crew adds, and shows where it looks like you're going too. Sent as one email around 6 PM (weekly comes on Sundays).", [["daily", "Daily"], ["weekly", "Weekly"], ["off", "Off"]], set.emailDigest),
-      selectRow("emailWeekly", "Weekly recap", "Sunday mornings: open crew requests, your upcoming shows, which crew are going too, and what's on your crew's calendars.", [["on", "Email me"], ["off", "Off"]], set.emailWeekly),
-      selectRow("emailReminders", "Show reminders", "A heads-up 7 days and 1 day before your shows.", [["on", "Email me"], ["off", "Off"]], set.emailReminders)].join(""))}
+      selectRow("emailDigest", "Daily digest", "One email around 6 PM, only on days something happened: crew requests, tags, shows your crew adds, and show reminders. Weekly sends it Sundays instead.", [["daily", "Daily"], ["weekly", "Weekly"], ["off", "Off"]], set.emailDigest),
+      selectRow("emailRequests", "Include crew requests", "Crew requests, accepts and Crew Family invites, in the digest.", [["on", "Include"], ["off", "Leave out"]], set.emailRequests),
+      selectRow("emailTags", "Include tags", "When someone tags you on a show, in the digest.", [["on", "Include"], ["off", "Leave out"]], set.emailTags),
+      selectRow("emailReminders", "Include show reminders", "A heads-up 7 days and 1 day before your shows, in the digest.", [["on", "Include"], ["off", "Leave out"]], set.emailReminders),
+      selectRow("emailWeekly", "Weekly recap", "Sunday mornings: open crew requests, your upcoming shows, crew going too, and new tour announcements for your bucket list and bands you've seen.", [["on", "Email me"], ["off", "Off"]], set.emailWeekly)].join(""))}
     ${grp("display", "Display", [
       selectRow("defaultView", "Shows opens to", "", [["list", "List"], ["cal", "Calendar"]], set.defaultView),
       selectRow("defaultSort", "Default sort", "", Object.entries(SORTS), set.defaultSort),

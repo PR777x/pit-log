@@ -1,5 +1,5 @@
 // Pit Log email alerts (Cloud Functions, 2nd gen).
-//  - Instant: crew requests, accepted requests, Crew Family invites/approvals, tags.
+//  - Nothing is instant: crew requests, accepts, Crew Family invites/approvals and tags are queued too.
 //  - Queued for the digest: crew members adding shows, and "looks like you're going too" matches.
 //  - Digest (daily 6 PM Eastern, or Sundays for weekly): queued crew activity plus your own
 //    show reminders 7 days and 1 day out.
@@ -79,40 +79,42 @@ async function send(uid, kind, { subject, title, intro, body, button }){
 const handleOf = u => (u && u.handle) || "someone";
 const nameOf = u => (u && (u.name || u.handle)) || "Someone";
 
-/* ---------- crew requests and Crew Family ---------- */
-exports.onCrewRequest = onDocumentCreated({ document: "friendRequests/{id}", database: DB_ID, secrets: [RESEND_API_KEY] }, async event => {
+/* ---------- crew requests and Crew Family ----------
+   Nothing is emailed right away. Each event is queued and goes out in the next daily digest
+   (6 PM Eastern), and only if something was actually queued. */
+// kind: "requests" or "tags" (each can be turned off on its own); the digest itself can be off too.
+async function queue(uid, kind, item){
+  const u = await userDoc(uid); if (!u) return false;
+  const p = L.prefs(u);
+  if (p.emailDigest === "off" || p[KIND_PREF[kind]] === "off") return false;
+  await db.collection(`users/${uid}/inbox`).add({ ...item, sent: false, at: FieldValue.serverTimestamp() });
+  return true;
+}
+exports.onCrewRequest = onDocumentCreated({ document: "friendRequests/{id}", database: DB_ID }, async event => {
   const r = event.data && event.data.data(); if (!r || r.status !== "pending") return;
-  if (!(await cooldownOk(r.to, `req_${r.from}`, 24 * 60))) return; // re-sent/cancelled requests don't re-email for a day
+  if (!(await cooldownOk(r.to, `req_${r.from}`, 24 * 60))) return; // re-sent/cancelled requests only count once a day
   const from = await userDoc(r.from);
-  await send(r.to, "requests", {
-    subject: `${nameOf(from)} wants to add you to their crew`,
-    title: `@${handleOf(from)} wants you in their crew`,
-    intro: `${L.esc(nameOf(from))} sent you a crew request on Pit Log. Crew can see each other's shows and the ones you hit together.`,
-    button: { label: "Open Crew", url: L.SITE } });
+  await queue(r.to, "requests", { type: "request", from: r.from, fromHandle: handleOf(from), fromName: nameOf(from) });
 });
 
-exports.onCrewRequestChange = onDocumentUpdated({ document: "friendRequests/{id}", database: DB_ID, secrets: [RESEND_API_KEY] }, async event => {
+exports.onCrewRequestChange = onDocumentUpdated({ document: "friendRequests/{id}", database: DB_ID }, async event => {
   const b = event.data.before.data(), a = event.data.after.data();
   if (b.status === "pending" && a.status === "accepted") {
     const to = await userDoc(a.to);
-    await send(a.from, "requests", { subject: `@${handleOf(to)} accepted your crew request`, title: `@${handleOf(to)} is in your crew`,
-      intro: `${L.esc(nameOf(to))} accepted your request. Their shows now show up in your crew.`, button: { label: "See their shows", url: L.SITE } });
+    await queue(a.from, "requests", { type: "accepted", from: a.to, fromHandle: handleOf(to), fromName: nameOf(to) });
   }
   if (a.family === "pending" && b.family !== "pending" && a.familyBy && await cooldownOk(a.familyBy === a.from ? a.to : a.from, `fam_${a.familyBy}`, 24 * 60)) {
     const other = a.familyBy === a.from ? a.to : a.from, by = await userDoc(a.familyBy);
-    await send(other, "requests", { subject: `@${handleOf(by)} invited you to Crew Family`, title: "Crew Family invite",
-      intro: `@${L.esc(handleOf(by))} wants to link logs with you. If you approve, every show either of you adds lands in both logs. Ratings, notes, photos and spend stay your own.`,
-      button: { label: "Review the invite", url: L.SITE } });
+    await queue(other, "requests", { type: "familyInvite", from: a.familyBy, fromHandle: handleOf(by), fromName: nameOf(by) });
   }
   if (a.family === "active" && b.family === "pending" && a.familyBy) {
     const other = a.familyBy === a.from ? a.to : a.from, o = await userDoc(other);
-    await send(a.familyBy, "requests", { subject: `@${handleOf(o)} approved Crew Family`, title: "Your logs are linked",
-      intro: `@${L.esc(handleOf(o))} approved Crew Family. Shows either of you add will now land in both logs.`, button: { label: "Open Pit Log", url: L.SITE } });
+    await queue(a.familyBy, "requests", { type: "familyApproved", from: other, fromHandle: handleOf(o), fromName: nameOf(o) });
   }
 });
 
-/* ---------- shows: tags (instant) and crew activity (queued for the digest) ---------- */
-exports.onShowWrite = onDocumentWritten({ document: "users/{uid}/shows/{showId}", database: DB_ID, secrets: [RESEND_API_KEY] }, async event => {
+/* ---------- shows: tags and crew activity (both queued for the daily digest) ---------- */
+exports.onShowWrite = onDocumentWritten({ document: "users/{uid}/shows/{showId}", database: DB_ID }, async event => {
   const { uid, showId } = event.params;
   const before = event.data.before.exists ? event.data.before.data() : null;
   const after = event.data.after.exists ? event.data.after.data() : null;
@@ -121,21 +123,13 @@ exports.onShowWrite = onDocumentWritten({ document: "users/{uid}/shows/{showId}"
   const today = L.todayET();
   const show = L.showSummary(after, showId);
 
-  // Tags: email anyone newly tagged (if they allow tags from this person).
+  // Tags: queue for anyone newly tagged (if they allow tags from this person).
   const was = new Set((before && before.taggedUids) || []);
   for (const t of (after.taggedUids || [])) {
     if (t === uid || was.has(t)) continue;
     const rel = await relation(uid, t); if (!rel.friends) continue;
     const tagged = await userDoc(t); if (!L.canSee(L.prefs(tagged), "tagMe", rel.family)) continue;
-    if (L.prefs(tagged).emailTags === "off") continue;
-    // Linking old tags can tag someone on dozens of shows at once: only the first gets its own email,
-    // the rest wait for the next digest.
-    if (!(await cooldownOk(t, `tag_${uid}`, 120))) {
-      if (L.prefs(tagged).emailDigest !== "off") await db.collection(`users/${t}/inbox`).add({ type: "tagged", from: uid, fromHandle: handleOf(owner), show, sent: false, at: FieldValue.serverTimestamp() });
-      continue;
-    }
-    await send(t, "tags", { subject: `@${handleOf(owner)} tagged you at ${L.showLine(show)}`, title: `@${handleOf(owner)} tagged you`,
-      intro: "Add it to your log with one tap from the Crew tab, as just the show or with their details.", body: L.showCard(show), button: { label: "Open Pit Log", url: L.SITE } });
+    await queue(t, "tags", { type: "tagged", from: uid, fromHandle: handleOf(owner), show });
   }
 
   // New shows only (not edits). Skip copies made by Crew Family syncing or by accepting a tag.

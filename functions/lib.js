@@ -67,8 +67,20 @@ const showCard = (s, note) => `<div style="border:1px solid #3a2f30;background:#
 // Digest: group queued items by friend so a big import reads as one line, not 30.
 function buildDigest({ items, reminders, today }){
   const sections = [];
+  // Crew requests and Crew Family news lead the email.
+  const reqs = items.filter(i => i.type === "request"), fam = items.filter(i => i.type === "familyInvite");
+  const acc = items.filter(i => i.type === "accepted"), famOk = items.filter(i => i.type === "familyApproved");
+  const handles = list => list.map(i => "@" + esc(i.fromHandle)).join(", ");
+  const line = (t, c = "#ece4d4") => `<p style="margin:0 0 8px;font-size:15px;line-height:1.45;color:${c}">${t}</p>`;
+  if (reqs.length || fam.length || acc.length || famOk.length) {
+    sections.push(`<h2 style="font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:#e0313a;margin:0 0 8px">Your crew</h2>` +
+      (reqs.length ? `<div style="border:1px solid #c8141e;background:#1d1012;padding:12px 14px;margin:0 0 8px">${line(`<b>${reqs.length} crew request${reqs.length > 1 ? "s" : ""}</b> from ${handles(reqs)}. Accept on the Crew tab.`)}</div>` : "") +
+      (fam.length ? line(`<b>Crew Family invite</b> from ${handles(fam)}: approve to link logs, so shows either of you add land in both. Ratings, notes, photos and spend stay your own.`) : "") +
+      (acc.length ? line(`${handles(acc)} accepted your crew request.`) : "") +
+      (famOk.length ? line(`${handles(famOk)} approved Crew Family. Your logs are linked.`) : ""));
+  }
   if (reminders.length) {
-    sections.push(`<h2 style="font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:#e0313a;margin:0 0 8px">Coming up for you</h2>` +
+    sections.push(`<h2 style="font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:#e0313a;margin:${sections.length ? "18px" : "0"} 0 8px">Coming up for you</h2>` +
       reminders.map(r => showCard(r.show, r.days === 1 ? "Tomorrow" : `In ${r.days} days`)).join(""));
   }
   const together = items.filter(i => i.type === "together");
@@ -79,7 +91,8 @@ function buildDigest({ items, reminders, today }){
   const tagged = items.filter(i => i.type === "tagged");
   if (tagged.length) {
     sections.push(`<h2 style="font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:#7f9a5a;margin:18px 0 8px">You were tagged</h2>` +
-      tagged.slice(0, 6).map(i => showCard(i.show, "Tagged by @" + i.fromHandle)).join("") + (tagged.length > 6 ? `<p style="margin:0 0 8px;font-size:13px;color:#a2958d">and ${tagged.length - 6} more</p>` : ""));
+      tagged.slice(0, 6).map(i => showCard(i.show, "Tagged by @" + i.fromHandle)).join("") + (tagged.length > 6 ? `<p style="margin:0 0 8px;font-size:13px;color:#a2958d">and ${tagged.length - 6} more</p>` : "") +
+      `<p style="margin:0 0 8px;font-size:13px;color:#a2958d">Add them to your log from the Crew tab, as just the show or with their details.</p>`);
   }
   const added = items.filter(i => i.type === "added");
   if (added.length) {
@@ -96,15 +109,24 @@ function buildDigest({ items, reminders, today }){
     sections.push(`<h2 style="font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:#a2958d;margin:18px 0 0">New from your crew</h2>` + rows.join(""));
   }
   const bits = [];
+  if (reqs.length) bits.push(`${reqs.length} crew request${reqs.length > 1 ? "s" : ""}`);
+  if (fam.length) bits.push("Crew Family invite");
+  if (acc.length) bits.push(`${acc.length} accepted`);
+  if (famOk.length) bits.push("Crew Family linked");
   if (reminders.length) bits.push(`${reminders.length} show${reminders.length > 1 ? "s" : ""} coming up`);
   if (together.length) bits.push(`${together.length} you share with your crew`);
   if (tagged.length) bits.push(`${tagged.length} tag${tagged.length > 1 ? "s" : ""}`);
   if (added.length) bits.push(`${added.length} new from your crew`);
-  const subject = reminders.length && !items.length
+  const crewNews = reqs.length + fam.length + acc.length + famOk.length;
+  const subject = reqs.length ? `@${reqs[0].fromHandle}${reqs.length > 1 ? ` and ${reqs.length - 1} more` : ""} want${reqs.length > 1 ? "" : "s"} you in their crew`
+    : fam.length ? `@${fam[0].fromHandle} invited you to Crew Family`
+    : acc.length && !tagged.length && !added.length && !together.length ? `@${acc[0].fromHandle} accepted your crew request`
+    : famOk.length && !tagged.length && !added.length && !together.length ? `@${famOk[0].fromHandle} approved Crew Family`
+    : reminders.length && items.length === crewNews
     ? (reminders[0].days === 1 ? `Tomorrow: ${showLine(reminders[0].show)}` : `Coming up: ${showLine(reminders[0].show)}`)
     : together.length ? `@${together[0].fromHandle} is at ${showLine(together[0].show)} too`
     : tagged.length && !added.length ? `@${tagged[0].fromHandle} tagged you on ${tagged.length} show${tagged.length > 1 ? "s" : ""}`
-    : `Your crew logged ${added.length} new show${added.length > 1 ? "s" : ""}`;
+    : added.length ? `Your crew logged ${added.length} new show${added.length > 1 ? "s" : ""}` : "Your crew on Pit Log";
   return { subject, body: sections.join(""), summary: bits.join(" · ") };
 }
 
