@@ -97,12 +97,14 @@ const compact = s => ({ i: s.id, d: s.date, l: s.lineup, c: s.coHead ? 1 : 0, v:
 // Pure planning step: given today's listings and what's stored, decide what to write and delete.
 function plan({ shows, index, recent, today }){
   const writes = [], seenNow = new Set(), nextIndex = {};
+  // The very first run loads everything already on sale; none of that is "just announced".
+  const backfill = !Object.keys(index).length;
   for (const s of shows) {
     seenNow.add(s.id);
     const fp = fingerprint(s), old = index[s.id];
-    const firstSeen = old ? old.f : today;
+    const firstSeen = old ? old.f : backfill ? "" : today;
     nextIndex[s.id] = { h: fp, f: firstSeen, d: s.date };
-    if (!old || old.h !== fp) writes.push({ ...s, firstSeen, isNew: !old });
+    if (!old || old.h !== fp) writes.push({ ...s, firstSeen, isNew: !old && !backfill, isAdd: !old });
   }
   const deletes = [];
   for (const [id, old] of Object.entries(index)) {
@@ -112,10 +114,10 @@ function plan({ shows, index, recent, today }){
     if (old.d < today && daysBetween(old.d, today) <= KEEP_PAST_DAYS) nextIndex[id] = old;
     else deletes.push(id);
   }
-  const fresh = new Map((recent || []).filter(r => daysBetween(r.f, today) < RECENT_DAYS && !deletes.includes(r.i)).map(r => [r.i, r]));
+  const fresh = new Map((recent || []).filter(r => r.f && daysBetween(r.f, today) < RECENT_DAYS && !deletes.includes(r.i)).map(r => [r.i, r]));
   for (const w of writes) if (w.isNew || fresh.has(w.id)) fresh.set(w.id, compact(w));
   const nextRecent = [...fresh.values()].filter(r => r.d >= today).sort((a, b) => b.f.localeCompare(a.f) || a.d.localeCompare(b.d)).slice(0, 2500);
-  return { writes, deletes, nextIndex, nextRecent, added: writes.filter(w => w.isNew).length };
+  return { writes, deletes, nextIndex, nextRecent, added: writes.filter(w => w.isAdd).length, announced: writes.filter(w => w.isNew).length, backfill };
 }
 
 module.exports = { fromTM, fingerprint, mergeShows, windows, fetchAll, plan, normBand, tourWords, STATES, GENRES, RECENT_DAYS };

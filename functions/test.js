@@ -18,7 +18,8 @@ function coll(path, filters = [], lim = 1e9){
   return { doc: id => docRef(`${path}/${id || "auto" + (++auto)}`), add: async v => docRef(`${path}/auto${++auto}`).set(v),
     where: (f, op, v) => coll(path, [...filters, [f, op, v]], lim), limit: n => coll(path, filters, n),
     get: async () => ({ docs: [...store.keys()].filter(k => k.startsWith(path + "/") && k.split("/").length === path.split("/").length + 1)
-      .filter(k => filters.every(([f, , v]) => (store.get(k) || {})[f] === v)).slice(0, lim).map(k => ({ id: k.split("/").pop(), ref: docRef(k), data: () => clone(store.get(k)) })) }) };
+      .filter(k => filters.every(([f, op, v]) => { const x = (store.get(k) || {})[f];
+        return op === "array-contains-any" ? Array.isArray(x) && x.some(y => v.includes(y)) : op === "array-contains" ? Array.isArray(x) && x.includes(v) : x === v; })).slice(0, lim).map(k => ({ id: k.split("/").pop(), ref: docRef(k), data: () => clone(store.get(k)) })) }) };
 }
 const fakeDb = { doc: docRef, collection: p => coll(p), batch: () => { const ops = []; return { set: (r, v) => ops.push(() => r.set(v)), delete: r => ops.push(() => r.delete()), commit: async () => { for (const o of ops) await o(); } }; } };
 const fakes = {
@@ -190,10 +191,11 @@ const sentTo = who => emails.filter(e => e.to[0] === who + "@example.com");
   const nop = async () => {};
   assert.deepStrictEqual(await F.runCatalog({ apiKey: "none", fetchImpl: tmFetch, pause: nop }), { skipped: true });
   let c1 = await F.runCatalog({ apiKey: "k", fetchImpl: tmFetch, pause: nop });
-  assert.strictEqual(c1.added, 3, "presale listing merged into the same show"); assert.ok(calls.length > 40 && calls.every(k => k === "k"));
+  assert.strictEqual(c1.added, 3, "presale listing merged into the same show"); assert.strictEqual(c1.announced, 0, "first load isn't 'just announced'"); assert.ok(calls.length > 40 && calls.every(k => k === "k"));
   const cat = () => [...store.keys()].filter(k => k.startsWith("catalog/")).map(k => store.get(k));
   const goj = cat().find(c => c.bandKeys.includes("gojira"));
-  assert.strictEqual(goj.lineup.length, 3); assert.strictEqual(goj.firstSeen, today); assert.strictEqual(goj.key, undefined);
+  assert.strictEqual(goj.lineup.length, 3); assert.strictEqual(goj.firstSeen, ""); assert.strictEqual(goj.key, undefined);
+  assert.strictEqual(JSON.parse(store.get("catalogMeta/recent").data).length, 0);
   // second day, nothing changed: no writes
   let c2 = await F.runCatalog({ apiKey: "k", fetchImpl: tmFetch, pause: nop, now: new Date(Date.now() + 864e5) });
   assert.strictEqual(c2.added + c2.updated + c2.removed, 0, "unchanged shows aren't rewritten");
@@ -202,22 +204,33 @@ const sentTo = who => emails.filter(e => e.to[0] === who + "@example.com");
   tmEvents.PA = tmEvents.PA.filter(e => e.id !== "x");
   let c3 = await F.runCatalog({ apiKey: "k", fetchImpl: tmFetch, pause: nop });
   assert.strictEqual(c3.updated, 1); assert.strictEqual(c3.removed, 1); assert.strictEqual(cat().length, 2);
-  assert.strictEqual(cat().find(c => c.bandKeys.includes("insomnium")).firstSeen, today);
+  // a show announced after the first load is "just announced"
+  tmEvents.PA.push(ev("n", L.addDays(today, 70), "Insomnium", ["Insomnium", "Omnium Gatherum"], "Union Transfer"));
+  const c4 = await F.runCatalog({ apiKey: "k", fetchImpl: tmFetch, pause: nop });
+  assert.strictEqual(c4.announced, 1); assert.strictEqual(cat().find(c => c.venue === "Union Transfer").firstSeen, today);
   // Ticketmaster returns nothing: catalog left alone
   const saved = tmEvents; tmEvents = {};
-  assert.deepStrictEqual(await F.runCatalog({ apiKey: "k", fetchImpl: tmFetch, pause: nop }), { aborted: true }); assert.strictEqual(cat().length, 2);
+  assert.deepStrictEqual(await F.runCatalog({ apiKey: "k", fetchImpl: tmFetch, pause: nop }), { aborted: true }); assert.strictEqual(cat().length, 3);
   tmEvents = saved;
   // weekly recap mentions new announcements for bands Pat has logged (Insomnium), not ones he hasn't
   store.set("users/pat/shows/old-ins", { date: L.addDays(today, -400), lineup: ["Insomnium"], venue: "Reverb" });
   emails.length = 0; await F.runRecap();
-  const wr = sentTo("pat")[0]; assert.match(wr.html, /Just announced: bands you've seen/); assert.match(wr.html, /Insomnium w\/ Omnium Gatherum/);
+  const wr = sentTo("pat")[0]; assert.match(wr.html, /Just announced: bands you've seen/); assert.match(wr.html, /Insomnium w\/ Omnium Gatherum/); assert.match(wr.html, /Union Transfer/); assert.ok(!/Reverb, Reading/.test(wr.html.split("Just announced")[1] || ""), "first-load shows aren't 'just announced'");
   assert.ok(!/Gojira/.test(wr.html.split("Just announced")[1] || ""), "only bands you've logged");
-  assert.match(wr.html, /tm\.example\/b/);
+  assert.match(wr.html, /tm\.example\/n/);
   // bucket list: Gojira (never seen) now shows up too, first, with a note
   store.set("users/pat", { ...store.get("users/pat"), bucket: ["Gojira"] });
   emails.length = 0; await F.runRecap();
-  const wb = sentTo("pat")[0].html; assert.match(wb, /Just announced for you/); assert.match(wb, /On your bucket list/);
-  assert.ok(wb.indexOf("Gojira") < wb.indexOf("Insomnium w/"), "bucket list bands first");
+  const wb = sentTo("pat")[0].html;
+  // Gojira was in the first load (not "just announced"), so it shows as still on sale
+  assert.match(wb, /Still on sale: your bucket list/); assert.match(wb, /Gojira &amp; Mastodon/);
+  assert.match(sentTo("pat")[0].subject + wb, /bucket list date on sale/);
+  // a brand-new Gojira date is "just announced", flagged as bucket list, and not repeated under "still on sale"
+  tmEvents.PA.push(ev("g2", L.addDays(today, 90), "Gojira", ["Gojira"], "The Fillmore Philadelphia"));
+  await F.runCatalog({ apiKey: "k", fetchImpl: tmFetch, pause: nop });
+  emails.length = 0; await F.runRecap();
+  const wn = sentTo("pat")[0].html; assert.match(wn, /Just announced for you/); assert.match(wn, /On your bucket list/);
+  assert.strictEqual(wn.split("The Fillmore Philadelphia").length - 1, 1, "new date listed once");
 
   console.log("All email function tests passed.");
 })().catch(e => { console.error(e); process.exit(1); });

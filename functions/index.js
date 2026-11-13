@@ -232,6 +232,19 @@ async function runRecap(now = new Date()){
       .filter(r => !allMine.some(s => L.sameShow(s, { date: r.d, lineup: r.l, venue: r.v })))
       .map(r => ({ r, bk: r.l.some(b => bucket.has(C.normBand(b))) })).sort((a, b) => (b.bk - a.bk) || a.r.d.localeCompare(b.r.d))
       .slice(0, 8).map(({ r, bk }) => ({ ...L.showSummary({ date: r.d, lineup: r.l, coHead: !!r.c, venue: r.v, city: r.y }), url: r.u, note: bk ? "On your bucket list" : "" }));
+    // Bucket list bands with dates already on sale (announced before this week, or before the catalog started).
+    const onSale = [];
+    if (bucket.size) {
+      const keys = [...bucket];
+      for (let i = 0; i < keys.length; i += 30) {
+        const snap = await db.collection("catalog").where("bandKeys", "array-contains-any", keys.slice(i, i + 30)).limit(200).get();
+        for (const d of snap.docs) { const c = d.data(); if (c.date >= today && c.date <= L.addDays(today, 180) && c.status !== "cancelled") onSale.push(c); }
+      }
+    }
+    const shownNow = new Set(announced.map(a => a.date + "|" + a.venue));
+    const bucketOnSale = onSale.filter(c => !shownNow.has(c.date + "|" + c.venue) && !allMine.some(s => L.sameShow(s, c)))
+      .sort((a, b) => a.date.localeCompare(b.date)).filter((c, i, arr) => arr.findIndex(x => x.date === c.date && x.venue === c.venue) === i)
+      .slice(0, 6).map(c => ({ ...L.showSummary(c), url: c.url || "" }));
     const upcoming = mine.map(s => ({ raw: s, show: L.showSummary(s, s.id), crew: [] }));
     const crewUpcoming = [];
     for (const f of await friendsOf(uid)) {
@@ -248,7 +261,7 @@ async function runRecap(now = new Date()){
     const inbox = p.emailDigest === "off" ? { docs: [] } : await db.collection(`users/${uid}/inbox`).where("sent", "==", false).limit(200).get();
     const items = [];
     for (const d of inbox.docs) { const it = d.data(); if (it.show && it.show.id && !(await db.doc(`users/${it.from}/shows/${it.show.id}`).get()).exists) continue; items.push(it); }
-    const rc = L.buildRecap({ requests, upcoming, crewUpcoming, items, announced, today });
+    const rc = L.buildRecap({ requests, upcoming, crewUpcoming, items, announced, bucketOnSale, today });
     if (rc.empty) continue; // nothing at all to say: no email
     const ok = await send(uid, "weekly", { subject: rc.subject, title: "Your week on Pit Log", intro: L.esc(rc.summary), body: rc.body, button: { label: "Open Pit Log", url: L.SITE } });
     if (ok) {
@@ -273,7 +286,7 @@ async function runCatalog({ apiKey, now = new Date(), fetchImpl, pause } = {}){
   // If Ticketmaster hiccups and returns nothing, don't treat that as "every show was cancelled".
   if (!shows.length && Object.keys(index).length) { logger.error(`show catalog: 0 shows from ${calls} calls; leaving the catalog alone`); return { aborted: true }; }
   const p = C.plan({ shows, index, recent, today });
-  const ops = [...p.writes.map(w => ({ ref: db.doc(`catalog/${w.id}`), data: (({ isNew, key: _k, ...rest }) => ({ ...rest, updatedAt: today }))(w) })),
+  const ops = [...p.writes.map(w => ({ ref: db.doc(`catalog/${w.id}`), data: (({ isNew, isAdd, key: _k, ...rest }) => ({ ...rest, updatedAt: today }))(w) })),
                ...p.deletes.map(id => ({ ref: db.doc(`catalog/${id}`), del: true }))];
   for (let i = 0; i < ops.length; i += 400) {
     const b = db.batch();
@@ -282,8 +295,8 @@ async function runCatalog({ apiKey, now = new Date(), fetchImpl, pause } = {}){
   }
   await db.doc("catalogMeta/index").set({ data: JSON.stringify(p.nextIndex), count: Object.keys(p.nextIndex).length, updated: today });
   await db.doc("catalogMeta/recent").set({ data: JSON.stringify(p.nextRecent), count: p.nextRecent.length, updated: today });
-  logger.info(`show catalog: ${shows.length} listings from ${calls} calls; ${p.added} new, ${p.writes.length - p.added} updated, ${p.deletes.length} removed`);
-  return { added: p.added, updated: p.writes.length - p.added, removed: p.deletes.length, total: Object.keys(p.nextIndex).length };
+  logger.info(`show catalog: ${shows.length} listings from ${calls} calls; ${p.added} added${p.backfill ? " (first load, not counted as announcements)" : ""}, ${p.writes.length - p.added} updated, ${p.deletes.length} removed`);
+  return { added: p.added, announced: p.announced, updated: p.writes.length - p.added, removed: p.deletes.length, total: Object.keys(p.nextIndex).length };
 }
 exports.refreshCatalog = onSchedule({ schedule: "17 5 * * *", timeZone: "America/New_York", secrets: [TICKETMASTER_API_KEY], timeoutSeconds: 540, memory: "512MiB" }, () => runCatalog());
 module.exports.runCatalog = runCatalog;

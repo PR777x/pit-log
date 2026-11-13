@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=29";
+import { VENUES } from "./venues.js?v=30";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -1269,13 +1269,16 @@ async function drawJustAnnounced(){
   const hits = recent.filter(r => r.d >= todayISO && !have(r)).map(r => ({ r, bk: r.l.some(b => bucket.has(normBand(b))), you: r.l.some(b => mine.has(normBand(b))), crew: r.l.some(b => crewB.has(normBand(b))) }))
     .filter(x => x.bk || x.you || x.crew).sort((a, b) => (b.bk - a.bk) || (b.you - a.you) || b.r.f.localeCompare(a.r.f) || a.r.d.localeCompare(b.r.d)).slice(0, 15);
   CAT.list = hits.map(x => catShow({ id: x.r.i, date: x.r.d, lineup: x.r.l, coHead: !!x.r.c, venue: x.r.v, city: x.r.y, tour: x.r.t, url: x.r.u }));
-  if (!recent.length) { box.innerHTML = ""; return; }
-  box.innerHTML = `<section class="sect"><h3>Just announced</h3><div class="ro" style="margin:-4px 0 8px">New dates for your bucket list and bands you and your crew have seen. Checked every morning.</div>${hits.length ? hits.map((x, i) => {
+  box.innerHTML = (recent.length ? `<section class="sect"><h3>Just announced</h3><div class="ro" style="margin:-4px 0 8px">New dates for your bucket list and bands you and your crew have seen. Checked every morning.</div>${hits.length ? hits.map((x, i) => {
     const sh = CAT.list[i], p = parse(sh.date), sup = support(sh);
     return `<div class="bandhit"><button class="prow tap prow-show" data-catadd="${i}"><span class="pdate"><b class="num">${p.d}</b>${MONTHS[(p.m||1)-1]} ${p.y}</span>
       <div class="pt"><div class="nm" style="font-size:20px">${esc(headline(sh))}</div>${sup.length ? `<div class="ro">w/ ${esc(sup.join(" · "))}</div>` : ""}<div class="ro">${esc([sh.venue, sh.city].filter(Boolean).join(" — "))}</div></div></button>
       <div class="tagrow who"><span class="lbl">${x.bk ? "On your bucket list" : x.you ? "You've seen them" : "Your crew's seen them"}</span>${ticketLink(sh.url)}<button class="chip catadd" data-catadd="${i}">+ Add to my log</button></div></div>`; }).join("")
-    : `<div class="ro">Nothing new in the last two weeks for your bucket list or bands in your log.</div>`}</section>`;
+    : `<div class="ro">Nothing new in the last two weeks for your bucket list or bands in your log.</div>`}</section>` : "") + `<div id="bkann"></div>`;
+  const sale = (await bucketOnSale()).filter(sh => !hits.some(x => x.r.i === sh.id.replace(/^cat_/, "")));
+  const b2 = $("#bkann"); if (!b2 || !sale.length) return;
+  BK.list = sale.slice(0, 10);
+  b2.innerHTML = `<section class="sect"><h3>Bucket list: on sale <span class="lbl">${sale.length}</span></h3>${onSaleRows(BK.list, "data-bkcat")}${sale.length > 10 ? `<div class="ro">See all on your profile.</div>` : ""}</section>`;
 }
 // Open a new show already filled in from an announced (or someone else's) show.
 function openSheetFrom(sh){
@@ -1754,6 +1757,7 @@ function renderMe(){
   const openNow = [...document.querySelectorAll("[data-setgrp]")];
   if (openNow.length) S.setOpen = new Set(openNow.filter(d => d.open).map(d => d.dataset.setgrp));
   $("#view").innerHTML = `<div class="crew">${profileBlock({ uid: ME.uid, name: PROFILE.name, handle: PROFILE.handle, photo: PROFILE.photoURL, bio: PROFILE.bio, favBands: favList(PROFILE), favVenue: PROFILE.favVenue || "", shows: S.shows }, true, null, {})}${bucketBlock()}${settingsBlock()}</div>`;
+  drawBucketShows();
 }
 /* ---------- Bucket list: bands you want to see. New dates for them show up in Just announced and the Sunday recap. ---------- */
 const bucketOf = p => (p && Array.isArray(p.bucket) ? p.bucket.filter(Boolean) : []);
@@ -1765,7 +1769,38 @@ function bucketBlock(){
     <div class="bkadd acwrap"><input id="bk-in" data-ac="band" autocomplete="off" maxlength="60" placeholder="Add a band" aria-label="Add a bucket list band"><div class="acbox" hidden></div><button class="btn red" data-bkadd>Add</button></div>
     ${list.length ? `<div class="tagrow bklist">${list.map((b, i) => { const k = normBand(b), st = going.has(k) ? "going" : seen.has(k) ? "seen" : "";
       return `<span class="chip bk ${st}">${st === "seen" ? "✓ " : ""}${esc(b)}${st === "going" ? ` <i>got tickets</i>` : st === "seen" ? ` <i>seen</i>` : ""}<button class="bkx" data-bkdel="${i}" aria-label="Remove ${esc(b)}">×</button></span>`; }).join("")}</div>`
-      : `<div class="ro">Nothing yet. Try the bands you keep missing.</div>`}</section>`;
+      : `<div class="ro">Nothing yet. Try the bands you keep missing.</div>`}
+    ${list.length ? `<div id="bkshows"></div>` : ""}</section>`;
+}
+// Every announced date on sale for your bucket list bands, not just this week's (so nothing is missed).
+const BK = { key: "", p: null, list: [] };
+function bucketOnSale(){
+  const keys = [...new Set(bucketOf(PROFILE).map(normBand).filter(Boolean))], ck = keys.join(",");
+  if (!keys.length) return Promise.resolve([]);
+  if (BK.key === ck && BK.p) return BK.p;
+  BK.key = ck;
+  const chunks = []; for (let i = 0; i < keys.length; i += 30) chunks.push(keys.slice(i, i + 30));
+  BK.p = Promise.all(chunks.map(c => getDocs(query(collection(fdb, "catalog"), where("bandKeys", "array-contains-any", c), limit(200)))
+      .then(snap => snap.docs.map(d => catShow({ id: d.id, ...d.data() }))).catch(e => { console.warn("bucket", e); return []; })))
+    .then(lists => { const seen = new Set();
+      return lists.flat().filter(sh => sh.date >= todayISO && sh.status !== "cancelled" && !seen.has(sh.id) && seen.add(sh.id))
+        .sort((a, b) => a.date.localeCompare(b.date)); });
+  return BK.p;
+}
+const haveShow = sh => S.shows.some(s => s.date === sh.date && lineup(s).some(b => lineup(sh).some(x => normBand(x) === normBand(b))));
+function onSaleRows(list, attr){
+  return list.map((sh, i) => { const p = parse(sh.date), sup = support(sh), mine = haveShow(sh);
+    return `<div class="bandhit"><button class="prow tap prow-show" ${mine ? "" : `${attr}="${i}"`}><span class="pdate"><b class="num">${p.d}</b>${MONTHS[(p.m||1)-1]} ${p.y}</span>
+      <div class="pt"><div class="nm" style="font-size:20px">${esc(headline(sh))}</div>${sup.length ? `<div class="ro">w/ ${esc(sup.join(" · "))}</div>` : ""}<div class="ro">${esc([sh.venue, sh.city].filter(Boolean).join(" — "))}</div></div></button>
+      <div class="tagrow who">${mine ? `<span class="chip tog">In your log</span>` : `${ticketLink(sh.url)}<button class="chip catadd" ${attr}="${i}">+ Add to my log</button>`}</div></div>`; }).join("");
+}
+async function drawBucketShows(){
+  const box = $("#bkshows"); if (!box) return;
+  const list = await bucketOnSale(); const b2 = $("#bkshows"); if (!b2) return;
+  BK.list = list.slice(0, 20);
+  b2.innerHTML = `<h4 class="lbl" style="margin:16px 0 6px">On sale now · ${list.length} date${list.length === 1 ? "" : "s"}</h4>` +
+    (list.length ? onSaleRows(BK.list, "data-bkcat") + (list.length > 20 ? `<div class="ro">and ${list.length - 20} more</div>` : "")
+      : `<div class="ro">No dates on sale near you yet for these bands. You'll see them here (and in your Sunday recap) as soon as they're announced.</div>`);
 }
 async function saveBucket(list){
   PROFILE.bucket = list; cacheProfile(); renderMe();
@@ -1781,6 +1816,7 @@ function addBucket(){
 }
 document.addEventListener("click", e => {
   const a = e.target.closest && e.target.closest("[data-bkadd]"); if (a) { addBucket(); return; }
+  const c = e.target.closest && e.target.closest("[data-bkcat]"); if (c) { const sh = BK.list[Number(c.dataset.bkcat)]; if (sh) openSheetFrom(sh); return; }
   const d = e.target.closest && e.target.closest("[data-bkdel]"); if (d) { const l = bucketOf(PROFILE).slice(); l.splice(Number(d.dataset.bkdel), 1); saveBucket(l); }
 });
 document.addEventListener("keydown", e => { if (e.key === "Enter" && e.target.id === "bk-in") { const box = e.target.parentElement.querySelector(".acbox"); if (box) box.hidden = true; e.preventDefault(); addBucket(); } });

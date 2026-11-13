@@ -110,7 +110,8 @@ function buildDigest({ items, reminders, today }){
 
 // Weekly recap (Sunday morning): open requests, your upcoming shows (with crew who are going too),
 // your crew's other upcoming shows, plus anything queued for the digest.
-function buildRecap({ requests, upcoming, crewUpcoming, items, announced = [], today }){
+function buildRecap({ requests, upcoming, crewUpcoming, items, announced = [], bucketOnSale = [], today }){
+  const tix = a => a.url ? `<div style="margin-top:6px"><a href="${esc(a.url)}" style="font-size:13px;color:#e0313a;text-decoration:none;font-weight:bold">Tickets ›</a></div></div>` : "</div>";
   const H = (t, c) => `<h2 style="font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:${c};margin:18px 0 8px">${t}</h2>`;
   const parts = [];
   if (requests > 0) parts.push(`<div style="border:1px solid #c8141e;background:#1d1012;padding:12px 14px;margin:0 0 8px;font-size:15px;color:#ece4d4"><b>${requests} open crew request${requests > 1 ? "s" : ""}</b> waiting for you on the Crew tab.</div>`);
@@ -122,7 +123,8 @@ function buildRecap({ requests, upcoming, crewUpcoming, items, announced = [], t
     `<p style="margin:10px 0 6px;font-size:15px;color:#ece4d4"><b>@${esc(f.handle)}</b> · ${f.shows.length} show${f.shows.length > 1 ? "s" : ""}</p>` +
     f.shows.slice(0, 3).map(s => showCard(s)).join("") + (f.shows.length > 3 ? `<p style="margin:0 0 8px;font-size:13px;color:#a2958d">and ${f.shows.length - 3} more</p>` : "")).join(""));
   if (announced.length) parts.push(H(announced.some(a => a.note) ? "Just announced for you" : "Just announced: bands you've seen", "#c9762f") + announced.map(a =>
-    showCard(a, a.note || "").replace(/<\/div>$/, a.url ? `<div style="margin-top:6px"><a href="${esc(a.url)}" style="font-size:13px;color:#e0313a;text-decoration:none;font-weight:bold">Tickets ›</a></div></div>` : "</div>")).join(""));
+    showCard(a, a.note || "").replace(/<\/div>$/, tix(a))).join(""));
+  if (bucketOnSale.length) parts.push(H("Still on sale: your bucket list", "#c9762f") + bucketOnSale.map(a => showCard(a, "").replace(/<\/div>$/, tix(a))).join(""));
   const news = items.length ? buildDigest({ items, reminders: [], today }) : null;
   if (news) parts.push(H("New this week", "#a2958d") + news.body);
   const crewCount = crewUpcoming.reduce((a, f) => a + f.shows.length, 0), together = upcoming.filter(u => u.crew.length).length;
@@ -132,10 +134,11 @@ function buildRecap({ requests, upcoming, crewUpcoming, items, announced = [], t
   if (together) bits.push(`${together} with crew`);
   if (crewCount) bits.push(`${crewCount} on your crew's calendars`);
   if (announced.length) bits.push(`${announced.length} just announced`);
+  if (bucketOnSale.length) bits.push(`${bucketOnSale.length} bucket list date${bucketOnSale.length > 1 ? "s" : ""} on sale`);
   const next = upcoming[0] && upcoming[0].show;
   const subject = requests ? `Your week on Pit Log: ${requests} crew request${requests > 1 ? "s" : ""} waiting`
     : next ? `Your week on Pit Log: ${showLine(next)} is next` : `Your week on Pit Log: ${crewCount} show${crewCount === 1 ? "" : "s"} on your crew's calendars`;
-  return { subject, body: parts.join(""), summary: bits.join(" · "), empty: !requests && !upcoming.length && !crewUpcoming.length && !items.length && !announced.length };
+  return { subject, body: parts.join(""), summary: bits.join(" · "), empty: !requests && !upcoming.length && !crewUpcoming.length && !items.length && !announced.length && !bucketOnSale.length };
 }
 
 module.exports = { buildRecap, SITE, LV, canSee, EMAIL_DEFAULTS, prefs, lineup, sameShow, todayET, addDays, isUpcoming, prettyDate,
