@@ -2,7 +2,7 @@
   "name": "pit-log-functions",
   "private": true,
   "main": "index.js",
-  "engines": { "node": "20" },
+  "engines": { "node": "22" },
   "scripts": { "test": "node test.js" },
   "dependencies": {
     "firebase-admin": "^13.0.0",

@@ -1,5 +1,5 @@
 {
   "functions": [
-    { "source": "functions", "codebase": "default", "runtime": "nodejs20", "ignore": ["node_modules", "test.js", "*.log"] }
+    { "source": "functions", "codebase": "default", "runtime": "nodejs22", "ignore": ["node_modules", "test.js", "*.log"] }
   ]
 }

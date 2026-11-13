@@ -26,7 +26,7 @@ jobs:
       - uses: actions/setup-node@v4
         if: steps.gate.outputs.ok == 'true'
         with:
-          node-version: 20
+          node-version: 22
       - name: Install function dependencies
         if: steps.gate.outputs.ok == 'true'
         working-directory: functions
@@ -59,8 +59,8 @@ jobs:
           RESEND: ${{ secrets.RESEND_API_KEY }}
         run: |
           printf '%s' "$RESEND" > "$RUNNER_TEMP/resend.txt"
-          npx -y firebase-tools@13 functions:secrets:set RESEND_API_KEY --data-file="$RUNNER_TEMP/resend.txt" --project pit-log --force --non-interactive
+          npx -y firebase-tools@latest functions:secrets:set RESEND_API_KEY --data-file="$RUNNER_TEMP/resend.txt" --project pit-log --force --non-interactive
           rm -f "$RUNNER_TEMP/resend.txt"
       - name: Deploy functions
         if: steps.gate.outputs.ok == 'true'
-        run: npx -y firebase-tools@13 deploy --only functions --project pit-log --force --non-interactive
+        run: npx -y firebase-tools@latest deploy --only functions --project pit-log --force --non-interactive
