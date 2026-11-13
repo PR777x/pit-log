@@ -121,8 +121,8 @@ function buildRecap({ requests, upcoming, crewUpcoming, items, announced = [], t
   if (crewUpcoming.length) parts.push(H("Your crew has coming up", "#7f9a5a") + crewUpcoming.map(f =>
     `<p style="margin:10px 0 6px;font-size:15px;color:#ece4d4"><b>@${esc(f.handle)}</b> · ${f.shows.length} show${f.shows.length > 1 ? "s" : ""}</p>` +
     f.shows.slice(0, 3).map(s => showCard(s)).join("") + (f.shows.length > 3 ? `<p style="margin:0 0 8px;font-size:13px;color:#a2958d">and ${f.shows.length - 3} more</p>` : "")).join(""));
-  if (announced.length) parts.push(H("Just announced: bands you've seen", "#c9762f") + announced.map(a =>
-    showCard(a, "").replace(/<\/div>$/, a.url ? `<div style="margin-top:6px"><a href="${esc(a.url)}" style="font-size:13px;color:#e0313a;text-decoration:none;font-weight:bold">Tickets ›</a></div></div>` : "</div>")).join(""));
+  if (announced.length) parts.push(H(announced.some(a => a.note) ? "Just announced for you" : "Just announced: bands you've seen", "#c9762f") + announced.map(a =>
+    showCard(a, a.note || "").replace(/<\/div>$/, a.url ? `<div style="margin-top:6px"><a href="${esc(a.url)}" style="font-size:13px;color:#e0313a;text-decoration:none;font-weight:bold">Tickets ›</a></div></div>` : "</div>")).join(""));
   const news = items.length ? buildDigest({ items, reminders: [], today }) : null;
   if (news) parts.push(H("New this week", "#a2958d") + news.body);
   const crewCount = crewUpcoming.reduce((a, f) => a + f.shows.length, 0), together = upcoming.filter(u => u.crew.length).length;

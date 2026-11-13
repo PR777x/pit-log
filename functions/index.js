@@ -225,10 +225,13 @@ async function runRecap(now = new Date()){
     const allMine = (await db.collection(`users/${uid}/shows`).get()).docs.map(d => ({ id: d.id, ...d.data() }));
     const mine = allMine.filter(s => s.date && s.date >= today && s.date <= horizon).sort((a, b) => a.date.localeCompare(b.date));
     // Just announced (this week) for bands this person has logged, minus shows they already have.
+    // ...and for bands on their bucket list (bands they want to see), which come first.
     const myBands = new Set(allMine.flatMap(s => L.lineup(s)).map(C.normBand).filter(Boolean));
-    const announced = recent.filter(r => r.f >= weekAgo && r.d >= today && r.l.some(b => myBands.has(C.normBand(b))))
+    const bucket = new Set((Array.isArray(u.data().bucket) ? u.data().bucket : []).map(C.normBand).filter(Boolean));
+    const announced = recent.filter(r => r.f >= weekAgo && r.d >= today && r.l.some(b => myBands.has(C.normBand(b)) || bucket.has(C.normBand(b))))
       .filter(r => !allMine.some(s => L.sameShow(s, { date: r.d, lineup: r.l, venue: r.v })))
-      .slice(0, 8).map(r => ({ ...L.showSummary({ date: r.d, lineup: r.l, coHead: !!r.c, venue: r.v, city: r.y }), url: r.u }));
+      .map(r => ({ r, bk: r.l.some(b => bucket.has(C.normBand(b))) })).sort((a, b) => (b.bk - a.bk) || a.r.d.localeCompare(b.r.d))
+      .slice(0, 8).map(({ r, bk }) => ({ ...L.showSummary({ date: r.d, lineup: r.l, coHead: !!r.c, venue: r.v, city: r.y }), url: r.u, note: bk ? "On your bucket list" : "" }));
     const upcoming = mine.map(s => ({ raw: s, show: L.showSummary(s, s.id), crew: [] }));
     const crewUpcoming = [];
     for (const f of await friendsOf(uid)) {

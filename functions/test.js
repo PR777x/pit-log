@@ -213,6 +213,11 @@ const sentTo = who => emails.filter(e => e.to[0] === who + "@example.com");
   const wr = sentTo("pat")[0]; assert.match(wr.html, /Just announced: bands you've seen/); assert.match(wr.html, /Insomnium w\/ Omnium Gatherum/);
   assert.ok(!/Gojira/.test(wr.html.split("Just announced")[1] || ""), "only bands you've logged");
   assert.match(wr.html, /tm\.example\/b/);
+  // bucket list: Gojira (never seen) now shows up too, first, with a note
+  store.set("users/pat", { ...store.get("users/pat"), bucket: ["Gojira"] });
+  emails.length = 0; await F.runRecap();
+  const wb = sentTo("pat")[0].html; assert.match(wb, /Just announced for you/); assert.match(wb, /On your bucket list/);
+  assert.ok(wb.indexOf("Gojira") < wb.indexOf("Insomnium w/"), "bucket list bands first");
 
   console.log("All email function tests passed.");
 })().catch(e => { console.error(e); process.exit(1); });

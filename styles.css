@@ -382,6 +382,12 @@ a.btn{text-decoration:none;display:inline-flex;align-items:center;justify-conten
 .acwrap{position:relative}
 .chip.tix{text-decoration:none;color:var(--blood-hi);border-color:var(--blood)}
 .chip.catadd{cursor:pointer;color:var(--bone);background:var(--slab)}
+.bkadd{display:flex;gap:8px;margin-bottom:10px}.bkadd input{flex:1;min-width:0;background:var(--void);border:1px solid var(--iron);padding:10px 12px;color:var(--bone);font:inherit}.bkadd input:focus{border-color:var(--blood-hi);outline:none}.bkadd .acbox{right:84px}
+.chip.bk{display:inline-flex;align-items:center;gap:6px;padding-right:4px;color:var(--bone)}
+.chip.bk i{font-style:normal;color:var(--ash);font-size:.85em}
+.chip.bk.seen{color:var(--ash)}.chip.bk.going{border-color:var(--moss)}
+.bkx{background:none;border:0;color:var(--ash);font-size:18px;line-height:1;padding:2px 6px;cursor:pointer;min-width:28px;min-height:28px}
+.bkx:hover{color:var(--blood-hi)}
 .matchbox{display:grid;gap:6px;margin:2px 0 12px;padding:10px;border:1px solid var(--blood);background:linear-gradient(180deg,rgba(181,18,27,.14),rgba(181,18,27,0) 70%),var(--crypt)}
 .mcard{display:flex;gap:10px;align-items:center;justify-content:space-between;padding:8px 10px;background:var(--void);border:1px solid var(--iron)}
 .mcard .mm-b{min-width:0;display:grid;gap:1px}
