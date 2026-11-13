@@ -11,27 +11,37 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Pit Log">
 <link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="icon" type="image/png" sizes="64x64" href="icons/favicon-64.png">
 <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<meta property="og:title" content="Pit Log">
+<meta property="og:description" content="A concert diary for heavy music fans. Log the shows, rate the pits, bring the crew, find the next one.">
+<meta property="og:image" content="https://thepitlog.com/brand/og.jpg">
+<meta property="og:url" content="https://thepitlog.com/">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="description" content="A concert diary for heavy music fans. Log the shows, rate the pits, bring the crew, find the next one.">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Pirata+One&family=Barlow+Condensed:wght@400;500;600;700&family=Barlow:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="styles.css?v=36">
+<link rel="stylesheet" href="styles.css?v=37">
 </head>
 <body>
 
 <section id="boot" class="gate" aria-live="polite">
   <div class="gbox" style="text-align:center">
-    <h1>Pit <span>Log</span></h1>
+    <img class="em-boot" src="brand/emblem-256.webp" alt="" width="170" height="170">
+    <h1 class="wm"><img src="brand/wordmark-180.webp" alt="Pit Log" width="376" height="180"></h1>
     <p class="gtag">Loading your log…</p>
   </div>
 </section>
 
 <section id="gate" class="gate landing" hidden>
   <div class="lwrap">
-    <nav class="lnav"><span class="lbrand">Pit <span>Log</span></span><button type="button" class="btn ghost sm" data-goauth="in">Sign in</button></nav>
+    <nav class="lnav"><span class="lbrand"><img src="brand/emblem-128.webp" alt="" width="40" height="40"><img class="lwm" src="brand/wordmark-90.webp" alt="Pit Log" width="188" height="90"></span><button type="button" class="btn ghost sm" data-goauth="in">Sign in</button></nav>
     <header class="lhero">
       <div class="lhero-t">
+        <img class="em-hero" src="brand/emblem-512.webp" alt="Pit Log emblem" width="240" height="240">
         <p class="kick">A concert diary for heavy music fans</p>
         <h1 class="lh1">Every show.<br>Every pit.<br><em>Every night you were there.</em></h1>
         <p class="lsub">Log the shows, rate the pits, keep the posters and photos, see who in your crew was in the room, and find out the second your bands announce a date.</p>
@@ -92,6 +102,8 @@
     </section>
   </div>
   <div class="gbox" id="join">
+    <img class="em-join" src="brand/emblem-256.webp" alt="" width="130" height="130">
+    <img class="wm-join" src="brand/wordmark-180.webp" alt="Pit Log" width="376" height="180">
     <h2 class="gh2 join-h">Grab your wristband</h2>
     <p class="gtag">Every show. Every pit. Every night you were there.</p>
     <button class="btn red gbtn" id="signinBtn">Sign in with Google</button>
@@ -111,7 +123,7 @@
     </form>
     <p class="ro" id="signinMsg" role="alert"></p>
     <p class="ro">Your log is private. Friends you accept can see your shows.</p>
-    <p class="ro" style="opacity:.5">build 36</p>
+    <p class="ro" style="opacity:.5">build 37</p>
     <p class="ro" id="inapp" hidden>Opened inside another app? Use ⋮ → <b>Open in Chrome</b> (or Safari on iPhone) for sign-in to work.</p>
   </div>
 </section>
@@ -131,7 +143,7 @@
 <div class="wrap">
   <header class="hero">
     <div class="brand">
-      <h1>Pit <span>Log</span></h1>
+      <h1 class="wm"><button type="button" class="brandbtn" id="homeBtn" aria-label="Pit Log home: your recap"><img class="em-app" src="brand/emblem-128.webp" alt="" width="60" height="60"><img src="brand/wordmark-180.webp" alt="Pit Log" width="376" height="180"></button></h1>
       <div class="brand-r">
         <div class="year" id="yearLabel"></div>
         <button class="hbtn" id="searchBtn" aria-label="Search people and bands" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M15.5 15.5 21 21" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg></button>
@@ -159,6 +171,6 @@
 <div id="modalRoot"></div>
 <div id="toastRoot"></div>
 
-<script type="module" src="app.js?v=36"></script>
+<script type="module" src="app.js?v=37"></script>
 </body>
 </html>

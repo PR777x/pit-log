@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=36";
+import { VENUES } from "./venues.js?v=37";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -430,7 +430,8 @@ function renderTab(){
   updateCrewBadge();
   if (S.tab === "cal") { S.tab = "shows"; S.showView = "cal"; }
   for (const t of ["shows","disc","vault","stats","crew"]) $("#tab-"+t).setAttribute("aria-selected", S.tab===t);
-  if (S.tab === "disc") renderDiscover();
+  if (S.tab === "home") renderHome();
+  else if (S.tab === "disc") renderDiscover();
   else if (S.tab === "search") renderSearch(); else if (S.tab === "me") renderMe(); else if (S.tab === "crew") renderCrew(); else if (S.tab === "shows") renderShows(); else if (S.tab === "cal") renderCal(); else if (S.tab === "vault") renderVault(); else renderStats();
 }
 function render(){ renderNext(); renderTab(); if (S.open) renderSheet(); }
@@ -760,6 +761,8 @@ document.addEventListener("click", e => {
   if (t.id === "tab-shows") { S.tab = "shows"; renderTab(); }
   else if (t.id === "tab-vault") { S.tab = "vault"; renderTab(); }
   else if (t.id === "tab-disc") { S.tab = "disc"; renderTab(); }
+  else if (t.id === "homeBtn") { S.tab = "home"; S.search.profile = null; renderTab(); window.scrollTo({ top: 0, behavior: "smooth" }); }
+  else if (t.dataset.gotab) { S.tab = t.dataset.gotab; renderTab(); const n = document.querySelector("nav.tabs"); if (n) window.scrollTo({ top: n.getBoundingClientRect().top + window.scrollY - 6, behavior: "smooth" }); }
   else if (t.dataset.sview) { S.showView = t.dataset.sview; try { localStorage.setItem("pitlog.showView", S.showView); } catch (_) {} renderShows(); window.scrollTo(0, 0); }
   else if (t.dataset.year) { S.year = t.dataset.year; renderTab(); }
   else if (t.dataset.caly) { S.cal.y = Number(t.dataset.caly); renderCal(); }
@@ -1289,6 +1292,63 @@ function openSheetFrom(sh){
   MATCH.dateTouched = true; renderSheet();
 }
 const ticketLink = url => url ? `<a class="chip tix" href="${esc(url)}" target="_blank" rel="noopener">Tickets ›</a>` : "";
+
+/* ---------- Home: a quick recap of every tab (tap the Pit Log logo) ---------- */
+function renderHome(){
+  if (!S.loaded) { $("#view").innerHTML = `<div class="home">${statusBlock()}</div>`; return; }
+  const all = sorted(), past = all.filter(s => !isUpcoming(s)), up = all.filter(s => isUpcoming(s) || s.date === todayISO);
+  const yr = String(parse(todayISO).y), thisYear = past.filter(s => (s.date || "").startsWith(yr));
+  const days = s => Math.round((parse(s.date).dt - parse(todayISO).dt) / 864e5);
+  const nx = up[0], last = past[past.length - 1];
+  const skulls = r => r ? `<span class="skulls">${[1,2,3,4,5].map(i => SKULLV(r, i)).join("")}</span>` : "";
+  const card = (tab, title, body, cta) => `<button type="button" class="hcard" data-gotab="${tab}"><div class="hct"><h3>${title}</h3><span class="hgo">${cta} ›</span></div>${body}</button>`;
+  const big = (n, l) => `<div class="hnum"><b class="num">${n}</b><span>${l}</span></div>`;
+  // Shows
+  const shows = card("shows", "Shows",
+    (nx ? `<div class="hnext"><div class="hcd num">${days(nx) === 0 ? "!" : days(nx)}</div><div><div class="lbl">${days(nx) === 0 ? "Tonight" : days(nx) === 1 ? "Tomorrow" : "Days to next show"}</div><div class="hh">${esc(headline(nx))}</div><div class="ro">${esc([nx.venue, nx.city].filter(Boolean).join(" · "))}</div></div></div>` : `<div class="ro">Nothing on the calendar. Discover has what's coming.</div>`) +
+    `<div class="hrow">${big(up.length, "coming up")}${big(thisYear.length, "seen in " + yr)}${big(past.length, "all time")}</div>` +
+    (last ? `<div class="hlast"><span class="lbl">Last show</span> <b>${esc(headline(last))}</b> <span class="ro">${esc(fmtDate(last.date))}</span> ${skulls(Number(last.rating) || 0)}</div>` : ""), "All shows");
+  // Discover (filled in after the catalog loads)
+  const disc = card("disc", "Discover", `<div id="hdisc"><div class="ro">Checking new tour dates…</div></div>`, "Find shows");
+  // Stats (this year, falling back to all time)
+  const base = thisYear.length ? thisYear : past, lbl = thisYear.length ? yr : "all time";
+  const bands = counts(base.flatMap(lineup)), venues = counts(base.map(s => s.venue || "")).filter(v => v.name);
+  const rated = base.filter(s => Number(s.rating) > 0), avg = rated.length ? (rated.reduce((a, s) => a + Number(s.rating), 0) / rated.length).toFixed(1) : "–";
+  const stats = card("stats", "Stats",
+    `<div class="hrow">${big(bands.length, "bands · " + lbl)}${big(venues.length, "venues")}${big(avg, "avg skulls")}</div>` +
+    (bands[0] ? `<div class="ro">Most seen: <b class="bone">${esc(bands[0].name)}</b>${bands[0].n > 1 ? ` (${bands[0].n}×)` : ""}${venues[0] ? ` · Home turf: <b class="bone">${esc(venues[0].name)}</b>` : ""}</div>` : `<div class="ro">Log a show to start the numbers.</div>`), "All stats");
+  // Vault
+  const media = []; for (const sh of [...past].reverse()) { if (sh.poster) media.push(pid(sh.poster)); for (const m of [...items(sh, "photos"), ...items(sh, "merch")]) if (m.type !== "video") media.push(m.url || m.id); }
+  const vcount = past.reduce((n, sh) => n + (sh.poster ? 1 : 0) + items(sh, "photos").length + items(sh, "merch").length, 0);
+  const vault = card("vault", "Vault",
+    (media.length ? `<div class="hthumbs">${media.slice(0, 4).map(u => `<img src="${esc(src(u))}" alt="" loading="lazy" onerror="this.remove()">`).join("")}</div>` : "") +
+    `<div class="ro">${vcount ? `${vcount} poster${vcount === 1 ? "" : "s"}, photos and merch saved` : "No photos yet. Add posters, photos and merch to any show."}</div>`, "Open vault");
+  // Crew
+  const crew = friendList(), pending = REQ.in.filter(r => r.status === "pending").length + crew.filter(f => f.famState === "pending" && f.famBy && f.famBy !== ME.uid).length + tagInbox().length;
+  const together = up.map(s => ({ s, fr: togetherWith(s) })).filter(x => x.fr.length).slice(0, 2);
+  const recent = crew.flatMap(f => (f.shows || []).filter(sh => !isUpcoming(sh) && days(sh) >= -30).map(sh => ({ sh, f }))).sort((a, b) => b.sh.date.localeCompare(a.sh.date)).slice(0, 3);
+  const crewCard = card("crew", "Crew",
+    (pending ? `<div class="hpend"><b>${pending}</b> waiting on you: requests, invites or tags</div>` : "") +
+    `<div class="hrow">${big(crew.length, "in your crew")}${big(up.filter(s => togetherWith(s).length).length, "shows together")}</div>` +
+    together.map(x => `<div class="ro">With ${x.fr.map(f => "@" + esc(f.handle)).join(", ")} at <b class="bone">${esc(headline(x.s))}</b>, ${esc(fmtDate(x.s.date))}</div>`).join("") +
+    (recent.length ? `<div class="lbl" style="margin-top:6px">Lately</div>` + recent.map(x => `<div class="ro">@${esc(x.f.handle)} saw <b class="bone">${esc(headline(x.sh))}</b></div>`).join("") : (crew.length ? "" : `<div class="ro">Add friends by username to see their shows.</div>`)), "Open crew");
+  const hi = new Date().getHours();
+  const hello = hi < 12 ? "Morning" : hi < 18 ? "Afternoon" : "Evening";
+  $("#view").innerHTML = `<div class="home"><p class="kick">${hello}, ${esc((PROFILE.name || PROFILE.handle || "").split(" ")[0])}</p><h2 class="hh2">Your recap</h2>
+    <div class="hgrid">${shows}${disc}${stats}${vault}${crewCard}</div></div>`;
+  fillHomeDiscover();
+}
+async function fillHomeDiscover(){
+  await loadDiscover();
+  const box = $("#hdisc"); if (!box || S.tab !== "home") return;
+  if (!DISC.months || !DISC.months.length) { box.innerHTML = `<div class="ro">Tour dates load every morning.</div>`; return; }
+  const keep = S.disc; S.disc = { ...keep, mode: "foryou", q: "", st: "", g: "", minDates: 1, sameTour: false, showHidden: false, sort: "soon" };
+  let res; try { res = buildGroups(); } finally { S.disc = keep; }
+  const list = res.shown, bk = list.filter(g => g.bk), fresh = list.filter(g => g.isNew), pv = list.filter(g => g.pv.length);
+  const nums = `<div class="hrow">${[[list.length, "tours for you"], [bk.length, "bucket list"], [fresh.length, "just announced"]].map(([n, l]) => `<div class="hnum"><b class="num">${n}</b><span>${l}</span></div>`).join("")}</div>`;
+  const top = [...bk, ...fresh, ...pv, ...list].filter((g, i, a) => a.indexOf(g) === i).slice(0, 3);
+  box.innerHTML = nums + (top.length ? top.map(g => `<div class="ro"><b class="bone">${esc(headline(g.show))}</b> · ${esc(rangeText(g))}${g.bk ? ` <span class="chip bkc">Bucket list</span>` : g.isNew ? ` <span class="chip up">New</span>` : g.pv.length ? ` <span class="chip pvc">Your venue</span>` : ""}</div>`).join("") : `<div class="ro">Nothing new for your bands yet. Add some to your bucket list.</div>`);
+}
 
 /* ---------- Discover: upcoming tours from the daily catalog ----------
    Dates are grouped into one card per tour (by headliner; co-headliners in either order count as one).

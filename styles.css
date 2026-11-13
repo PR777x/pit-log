@@ -489,3 +489,42 @@ a.btn{text-decoration:none;display:inline-flex;align-items:center;justify-conten
 .lfaq p{color:#cfc4b8;font-size:16px;line-height:1.55;margin:10px 0 0}
 .landing #join{margin:40px auto 0;padding:34px 20px 50px;max-width:420px;border-top:2px solid var(--blood);scroll-margin-top:10px}
 .join-h{font-size:clamp(40px,10vw,54px)}
+
+/* ---------- Brand: emblem + wordmark are images ---------- */
+h1.wm{line-height:0;margin:0;text-shadow:none;font-size:0}
+h1.wm img{height:clamp(52px,13vw,80px);width:auto;display:block}
+.brandbtn{display:flex;align-items:center;gap:10px;background:none;border:0;padding:0;cursor:pointer;color:inherit;border-radius:8px}
+.brandbtn:hover img{filter:drop-shadow(0 0 14px rgba(224,49,58,.45))}
+h1.wm .em-app{height:clamp(50px,13vw,64px);flex:none;filter:drop-shadow(0 4px 14px rgba(181,18,27,.4))}
+.em-boot{width:170px;height:170px;margin:0 auto -4px;filter:drop-shadow(0 10px 30px rgba(181,18,27,.45))}
+#boot h1.wm img{height:92px;margin:0 auto}
+.lbrand{display:flex;align-items:center;gap:8px}
+.lbrand img{height:40px;width:auto}
+.lbrand .lwm{height:36px}
+.em-hero{width:clamp(170px,46vw,240px);height:auto;display:block;margin:0 0 14px -6px;filter:drop-shadow(0 12px 40px rgba(181,18,27,.5))}
+.em-join{width:130px;height:130px;margin:0 auto -6px;filter:drop-shadow(0 8px 26px rgba(181,18,27,.45))}
+.wm-join{height:66px;width:auto;margin:0 auto}
+
+/* ---------- Home recap ---------- */
+.home{padding-top:6px}
+.hh2{font-family:var(--f-display);font-weight:400;font-size:clamp(40px,10vw,56px);line-height:1;margin:0 0 14px;color:var(--bone)}
+.hgrid{display:grid;gap:12px}
+@media(min-width:760px){.hgrid{grid-template-columns:1fr 1fr}.hgrid .hcard:first-child{grid-column:1/-1}}
+.hcard{display:grid;gap:10px;text-align:left;background:var(--crypt);border:1px solid var(--iron);border-left:3px solid var(--blood);padding:14px;color:inherit;cursor:pointer;font:inherit;width:100%}
+.hcard:hover{border-color:var(--blood-hi)}
+.hct{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.hct h3{font-family:var(--f-display);font-weight:400;font-size:30px;line-height:1;margin:0;color:var(--bone)}
+.hgo{font-family:var(--f-label);font-weight:700;text-transform:uppercase;letter-spacing:.12em;font-size:12px;color:var(--blood-hi)}
+.hnext{display:flex;gap:14px;align-items:center;background:linear-gradient(90deg,rgba(181,18,27,.18),transparent);border-left:3px solid var(--blood-hi);padding:10px 12px}
+.hcd{font-family:var(--f-display);font-size:52px;line-height:.9;color:var(--blood-hi);min-width:44px;text-align:center}
+.hh{font-family:var(--f-label);font-weight:700;font-size:20px;color:var(--bone);line-height:1.15}
+.hrow{display:flex;gap:8px;flex-wrap:wrap}
+.hnum{flex:1 1 90px;background:var(--void);border:1px solid var(--iron);padding:8px 10px;display:grid}
+.hnum b{font-family:var(--f-display);font-weight:400;font-size:34px;line-height:1;color:var(--bone)}
+.hnum span{font-family:var(--f-label);text-transform:uppercase;letter-spacing:.1em;font-size:11px;color:var(--ash)}
+.hlast{display:flex;gap:6px;align-items:center;flex-wrap:wrap;color:var(--bone);font-size:14px}
+.hthumbs{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.hthumbs img{width:100%;aspect-ratio:1;object-fit:cover;border:1px solid var(--iron);display:block}
+.hpend{background:rgba(181,18,27,.15);border:1px solid var(--blood);padding:8px 10px;color:var(--bone)}
+.hpend b{color:var(--blood-hi)}
+b.bone{color:var(--bone)}

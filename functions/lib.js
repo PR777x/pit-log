@@ -50,7 +50,7 @@ function layout({ title, intro, body = "", button, footer }){
 <body bgcolor="#0e0b0c" style="margin:0;padding:0;background:#0e0b0c;font-family:Arial,Helvetica,sans-serif;color:#ece4d4">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="#0e0b0c" style="background:#0e0b0c;background-color:#0e0b0c"><tr><td align="center" bgcolor="#0e0b0c" style="padding:24px 12px;background:#0e0b0c">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="#171213" style="max-width:520px;background:#171213;background-color:#171213;border:1px solid #3a2f30">
-<tr><td style="padding:18px 22px;border-bottom:2px solid #c8141e"><span style="font-family:Georgia,serif;font-size:26px;color:#ece4d4">Pit <span style="color:#e0313a">Log</span></span></td></tr>
+<tr><td style="padding:18px 22px;border-bottom:2px solid #c8141e"><a href="${SITE}" style="text-decoration:none"><img src="${SITE}/brand/email-header.png" width="256" height="96" alt="Pit Log" style="display:block;border:0;width:256px;height:96px;font-family:Georgia,serif;font-size:26px;color:#e0313a"></a></td></tr>
 <tr><td style="padding:22px">
 <h1 style="margin:0 0 10px;font-family:Georgia,serif;font-weight:normal;font-size:24px;line-height:1.2;color:#ece4d4">${esc(title)}</h1>
 ${intro ? `<p style="margin:0 0 16px;font-size:15px;line-height:1.5;color:#c9bfb3">${intro}</p>` : ""}
