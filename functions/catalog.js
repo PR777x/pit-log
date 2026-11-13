@@ -120,4 +120,17 @@ function plan({ shows, index, recent, today }){
   return { writes, deletes, nextIndex, nextRecent, added: writes.filter(w => w.isAdd).length, announced: writes.filter(w => w.isNew).length, backfill };
 }
 
-module.exports = { fromTM, fingerprint, mergeShows, windows, fetchAll, plan, normBand, tourWords, STATES, GENRES, RECENT_DAYS };
+// Upcoming shows split into one small document per month, for the app's Discover page
+// (a few reads per visit instead of one per show).
+function monthShards(shows, nextIndex, today){
+  const by = {};
+  for (const s of shows) {
+    if (s.date < today || s.status === "cancelled") continue;
+    const m = s.date.slice(0, 7), ix = nextIndex[s.id] || {};
+    (by[m] = by[m] || []).push({ i: s.id, d: s.date, h: s.time || "", l: s.lineup, c: s.coHead ? 1 : 0, v: s.venue, y: s.city, t: s.tour, u: s.url, g: s.genre || "", s: s.status === "onsale" ? "" : s.status, f: ix.f || "" });
+  }
+  for (const m of Object.keys(by)) by[m].sort((a, b) => a.d.localeCompare(b.d) || a.h.localeCompare(b.h) || a.v.localeCompare(b.v));
+  return by;
+}
+
+module.exports = { monthShards, fromTM, fingerprint, mergeShows, windows, fetchAll, plan, normBand, tourWords, STATES, GENRES, RECENT_DAYS };

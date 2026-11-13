@@ -28,6 +28,7 @@ listings in PA, NJ, DE and NY for the next 15 months from the Ticketmaster Disco
 - Each show is stored once in `catalog/{id}` (parking, VIP and presale duplicates are merged or skipped).
   Unchanged shows aren't rewritten; shows that vanish before their date are removed; past ones are kept ~a year.
 - `catalogMeta/recent` holds the last two weeks of new announcements (used for "Just announced").
+- `catalogMonths/{YYYY-MM}` holds each month of upcoming shows for the Discover tab (list in `catalogMeta/months`).
 - The app uses it when adding a show (matching shows), in band search, and in Search → Bands → Just announced.
   The Sunday recap lists new announcements for bands each person has logged.
 - Needs a free Ticketmaster key (developer.ticketmaster.com → Consumer Key) saved as the GitHub

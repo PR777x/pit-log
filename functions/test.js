@@ -213,6 +213,10 @@ const sentTo = who => emails.filter(e => e.to[0] === who + "@example.com");
   const goj = cat().find(c => c.bandKeys.includes("gojira"));
   assert.strictEqual(goj.lineup.length, 3); assert.strictEqual(goj.firstSeen, ""); assert.strictEqual(goj.key, undefined);
   assert.strictEqual(JSON.parse(store.get("catalogMeta/recent").data).length, 0);
+  // Discover month shards
+  const ml = store.get("catalogMeta/months").list; assert.ok(ml.length >= 1);
+  const allUp = ml.flatMap(x => JSON.parse(store.get(`catalogMonths/${x.m}`).data));
+  assert.strictEqual(allUp.length, 3); assert.ok(allUp.every(x => x.d >= today && x.u && x.l.length));
   // second day, nothing changed: no writes
   let c2 = await F.runCatalog({ apiKey: "k", fetchImpl: tmFetch, pause: nop, now: new Date(Date.now() + 864e5) });
   assert.strictEqual(c2.added + c2.updated + c2.removed, 0, "unchanged shows aren't rewritten");

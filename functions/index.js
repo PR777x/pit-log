@@ -288,6 +288,15 @@ async function runCatalog({ apiKey, now = new Date(), fetchImpl, pause } = {}){
     await b.commit();
   }
   await db.doc("catalogMeta/index").set({ data: JSON.stringify(p.nextIndex), count: Object.keys(p.nextIndex).length, updated: today });
+  // Discover page: one doc per month of upcoming shows, plus the list of months.
+  const shards = C.monthShards(shows, p.nextIndex, today), months = Object.keys(shards).sort();
+  const oldMonths = await db.doc("catalogMeta/months").get();
+  const prev = (oldMonths.exists && oldMonths.data().list || []).map(x => x.m);
+  const mb = db.batch();
+  for (const m of months) mb.set(db.doc(`catalogMonths/${m}`), { data: JSON.stringify(shards[m]), count: shards[m].length, updated: today });
+  for (const m of prev) if (!shards[m]) mb.delete(db.doc(`catalogMonths/${m}`));
+  mb.set(db.doc("catalogMeta/months"), { list: months.map(m => ({ m, n: shards[m].length })), updated: today });
+  await mb.commit();
   await db.doc("catalogMeta/recent").set({ data: JSON.stringify(p.nextRecent), count: p.nextRecent.length, updated: today });
   logger.info(`show catalog: ${shows.length} listings from ${calls} calls; ${p.added} added${p.backfill ? " (first load, not counted as announcements)" : ""}, ${p.writes.length - p.added} updated, ${p.deletes.length} removed`);
   return { added: p.added, announced: p.announced, updated: p.writes.length - p.added, removed: p.deletes.length, total: Object.keys(p.nextIndex).length };

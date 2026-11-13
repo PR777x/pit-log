@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=31";
+import { VENUES } from "./venues.js?v=32";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -429,8 +429,9 @@ function renderCal(){
 function renderTab(){
   updateCrewBadge();
   if (S.tab === "cal") { S.tab = "shows"; S.showView = "cal"; }
-  for (const t of ["shows","vault","stats","crew"]) $("#tab-"+t).setAttribute("aria-selected", S.tab===t);
-  if (S.tab === "search") renderSearch(); else if (S.tab === "me") renderMe(); else if (S.tab === "crew") renderCrew(); else if (S.tab === "shows") renderShows(); else if (S.tab === "cal") renderCal(); else if (S.tab === "vault") renderVault(); else renderStats();
+  for (const t of ["shows","disc","vault","stats","crew"]) $("#tab-"+t).setAttribute("aria-selected", S.tab===t);
+  if (S.tab === "disc") renderDiscover();
+  else if (S.tab === "search") renderSearch(); else if (S.tab === "me") renderMe(); else if (S.tab === "crew") renderCrew(); else if (S.tab === "shows") renderShows(); else if (S.tab === "cal") renderCal(); else if (S.tab === "vault") renderVault(); else renderStats();
 }
 function render(){ renderNext(); renderTab(); if (S.open) renderSheet(); }
 
@@ -758,6 +759,7 @@ document.addEventListener("click", e => {
   }
   if (t.id === "tab-shows") { S.tab = "shows"; renderTab(); }
   else if (t.id === "tab-vault") { S.tab = "vault"; renderTab(); }
+  else if (t.id === "tab-disc") { S.tab = "disc"; renderTab(); }
   else if (t.dataset.sview) { S.showView = t.dataset.sview; try { localStorage.setItem("pitlog.showView", S.showView); } catch (_) {} renderShows(); window.scrollTo(0, 0); }
   else if (t.dataset.year) { S.year = t.dataset.year; renderTab(); }
   else if (t.dataset.caly) { S.cal.y = Number(t.dataset.caly); renderCal(); }
@@ -1287,6 +1289,91 @@ function openSheetFrom(sh){
   MATCH.dateTouched = true; renderSheet();
 }
 const ticketLink = url => url ? `<a class="chip tix" href="${esc(url)}" target="_blank" rel="noopener">Tickets ›</a>` : "";
+
+/* ---------- Discover: upcoming shows from the daily catalog, with one-tap add ---------- */
+const DISC = { months: null, data: new Map(), loading: false, shown: 3, list: [] };
+S.disc = { mode: "foryou", q: "", st: "", g: "" };
+try { const m = localStorage.getItem("pitlog.discMode"); if (m === "all" || m === "foryou") S.disc.mode = m; } catch (_) {}
+async function loadDiscover(){
+  if (DISC.loading) return; DISC.loading = true;
+  try {
+    if (!DISC.months) { const d = await getDoc(doc(fdb, "catalogMeta", "months")); DISC.months = d.exists() ? (d.data().list || []).filter(x => x.m >= todayISO.slice(0, 7)) : []; }
+    const want = DISC.months.slice(0, DISC.shown).filter(x => !DISC.data.has(x.m));
+    await Promise.all(want.map(async x => { try { const d = await getDoc(doc(fdb, "catalogMonths", x.m)); DISC.data.set(x.m, d.exists() ? JSON.parse(d.data().data || "[]") : []); } catch (e) { console.warn(e); DISC.data.set(x.m, []); } }));
+  } finally { DISC.loading = false; }
+}
+function discReasons(){
+  const bucket = new Set(bucketOf(PROFILE).map(normBand)), mine = new Set(S.shows.filter(s => !isUpcoming(s)).flatMap(lineup).map(normBand));
+  const crewSeen = new Map(), crewUp = [];
+  for (const f of friendList()) for (const sh of (f.shows || [])) { for (const b of lineup(sh)) if (!crewSeen.has(normBand(b))) crewSeen.set(normBand(b), f.handle); if (isUpcoming(sh)) crewUp.push({ sh, handle: f.handle }); }
+  return { bucket, mine, crewSeen, crewUp };
+}
+function renderDiscover(){
+  const d = S.disc;
+  $("#view").innerHTML = `<div class="disc">
+    <div class="seg vswitch" role="group" aria-label="Which shows"><button data-dmode="foryou" aria-pressed="${d.mode === "foryou"}">For you</button><button data-dmode="all" aria-pressed="${d.mode === "all"}">All upcoming</button></div>
+    <input class="search" id="dq" value="${esc(d.q)}" placeholder="Band, venue or city" autocapitalize="none" spellcheck="false" aria-label="Filter shows">
+    <div class="dfil">
+      <div class="tagrow" role="group" aria-label="State">${["", "PA", "NJ", "DE", "NY"].map(x => `<button class="tagbtn${d.st === x ? " on" : ""}" data-dst="${x}" aria-pressed="${d.st === x}">${x || "All states"}</button>`).join("")}</div>
+      <select id="dg" aria-label="Genre"><option value="">All genres</option>${["Metal", "Rock", "Alternative", "Punk"].map(g => `<option ${d.g === g ? "selected" : ""}>${g}</option>`).join("")}</select>
+    </div>
+    <div id="dres"><div class="ro">Loading shows…</div></div></div>`;
+  loadDiscover().then(drawDiscover);
+}
+function drawDiscover(){
+  const box = $("#dres"); if (!box || S.tab !== "disc") return;
+  if (!DISC.months || !DISC.months.length) { box.innerHTML = `<div class="empty"><h3>No shows yet</h3><div>Upcoming shows from Ticketmaster are loaded every morning. Check back after the next update.</div></div>`; return; }
+  const d = S.disc, q = d.q.trim().toLowerCase(), R = discReasons();
+  const all = DISC.months.slice(0, DISC.shown).flatMap(x => DISC.data.get(x.m) || []);
+  const rows = [];
+  for (const r of all) {
+    if (r.d < todayISO) continue;
+    if (d.st && !(r.y || "").endsWith(", " + d.st)) continue;
+    if (d.g && r.g !== d.g) continue;
+    if (q && ![...r.l, r.v, r.y, r.t].join(" ").toLowerCase().includes(q)) continue;
+    const keys = r.l.map(normBand);
+    const tags = [];
+    const going = R.crewUp.filter(x => x.sh.date === r.d && lineup(x.sh).some(b => keys.includes(normBand(b)))).map(x => x.handle);
+    if (keys.some(k => R.bucket.has(k))) tags.push(["bk", "Bucket list"]);
+    if (going.length) tags.push(["tog", [...new Set(going)].map(h => "@" + h).join(", ") + " going"]);
+    if (keys.some(k => R.mine.has(k))) tags.push(["", "You've seen them"]);
+    else { const h = keys.map(k => R.crewSeen.get(k)).find(Boolean); if (h) tags.push(["", "@" + h + " has seen them"]); }
+    if (r.f && r.f >= addDaysIso(todayISO, -7)) tags.push(["new", "Just announced"]);
+    const sh = catShow({ id: r.i, date: r.d, lineup: r.l, coHead: !!r.c, venue: r.v, city: r.y, tour: r.t, url: r.u, time: r.h, status: r.s });
+    const mine = haveShow(sh);
+    if (d.mode === "foryou" && !tags.some(t => t[0] !== "new") && !mine) continue;
+    rows.push({ sh, tags, mine, g: r.g, s: r.s });
+  }
+  const more = DISC.shown < DISC.months.length;
+  const moreBtn = more ? `<button class="btn ghost dmore" data-dmore>Show ${MONTHS[Number(DISC.months[DISC.shown].m.slice(5)) - 1]} ${DISC.months[DISC.shown].m.slice(0, 4)} and later</button>` : "";
+  if (!rows.length) {
+    box.innerHTML = `<div class="empty"><h3>Nothing here${d.q || d.st || d.g ? " with those filters" : ""}</h3><div>${d.mode === "foryou" ? "For you shows bands on your bucket list and bands you or your crew have seen. Try All upcoming, or add bands to your bucket list on your profile." : "Try another filter."}</div></div>${moreBtn}`;
+    return;
+  }
+  DISC.list = rows.map(x => x.sh);
+  let h = "", cur = "";
+  rows.slice(0, 300).forEach((x, i) => {
+    const sh = x.sh, p = parse(sh.date), m = sh.date.slice(0, 7), sup = support(sh);
+    if (m !== cur) { cur = m; h += `<h3 class="dmonth">${MONTHS[p.m - 1]} ${p.y}</h3>`; }
+    h += `<div class="bandhit dshow"><button class="prow tap prow-show" ${x.mine ? "" : `data-dadd="${i}"`} aria-label="${x.mine ? "" : "Add "}${esc(headline(sh))}"><span class="pdate"><b class="num">${p.d}</b>${DAYS[p.dt.getDay()]}${sh.time ? " " + esc(fmtTime(sh.time)) : ""}</span>
+      <div class="pt"><div class="nm" style="font-size:20px">${esc(headline(sh))}</div>${sup.length ? `<div class="ro">w/ ${esc(sup.join(" · "))}</div>` : ""}
+      <div class="ro">${esc([sh.venue, sh.city].filter(Boolean).join(" — "))}${sh.tour ? ` · ${esc(sh.tour)}` : ""}</div></div></button>
+      <div class="tagrow who">${x.tags.map(([c, t]) => `<span class="chip ${c === "bk" ? "bkc" : c === "tog" ? "tog" : c === "new" ? "up" : ""}">${esc(t)}</span>`).join("")}${x.s ? `<span class="chip">${esc(x.s === "rescheduled" ? "Rescheduled" : x.s === "postponed" ? "Postponed" : x.s === "offsale" ? "Off sale" : x.s)}</span>` : ""}
+        ${x.mine ? `<span class="chip tog">In your log</span>` : `${ticketLink(sh.url)}<button class="chip catadd" data-dadd="${i}">+ Add to my shows</button>`}</div></div>`;
+  });
+  box.innerHTML = `<div class="ro dcount">${rows.length} show${rows.length === 1 ? "" : "s"}${rows.length > 300 ? " (showing the first 300; filter to narrow)" : ""}</div>${h}${moreBtn}<div class="ro" style="margin-top:14px">Listings from Ticketmaster, updated every morning. Smaller venues that sell elsewhere won't appear.</div>`;
+}
+const addDaysIso = (iso, n) => { const p = parse(iso), d = new Date(Date.UTC(p.y, p.m - 1, p.d + n)); return d.toISOString().slice(0, 10); };
+const fmtTime = t => { const [h, m] = t.split(":").map(Number); if (isNaN(h)) return ""; return `${(h % 12) || 12}${m ? ":" + String(m).padStart(2, "0") : ""}${h < 12 ? "a" : "p"}`; };
+document.addEventListener("click", e => {
+  const t = e.target.closest && e.target.closest("[data-dmode],[data-dst],[data-dmore],[data-dadd]"); if (!t || S.tab !== "disc") return;
+  if (t.dataset.dmode) { S.disc.mode = t.dataset.dmode; try { localStorage.setItem("pitlog.discMode", S.disc.mode); } catch (_) {} document.querySelectorAll("[data-dmode]").forEach(b => b.setAttribute("aria-pressed", b === t)); drawDiscover(); }
+  else if (t.dataset.dst !== undefined) { S.disc.st = t.dataset.dst; document.querySelectorAll("[data-dst]").forEach(b => { b.classList.toggle("on", b === t); b.setAttribute("aria-pressed", b === t); }); drawDiscover(); }
+  else if (t.hasAttribute("data-dmore")) { DISC.shown += 3; t.disabled = true; t.textContent = "Loading…"; loadDiscover().then(drawDiscover); }
+  else if (t.dataset.dadd !== undefined) { const sh = DISC.list[Number(t.dataset.dadd)]; if (sh) openSheetFrom(sh); }
+});
+document.addEventListener("input", e => { if (e.target.id === "dq") { S.disc.q = e.target.value; clearTimeout(DISC.t); DISC.t = setTimeout(drawDiscover, 150); } });
+document.addEventListener("change", e => { if (e.target.id === "dg") { S.disc.g = e.target.value; drawDiscover(); } });
 
 /* ---------- Logged-show matches for a new show ----------
    As you type a band or tour name, look through shows already logged (yours, your crew's, public ones)

@@ -388,6 +388,14 @@ a.btn{text-decoration:none;display:inline-flex;align-items:center;justify-conten
 .chip.bk.seen{color:var(--ash)}.chip.bk.going{border-color:var(--moss)}
 .bkx{background:none;border:0;color:var(--ash);font-size:18px;line-height:1;padding:2px 6px;cursor:pointer;min-width:28px;min-height:28px}
 .bkx:hover{color:var(--blood-hi)}
+.disc{display:grid;gap:10px}
+.dfil{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:space-between}
+.dfil select{background:var(--void);border:1px solid var(--iron);color:var(--bone);padding:8px 10px;font:inherit}
+.tagbtn.on{background:var(--blood);border-color:var(--blood);color:var(--bone)}
+.dmonth{font-family:var(--f-label);font-weight:700;text-transform:uppercase;letter-spacing:.16em;font-size:13px;color:var(--blood-hi);margin:18px 0 4px;padding-bottom:6px;border-bottom:1px solid var(--iron);position:sticky;top:58px;background:var(--void);z-index:5}
+.dcount{margin-top:2px}
+.dmore{width:100%;margin-top:12px}
+.chip.bkc{color:var(--bone);border-color:var(--rust);background:rgba(201,118,47,.15)}
 .matchbox{display:grid;gap:6px;margin:2px 0 12px;padding:10px;border:1px solid var(--blood);background:linear-gradient(180deg,rgba(181,18,27,.14),rgba(181,18,27,0) 70%),var(--crypt)}
 .mcard{display:flex;gap:10px;align-items:center;justify-content:space-between;padding:8px 10px;background:var(--void);border:1px solid var(--iron)}
 .mcard .mm-b{min-width:0;display:grid;gap:1px}
