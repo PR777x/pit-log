@@ -41,9 +41,14 @@ const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": 
 
 // One email layout for everything: dark, plain, works in Gmail and Apple Mail.
 function layout({ title, intro, body = "", button, footer }){
-  return `<!doctype html><html><body style="margin:0;background:#0e0b0c;padding:24px 12px;font-family:Arial,Helvetica,sans-serif;color:#ece4d4">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#171213;border:1px solid #3a2f30">
+  // The dark colors live on table bgcolor/background (not just <body>, which Gmail and Outlook strip),
+  // and color-scheme tells Apple Mail / Outlook / Gmail this email is already dark, so don't recolor it.
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark"><meta name="supported-color-schemes" content="dark">
+<style>:root{color-scheme:dark;supported-color-schemes:dark}body{margin:0;padding:0;background:#0e0b0c}</style></head>
+<body bgcolor="#0e0b0c" style="margin:0;padding:0;background:#0e0b0c;font-family:Arial,Helvetica,sans-serif;color:#ece4d4">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="#0e0b0c" style="background:#0e0b0c;background-color:#0e0b0c"><tr><td align="center" bgcolor="#0e0b0c" style="padding:24px 12px;background:#0e0b0c">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="#171213" style="max-width:520px;background:#171213;background-color:#171213;border:1px solid #3a2f30">
 <tr><td style="padding:18px 22px;border-bottom:2px solid #c8141e"><span style="font-family:Georgia,serif;font-size:26px;color:#ece4d4">Pit <span style="color:#e0313a">Log</span></span></td></tr>
 <tr><td style="padding:22px">
 <h1 style="margin:0 0 10px;font-family:Georgia,serif;font-weight:normal;font-size:24px;line-height:1.2;color:#ece4d4">${esc(title)}</h1>
@@ -54,7 +59,7 @@ ${button ? `<p style="margin:22px 0 4px"><a href="${esc(button.url)}" style="dis
 <tr><td style="padding:14px 22px;border-top:1px solid #3a2f30;font-size:12px;line-height:1.5;color:#8a7f78">${footer || ""}</td></tr>
 </table></td></tr></table></body></html>`;
 }
-const showCard = (s, note) => `<div style="border:1px solid #3a2f30;background:#0e0b0c;padding:10px 12px;margin:0 0 8px">
+const showCard = (s, note) => `<div style="border:1px solid #3a2f30;background:#0e0b0c;background-color:#0e0b0c;padding:10px 12px;margin:0 0 8px">
 <div style="font-size:16px;font-weight:bold;color:#ece4d4">${esc(showLine(s))}</div>
 <div style="font-size:13px;color:#a2958d;margin-top:2px">${esc(placeLine(s))}</div>${note ? `<div style="font-size:13px;color:#7f9a5a;margin-top:4px">${esc(note)}</div>` : ""}</div>`;
 
