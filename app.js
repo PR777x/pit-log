@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=23";
+import { VENUES } from "./venues.js?v=24";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -301,7 +301,8 @@ const PRIVACY = [
   ["publicShows", "Shows on my public profile", "Public lets people outside your crew see your shows (date, bands, venue) on your profile and in band search. The settings above decide which extra details come with them."],
 ];
 const SETTING_DEFAULTS = { ...Object.fromEntries(PRIVACY.map(([k]) => [k, "public"])),
-  defaultView: "list", defaultSort: "newest", crewDefault: "off", weekStart: "sun", currency: "$", distance: "mi" };
+  defaultView: "list", defaultSort: "newest", crewDefault: "off", weekStart: "sun", currency: "$", distance: "mi",
+  emailRequests: "on", emailTags: "on", emailDigest: "daily", emailReminders: "on" };
 const settingsOf = prof => ({ ...SETTING_DEFAULTS, ...((prof && prof.settings) || {}) });
 const MY = () => settingsOf(PROFILE);
 // Family sees what's "family" and up; the rest of the crew sees "crew" and up.
@@ -1624,6 +1625,11 @@ function settingsBlock(){
   return `<section class="sect settings"><h3 style="margin-bottom:6px">Settings</h3>
     ${grp("privacy", "Privacy", `<div class="ro" style="margin:4px 0 10px">Choose who sees each part of your log. Family only means people you've linked with Crew Family. Public covers your whole crew today, and anyone on Pit Log if public profiles are added later.</div>
       ${PRIVACY.map(([k, l, h]) => selectRow(k, l, h, LEVELS, set[k])).join("")}`)}
+    ${grp("notify", "Notifications", `<div class="ro" style="margin:4px 0 10px">Emails come from alerts@thepitlog.com and go to ${esc((ME && ME.email) || "the address you sign in with")}.</div>` + [
+      selectRow("emailRequests", "Crew and Family requests", "When someone asks to join your crew, accepts, or invites you to Crew Family.", [["on", "Email me"], ["off", "Off"]], set.emailRequests),
+      selectRow("emailTags", "Tags", "When someone tags you on a show.", [["on", "Email me"], ["off", "Off"]], set.emailTags),
+      selectRow("emailDigest", "Crew activity", "Shows your crew adds, and shows where it looks like you're going too. Sent as one email around 6 PM (weekly comes on Sundays).", [["daily", "Daily"], ["weekly", "Weekly"], ["off", "Off"]], set.emailDigest),
+      selectRow("emailReminders", "Show reminders", "A heads-up 7 days and 1 day before your shows.", [["on", "Email me"], ["off", "Off"]], set.emailReminders)].join(""))}
     ${grp("display", "Display", [
       selectRow("defaultView", "Shows opens to", "", [["list", "List"], ["cal", "Calendar"]], set.defaultView),
       selectRow("defaultSort", "Default sort", "", Object.entries(SORTS), set.defaultSort),

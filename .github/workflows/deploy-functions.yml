@@ -1,0 +1,52 @@
+name: Deploy email alerts
+
+# Deploys the Cloud Functions in /functions whenever they change on main.
+# Needs two repository secrets (Settings -> Secrets and variables -> Actions):
+#   FIREBASE_SERVICE_ACCOUNT  the JSON key of a Google Cloud service account for the pit-log project
+#   RESEND_API_KEY            the API key from resend.com
+on:
+  push:
+    branches: [main]
+    paths: ["functions/**", "firebase.json", ".github/workflows/deploy-functions.yml"]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the secrets are set up
+        id: gate
+        env:
+          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          RK: ${{ secrets.RESEND_API_KEY }}
+        run: |
+          if [ -z "$SA" ] || [ -z "$RK" ]; then echo "::notice::Skipping deploy: add the FIREBASE_SERVICE_ACCOUNT and RESEND_API_KEY repository secrets first."; echo "ok=false" >> "$GITHUB_OUTPUT"; else echo "ok=true" >> "$GITHUB_OUTPUT"; fi
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.ok == 'true'
+      - uses: actions/setup-node@v4
+        if: steps.gate.outputs.ok == 'true'
+        with:
+          node-version: 20
+      - name: Install function dependencies
+        if: steps.gate.outputs.ok == 'true'
+        working-directory: functions
+        run: npm install --no-audit --no-fund
+      - name: Offline tests
+        if: steps.gate.outputs.ok == 'true'
+        working-directory: functions
+        run: node test.js
+      - uses: google-github-actions/auth@v2
+        if: steps.gate.outputs.ok == 'true'
+        with:
+          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+      - name: Save the Resend key in Secret Manager
+        if: steps.gate.outputs.ok == 'true'
+        env:
+          RESEND: ${{ secrets.RESEND_API_KEY }}
+        run: |
+          printf '%s' "$RESEND" > "$RUNNER_TEMP/resend.txt"
+          npx -y firebase-tools@13 functions:secrets:set RESEND_API_KEY --data-file="$RUNNER_TEMP/resend.txt" --project pit-log --force --non-interactive
+          rm -f "$RUNNER_TEMP/resend.txt"
+      - name: Deploy functions
+        if: steps.gate.outputs.ok == 'true'
+        run: npx -y firebase-tools@13 deploy --only functions --project pit-log --force --non-interactive
