@@ -24,7 +24,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Pirata+One&family=Barlow+Condensed:wght@400;500;600;700&family=Barlow:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="styles.css?v=37">
+<link rel="stylesheet" href="styles.css?v=38">
 </head>
 <body>
 
@@ -57,8 +57,11 @@
       <div class="lstub"><b>03</b><h4>Share it</h4><p>Your crew sees it. Everyone else only if you want.</p></div>
       <div class="lstub"><b>04</b><h4>Find the next</h4><p>New dates for your bands, every morning.</p></div>
     </section>
-    <section class="lfeats" aria-label="What you can do">
-      <h2 class="lh2">What's in the pit</h2>
+    <section class="lfeats" aria-label="What you can do" aria-roledescription="carousel">
+      <div class="lfhead"><h2 class="lh2">What's in the pit</h2>
+        <div class="lfnav"><button type="button" class="lfa" data-lf="-1" aria-label="Previous feature">‹</button><span class="lfcount" id="lfCount" aria-live="polite">1 / 8</span><button type="button" class="lfa" data-lf="1" aria-label="Next feature">›</button></div></div>
+      <div class="lfdots" role="tablist" aria-label="Features"><button type="button" class="lfdot on" data-lfgo="0" role="tab" aria-selected="true">Your shows</button><button type="button" class="lfdot" data-lfgo="1" role="tab" aria-selected="false">The night</button><button type="button" class="lfdot" data-lfgo="2" role="tab" aria-selected="false">The Vault</button><button type="button" class="lfdot" data-lfgo="3" role="tab" aria-selected="false">Crew</button><button type="button" class="lfdot" data-lfgo="4" role="tab" aria-selected="false">Discover</button><button type="button" class="lfdot" data-lfgo="5" role="tab" aria-selected="false">Bucket list</button><button type="button" class="lfdot" data-lfgo="6" role="tab" aria-selected="false">Quick add</button><button type="button" class="lfdot" data-lfgo="7" role="tab" aria-selected="false">Stats</button></div>
+      <div class="lftrack" id="lfTrack" tabindex="0">
       <article class="feat">
         <div class="ftext"><span class="fnum">01</span><p class="kick">Your shows</p><h3>The setlist of your life</h3><p>Every gig you've hit, laid out like a stack of torn ticket stubs. Lineup, venue, tour, who you went with. Flip to the calendar to see your whole year of noise at a glance.</p></div>
         <div class="fshots"><figure class="phone "><img src="tour/shows.webp?v=1" alt="Shows list with ticket-stub cards" loading="lazy" width="600" height="1022"></figure><figure class="phone alt"><img src="tour/calendar.webp?v=1" alt="Calendar view of the year's shows" loading="lazy" width="600" height="1022"></figure></div>
@@ -91,6 +94,7 @@
         <div class="ftext"><span class="fnum">08</span><p class="kick">Stats</p><h3>Receipts for your obsession</h3><p>Shows attended, bands and venues, miles driven, what you spent on tickets and merch, your average rating, plus badges for the barricade regulars.</p></div>
         <div class="fshots"><figure class="phone "><img src="tour/stats.webp?v=1" alt="Stats tab" loading="lazy" width="600" height="1022"></figure><figure class="phone alt"><img src="tour/search.webp?v=1" alt="Band search across logs" loading="lazy" width="600" height="1022"></figure></div>
       </article>
+      </div>
     </section>
     <section class="lfaq" aria-label="Questions">
       <h2 class="lh2">Before you jump in</h2>
@@ -123,7 +127,7 @@
     </form>
     <p class="ro" id="signinMsg" role="alert"></p>
     <p class="ro">Your log is private. Friends you accept can see your shows.</p>
-    <p class="ro" style="opacity:.5">build 37</p>
+    <p class="ro" style="opacity:.5">build 38</p>
     <p class="ro" id="inapp" hidden>Opened inside another app? Use ⋮ → <b>Open in Chrome</b> (or Safari on iPhone) for sign-in to work.</p>
   </div>
 </section>
@@ -145,20 +149,25 @@
     <div class="brand">
       <h1 class="wm"><button type="button" class="brandbtn" id="homeBtn" aria-label="Pit Log home: your recap"><img class="em-app" src="brand/emblem-128.webp" alt="" width="60" height="60"><img src="brand/wordmark-180.webp" alt="Pit Log" width="376" height="180"></button></h1>
       <div class="brand-r">
-        <div class="year" id="yearLabel"></div>
         <button class="hbtn" id="searchBtn" aria-label="Search people and bands" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M15.5 15.5 21 21" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg></button>
         <button class="acct" id="acct" aria-label="Account" hidden></button>
       </div>
     </div>
+    <div class="year" id="yearLabel"></div>
     <div class="next" id="next" hidden></div>
   </header>
 
-  <nav class="tabs" role="tablist">
-    <button role="tab" id="tab-shows" aria-selected="true">Shows</button>
-    <button role="tab" id="tab-disc" aria-selected="false">Discover</button>
-    <button role="tab" id="tab-vault" aria-selected="false">Vault</button>
-    <button role="tab" id="tab-stats" aria-selected="false">Stats</button>
-    <button role="tab" id="tab-crew" aria-selected="false">Crew</button>
+  <nav class="tabs">
+    <button type="button" class="navhome" id="navHome" aria-label="Home: your recap"><img src="brand/emblem-128.webp" alt="" width="30" height="30"></button>
+    <button type="button" class="navarrow l" id="navL" aria-label="Scroll tabs left" hidden>‹</button>
+    <div class="tabscroll" id="tabScroll" role="tablist">
+      <button role="tab" id="tab-shows" aria-selected="true">Shows</button>
+      <button role="tab" id="tab-disc" aria-selected="false">Discover</button>
+      <button role="tab" id="tab-vault" aria-selected="false">Vault</button>
+      <button role="tab" id="tab-stats" aria-selected="false">Stats</button>
+      <button role="tab" id="tab-crew" aria-selected="false">Crew</button>
+    </div>
+    <button type="button" class="navarrow r" id="navR" aria-label="Scroll tabs right" hidden>›</button>
     <button class="add" id="addBtn" hidden>+ Add show</button>
   </nav>
 
@@ -171,6 +180,6 @@
 <div id="modalRoot"></div>
 <div id="toastRoot"></div>
 
-<script type="module" src="app.js?v=37"></script>
+<script type="module" src="app.js?v=38"></script>
 </body>
 </html>

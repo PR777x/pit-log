@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=37";
+import { VENUES } from "./venues.js?v=38";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -430,6 +430,10 @@ function renderTab(){
   updateCrewBadge();
   if (S.tab === "cal") { S.tab = "shows"; S.showView = "cal"; }
   for (const t of ["shows","disc","vault","stats","crew"]) $("#tab-"+t).setAttribute("aria-selected", S.tab===t);
+  $("#navHome")?.classList.toggle("on", S.tab === "home");
+  const cur = $("#tab-" + S.tab), sc = $("#tabScroll");
+  if (cur && sc) { const l = cur.offsetLeft - sc.offsetLeft, r = l + cur.offsetWidth; if (l < sc.scrollLeft || r > sc.scrollLeft + sc.clientWidth) sc.scrollTo({ left: l - 12, behavior: "smooth" }); }
+  navArrows();
   if (S.tab === "home") renderHome();
   else if (S.tab === "disc") renderDiscover();
   else if (S.tab === "search") renderSearch(); else if (S.tab === "me") renderMe(); else if (S.tab === "crew") renderCrew(); else if (S.tab === "shows") renderShows(); else if (S.tab === "cal") renderCal(); else if (S.tab === "vault") renderVault(); else renderStats();
@@ -761,7 +765,7 @@ document.addEventListener("click", e => {
   if (t.id === "tab-shows") { S.tab = "shows"; renderTab(); }
   else if (t.id === "tab-vault") { S.tab = "vault"; renderTab(); }
   else if (t.id === "tab-disc") { S.tab = "disc"; renderTab(); }
-  else if (t.id === "homeBtn") { S.tab = "home"; S.search.profile = null; renderTab(); window.scrollTo({ top: 0, behavior: "smooth" }); }
+  else if (t.id === "homeBtn" || t.id === "navHome") { S.tab = "home"; S.search.profile = null; renderTab(); window.scrollTo({ top: 0, behavior: "smooth" }); }
   else if (t.dataset.gotab) { S.tab = t.dataset.gotab; renderTab(); const n = document.querySelector("nav.tabs"); if (n) window.scrollTo({ top: n.getBoundingClientRect().top + window.scrollY - 6, behavior: "smooth" }); }
   else if (t.dataset.sview) { S.showView = t.dataset.sview; try { localStorage.setItem("pitlog.showView", S.showView); } catch (_) {} renderShows(); window.scrollTo(0, 0); }
   else if (t.dataset.year) { S.year = t.dataset.year; renderTab(); }
@@ -1292,6 +1296,42 @@ function openSheetFrom(sh){
   MATCH.dateTouched = true; renderSheet();
 }
 const ticketLink = url => url ? `<a class="chip tix" href="${esc(url)}" target="_blank" rel="noopener">Tickets ›</a>` : "";
+
+/* ---------- Tab bar: ‹ › arrows appear only when the tabs don't fit ---------- */
+function navArrows(){
+  const sc = $("#tabScroll"), L = $("#navL"), R = $("#navR"); if (!sc || !L || !R) return;
+  const over = sc.scrollWidth > sc.clientWidth + 2;
+  L.hidden = !over || sc.scrollLeft < 4;
+  R.hidden = !over || sc.scrollLeft + sc.clientWidth >= sc.scrollWidth - 4;
+  // a Crew badge scrolled out of view shows as a dot on the › arrow
+  const badge = $("#tab-crew .badge-n"), cr = $("#tab-crew");
+  R.classList.toggle("dot", !!badge && !R.hidden && cr.offsetLeft - sc.offsetLeft + cr.offsetWidth > sc.scrollLeft + sc.clientWidth);
+}
+$("#tabScroll")?.addEventListener("scroll", () => requestAnimationFrame(navArrows), { passive: true });
+window.addEventListener("resize", navArrows);
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(navArrows);
+$("#navL")?.addEventListener("click", () => { const sc = $("#tabScroll"); sc.scrollBy({ left: -Math.max(120, sc.clientWidth * .6), behavior: "smooth" }); });
+$("#navR")?.addEventListener("click", () => { const sc = $("#tabScroll"); sc.scrollBy({ left: Math.max(120, sc.clientWidth * .6), behavior: "smooth" }); });
+
+/* ---------- Landing: features as a swipeable carousel with ‹ › ---------- */
+(function lfCarousel(){
+  const tr = $("#lfTrack"); if (!tr) return;
+  const slides = [...tr.querySelectorAll(".feat")], dots = [...document.querySelectorAll("[data-lfgo]")], prev = document.querySelector('[data-lf="-1"]'), next = document.querySelector('[data-lf="1"]');
+  let idx = 0;
+  const go = i => { i = Math.max(0, Math.min(slides.length - 1, i)); tr.scrollTo({ left: slides[i].offsetLeft - tr.offsetLeft, behavior: "smooth" }); };
+  const sync = () => {
+    const i = Math.round(tr.scrollLeft / Math.max(1, tr.clientWidth)); if (i === idx && dots[i]?.classList.contains("on")) return; idx = i;
+    $("#lfCount").textContent = `${i + 1} / ${slides.length}`;
+    dots.forEach((d, k) => { d.classList.toggle("on", k === i); d.setAttribute("aria-selected", k === i); });
+    const d = dots[i], row = d && d.parentElement; if (row) row.scrollTo({ left: d.offsetLeft - row.offsetLeft - 20, behavior: "smooth" });
+    prev.disabled = i === 0; next.disabled = i === slides.length - 1;
+  };
+  tr.addEventListener("scroll", () => requestAnimationFrame(sync), { passive: true });
+  prev.addEventListener("click", () => go(idx - 1)); next.addEventListener("click", () => go(idx + 1));
+  dots.forEach(d => d.addEventListener("click", () => go(Number(d.dataset.lfgo))));
+  tr.addEventListener("keydown", e => { if (e.key === "ArrowRight") { e.preventDefault(); go(idx + 1); } if (e.key === "ArrowLeft") { e.preventDefault(); go(idx - 1); } });
+  prev.disabled = true;
+})();
 
 /* ---------- Home: a quick recap of every tab (tap the Pit Log logo) ---------- */
 function renderHome(){
@@ -2412,7 +2452,7 @@ function startApp(){
   UNSUBS.push(reqs("to", "in"), reqs("from", "out"));
 }
 function updateCrewBadge(){ const n = REQ.in.filter(r => r.status === "pending").length + (ME && S.loaded ? tagInbox().length : 0)
-  + (ME ? friendList().filter(f => f.famState === "pending" && f.famBy && f.famBy !== ME.uid).length : 0); $("#tab-crew").innerHTML = "Crew" + (n ? ` <span class="badge-n">${n}</span>` : ""); $("#tab-crew").setAttribute("aria-selected", S.tab === "crew"); }
+  + (ME ? friendList().filter(f => f.famState === "pending" && f.famBy && f.famBy !== ME.uid).length : 0); $("#tab-crew").innerHTML = "Crew" + (n ? ` <span class="badge-n">${n}</span>` : ""); $("#tab-crew").setAttribute("aria-selected", S.tab === "crew"); navArrows(); }
 
 $("#signinBtn").addEventListener("click", doSignIn);
 

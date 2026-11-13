@@ -528,3 +528,44 @@ h1.wm .em-app{height:clamp(50px,13vw,64px);flex:none;filter:drop-shadow(0 4px 14
 .hpend{background:rgba(181,18,27,.15);border:1px solid var(--blood);padding:8px 10px;color:var(--bone)}
 .hpend b{color:var(--blood-hi)}
 b.bone{color:var(--bone)}
+
+/* ---------- Header + nav layout (logo era) ---------- */
+.brand{flex-wrap:nowrap;align-items:center}
+.brand-r{flex:none}
+h1.wm .brandbtn img:not(.em-app){height:clamp(44px,11.5vw,74px)}
+h1.wm .em-app{height:clamp(56px,14.5vw,82px)}
+.hero .year{margin-top:10px;font-size:13px;letter-spacing:.24em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+nav.tabs{display:flex;align-items:center;flex-wrap:nowrap;gap:6px;padding:6px 10px;background:#0a0708;border:1px solid var(--iron);border-radius:4px;margin-top:18px}
+nav.tabs .tabscroll{display:flex;gap:4px;flex:1;min-width:0;overflow-x:auto;scroll-behavior:smooth;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+nav.tabs .tabscroll::-webkit-scrollbar{display:none}
+nav.tabs .tabscroll button{flex:none;padding:10px 12px;letter-spacing:.12em;font-size:14px}
+nav.tabs .navhome{flex:none;padding:3px 8px 3px 0;border:0;border-right:1px solid var(--iron);margin-right:2px;border-radius:0;display:grid;place-items:center}
+nav.tabs .navhome img{width:30px;height:30px;display:block;transition:transform .15s}
+nav.tabs .navhome:hover img,nav.tabs .navhome.on img{transform:scale(1.08);filter:drop-shadow(0 0 8px rgba(224,49,58,.6))}
+nav.tabs .navarrow{flex:none;width:30px;height:36px;padding:0;border:1px solid var(--iron);border-radius:3px;background:var(--crypt);color:var(--bone);font-size:22px;line-height:1;letter-spacing:0;display:grid;place-items:center}
+nav.tabs .navarrow[hidden]{display:none}
+nav.tabs .navarrow:hover{border-color:var(--blood-hi);color:var(--blood-hi)}
+@media (max-width:600px){
+  nav.tabs{justify-content:flex-start;padding:6px 8px;gap:4px}
+  nav.tabs .tabscroll button{padding:10px 11px;letter-spacing:.1em;font-size:13px}
+}
+
+/* ---------- Landing features carousel ---------- */
+.lfhead{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-top:46px}
+.lfhead .lh2{margin:0}
+.lfnav{display:flex;align-items:center;gap:8px}
+.lfa{width:46px;height:46px;border:1px solid var(--iron);background:var(--crypt);color:var(--bone);font-size:28px;line-height:1;cursor:pointer;display:grid;place-items:center;border-radius:3px}
+.lfa:hover:not(:disabled){border-color:var(--blood-hi);color:var(--blood-hi)}
+.lfa:disabled{opacity:.35;cursor:default}
+.lfcount{font-family:var(--f-label);font-weight:700;letter-spacing:.12em;color:var(--ash);min-width:52px;text-align:center}
+.lfdots{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;margin:14px 0 2px;padding-bottom:2px}
+.lfdots::-webkit-scrollbar{display:none}
+.lfdot{flex:none;background:var(--crypt);border:1px solid var(--iron);color:var(--ash);font-family:var(--f-label);font-weight:700;text-transform:uppercase;letter-spacing:.1em;font-size:12px;padding:7px 10px;cursor:pointer}
+.lfdot.on{background:var(--blood);border-color:var(--blood);color:var(--bone)}
+.lftrack{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;overscroll-behavior-x:contain;outline:none}
+.lftrack::-webkit-scrollbar{display:none}
+.lftrack .feat{flex:0 0 100%;min-width:0;scroll-snap-align:start;scroll-snap-stop:always;border-bottom:0;padding:22px 2px 10px}
+nav.tabs{margin-bottom:12px}
+nav.tabs .navarrow.dot{position:relative}
+nav.tabs .navarrow.dot::after{content:"";position:absolute;top:-4px;right:-4px;width:10px;height:10px;border-radius:50%;background:var(--blood-hi);box-shadow:0 0 0 2px #0a0708}
+.lwrap{width:100%;box-sizing:border-box}.lfeats,.lftrack,.lfdots{max-width:100%;min-width:0}
