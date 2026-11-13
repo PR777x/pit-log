@@ -394,6 +394,8 @@ a.btn{text-decoration:none;display:inline-flex;align-items:center;justify-conten
 .tagbtn.on{background:var(--blood);border-color:var(--blood);color:var(--bone)}
 .dmonth{font-family:var(--f-label);font-weight:700;text-transform:uppercase;letter-spacing:.16em;font-size:13px;color:var(--blood-hi);margin:18px 0 4px;padding-bottom:6px;border-bottom:1px solid var(--iron);position:sticky;top:58px;background:var(--void);z-index:5}
 .dcount{margin-top:2px}
+.dtour{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--bone);padding:8px 10px;border:1px solid var(--iron);background:var(--crypt);cursor:pointer}
+.dtour input{width:18px;height:18px;accent-color:var(--blood-hi);flex:none}
 .dmore{width:100%;margin-top:12px}
 .chip.bkc{color:var(--bone);border-color:var(--rust);background:rgba(201,118,47,.15)}
 .matchbox{display:grid;gap:6px;margin:2px 0 12px;padding:10px;border:1px solid var(--blood);background:linear-gradient(180deg,rgba(181,18,27,.14),rgba(181,18,27,0) 70%),var(--crypt)}

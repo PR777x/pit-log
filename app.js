@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=32";
+import { VENUES } from "./venues.js?v=33";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -1292,7 +1292,7 @@ const ticketLink = url => url ? `<a class="chip tix" href="${esc(url)}" target="
 
 /* ---------- Discover: upcoming shows from the daily catalog, with one-tap add ---------- */
 const DISC = { months: null, data: new Map(), loading: false, shown: 3, list: [] };
-S.disc = { mode: "foryou", q: "", st: "", g: "" };
+S.disc = { mode: "foryou", q: "", st: "", g: "", sameTour: false };
 try { const m = localStorage.getItem("pitlog.discMode"); if (m === "all" || m === "foryou") S.disc.mode = m; } catch (_) {}
 async function loadDiscover(){
   if (DISC.loading) return; DISC.loading = true;
@@ -1325,12 +1325,21 @@ function drawDiscover(){
   if (!DISC.months || !DISC.months.length) { box.innerHTML = `<div class="empty"><h3>No shows yet</h3><div>Upcoming shows from Ticketmaster are loaded every morning. Check back after the next update.</div></div>`; return; }
   const d = S.disc, q = d.q.trim().toLowerCase(), R = discReasons();
   const all = DISC.months.slice(0, DISC.shown).flatMap(x => DISC.data.get(x.m) || []);
+  // Tours you're already going to: by tour name when there is one, otherwise by headliner.
+  // Their other dates are hidden by default so the list focuses on shows you don't have yet.
+  const tourKey = (tour, lu) => tour ? "t:" + normBand(tour) : lu[0] ? "h:" + normBand(lu[0]) : "";
+  const myTours = new Set();
+  for (const sh of S.shows) if (isUpcoming(sh)) { if (sh.tour) myTours.add(tourKey(sh.tour, [])); if (lineup(sh)[0]) myTours.add(tourKey("", lineup(sh))); }
+  const loggedIds = new Set();
+  for (const r of all) { const sh = { date: r.d, lineup: r.l }; if (haveShow(sh)) { loggedIds.add(r.i); myTours.add(tourKey(r.t, r.l)); myTours.add(tourKey("", r.l)); } }
+  let hiddenTour = 0;
   const rows = [];
   for (const r of all) {
     if (r.d < todayISO) continue;
     if (d.st && !(r.y || "").endsWith(", " + d.st)) continue;
     if (d.g && r.g !== d.g) continue;
     if (q && ![...r.l, r.v, r.y, r.t].join(" ").toLowerCase().includes(q)) continue;
+    if (!d.sameTour && !loggedIds.has(r.i) && (myTours.has(tourKey(r.t, r.l)) || myTours.has(tourKey("", r.l)))) { hiddenTour++; continue; }
     const keys = r.l.map(normBand);
     const tags = [];
     const going = R.crewUp.filter(x => x.sh.date === r.d && lineup(x.sh).some(b => keys.includes(normBand(b)))).map(x => x.handle);
@@ -1345,9 +1354,10 @@ function drawDiscover(){
     rows.push({ sh, tags, mine, g: r.g, s: r.s });
   }
   const more = DISC.shown < DISC.months.length;
+  const tourNote = hiddenTour || d.sameTour ? `<label class="dtour"><input type="checkbox" id="dtour" ${d.sameTour ? "checked" : ""}> Show other dates of tours you're already going to${!d.sameTour ? ` <span class="ro">(${hiddenTour} hidden)</span>` : ""}</label>` : "";
   const moreBtn = more ? `<button class="btn ghost dmore" data-dmore>Show ${MONTHS[Number(DISC.months[DISC.shown].m.slice(5)) - 1]} ${DISC.months[DISC.shown].m.slice(0, 4)} and later</button>` : "";
   if (!rows.length) {
-    box.innerHTML = `<div class="empty"><h3>Nothing here${d.q || d.st || d.g ? " with those filters" : ""}</h3><div>${d.mode === "foryou" ? "For you shows bands on your bucket list and bands you or your crew have seen. Try All upcoming, or add bands to your bucket list on your profile." : "Try another filter."}</div></div>${moreBtn}`;
+    box.innerHTML = tourNote + `<div class="empty"><h3>Nothing here${d.q || d.st || d.g ? " with those filters" : ""}</h3><div>${d.mode === "foryou" ? "For you shows bands on your bucket list and bands you or your crew have seen. Try All upcoming, or add bands to your bucket list on your profile." : "Try another filter."}</div></div>${moreBtn}`;
     return;
   }
   DISC.list = rows.map(x => x.sh);
@@ -1361,7 +1371,7 @@ function drawDiscover(){
       <div class="tagrow who">${x.tags.map(([c, t]) => `<span class="chip ${c === "bk" ? "bkc" : c === "tog" ? "tog" : c === "new" ? "up" : ""}">${esc(t)}</span>`).join("")}${x.s ? `<span class="chip">${esc(x.s === "rescheduled" ? "Rescheduled" : x.s === "postponed" ? "Postponed" : x.s === "offsale" ? "Off sale" : x.s)}</span>` : ""}
         ${x.mine ? `<span class="chip tog">In your log</span>` : `${ticketLink(sh.url)}<button class="chip catadd" data-dadd="${i}">+ Add to my shows</button>`}</div></div>`;
   });
-  box.innerHTML = `<div class="ro dcount">${rows.length} show${rows.length === 1 ? "" : "s"}${rows.length > 300 ? " (showing the first 300; filter to narrow)" : ""}</div>${h}${moreBtn}<div class="ro" style="margin-top:14px">Listings from Ticketmaster, updated every morning. Smaller venues that sell elsewhere won't appear.</div>`;
+  box.innerHTML = tourNote + `<div class="ro dcount">${rows.length} show${rows.length === 1 ? "" : "s"}${rows.length > 300 ? " (showing the first 300; filter to narrow)" : ""}</div>${h}${moreBtn}<div class="ro" style="margin-top:14px">Listings from Ticketmaster, updated every morning. Smaller venues that sell elsewhere won't appear.</div>`;
 }
 const addDaysIso = (iso, n) => { const p = parse(iso), d = new Date(Date.UTC(p.y, p.m - 1, p.d + n)); return d.toISOString().slice(0, 10); };
 const fmtTime = t => { const [h, m] = t.split(":").map(Number); if (isNaN(h)) return ""; return `${(h % 12) || 12}${m ? ":" + String(m).padStart(2, "0") : ""}${h < 12 ? "a" : "p"}`; };
@@ -1373,7 +1383,8 @@ document.addEventListener("click", e => {
   else if (t.dataset.dadd !== undefined) { const sh = DISC.list[Number(t.dataset.dadd)]; if (sh) openSheetFrom(sh); }
 });
 document.addEventListener("input", e => { if (e.target.id === "dq") { S.disc.q = e.target.value; clearTimeout(DISC.t); DISC.t = setTimeout(drawDiscover, 150); } });
-document.addEventListener("change", e => { if (e.target.id === "dg") { S.disc.g = e.target.value; drawDiscover(); } });
+document.addEventListener("change", e => { if (e.target.id === "dg") { S.disc.g = e.target.value; drawDiscover(); } if (e.target.id === "dtour") { S.disc.sameTour = e.target.checked; try { localStorage.setItem("pitlog.discTour", S.disc.sameTour ? "1" : ""); } catch (_) {} drawDiscover(); } });
+try { S.disc.sameTour = localStorage.getItem("pitlog.discTour") === "1"; } catch (_) {}
 
 /* ---------- Logged-show matches for a new show ----------
    As you type a band or tour name, look through shows already logged (yours, your crew's, public ones)
