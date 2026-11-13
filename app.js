@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=24";
+import { VENUES } from "./venues.js?v=25";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -302,7 +302,7 @@ const PRIVACY = [
 ];
 const SETTING_DEFAULTS = { ...Object.fromEntries(PRIVACY.map(([k]) => [k, "public"])),
   defaultView: "list", defaultSort: "newest", crewDefault: "off", weekStart: "sun", currency: "$", distance: "mi",
-  emailRequests: "on", emailTags: "on", emailDigest: "daily", emailReminders: "on" };
+  emailRequests: "on", emailTags: "on", emailDigest: "daily", emailReminders: "on", emailWeekly: "on" };
 const settingsOf = prof => ({ ...SETTING_DEFAULTS, ...((prof && prof.settings) || {}) });
 const MY = () => settingsOf(PROFILE);
 // Family sees what's "family" and up; the rest of the crew sees "crew" and up.
@@ -1629,6 +1629,7 @@ function settingsBlock(){
       selectRow("emailRequests", "Crew and Family requests", "When someone asks to join your crew, accepts, or invites you to Crew Family.", [["on", "Email me"], ["off", "Off"]], set.emailRequests),
       selectRow("emailTags", "Tags", "When someone tags you on a show.", [["on", "Email me"], ["off", "Off"]], set.emailTags),
       selectRow("emailDigest", "Crew activity", "Shows your crew adds, and shows where it looks like you're going too. Sent as one email around 6 PM (weekly comes on Sundays).", [["daily", "Daily"], ["weekly", "Weekly"], ["off", "Off"]], set.emailDigest),
+      selectRow("emailWeekly", "Weekly recap", "Sunday mornings: open crew requests, your upcoming shows, which crew are going too, and what's on your crew's calendars.", [["on", "Email me"], ["off", "Off"]], set.emailWeekly),
       selectRow("emailReminders", "Show reminders", "A heads-up 7 days and 1 day before your shows.", [["on", "Email me"], ["off", "Off"]], set.emailReminders)].join(""))}
     ${grp("display", "Display", [
       selectRow("defaultView", "Shows opens to", "", [["list", "List"], ["cal", "Calendar"]], set.defaultView),

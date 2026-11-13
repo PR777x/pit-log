@@ -141,5 +141,33 @@ const sentTo = who => emails.filter(e => e.to[0] === who + "@example.com");
   store.set("users/carly", { name: "Carly", handle: "carly_r" }); emails.length = 0; await F.runDigest();
   assert.ok(!sentTo("carly").some(e => /Queued Band/.test(e.html)));
 
+  // 7. Weekly recap
+  for (const k of [...store.keys()]) if (/\/(inbox|shows)\//.test(k) || k.startsWith("friendRequests/") || k.startsWith("mail/")) store.delete(k);
+  store.set("users/carly", { name: "Carly", handle: "carly_r" });
+  store.set("friendRequests/pat_carly", { from: "pat", to: "carly", status: "accepted" });
+  store.set("friendRequests/ken_pat", { from: "ken", to: "pat", status: "accepted" });
+  store.set("friendRequests/dana_pat", { from: "dana", to: "pat", status: "pending" });
+  store.set("users/pat/shows/w1", { date: L.addDays(today, 10), lineup: ["Gatecreeper"], venue: "Union Transfer", ticketTotal: 55, notes: "secret" });
+  store.set("users/pat/shows/w0", { date: L.addDays(today, -5), lineup: ["Past Band"], venue: "TLA" });
+  store.set("users/carly/shows/cw1", { date: L.addDays(today, 10), lineup: ["Gatecreeper"], venue: "Union Transfer" });
+  store.set("users/carly/shows/cw2", { date: L.addDays(today, 20), lineup: ["Frozen Soul"], venue: "Reverb" });
+  store.set("users/ken/shows/kw1", { date: L.addDays(today, 10), lineup: ["Gatecreeper"], venue: "Union Transfer" }); // Ken hides upcoming shows
+  emails.length = 0; await F.runRecap();
+  const w = sentTo("pat")[0];
+  assert.ok(w, "Pat gets a weekly recap");
+  assert.match(w.subject, /1 crew request waiting/);
+  assert.match(w.html, /1 open crew request/); assert.match(w.html, /Gatecreeper/);
+  assert.match(w.html, /Crew going too: @carly_r/); assert.ok(!/@kenny/.test(w.html), "private upcoming stays private");
+  assert.match(w.html, /Frozen Soul/); assert.ok(!/Past Band/.test(w.html)); assert.ok(!/secret/.test(w.html), "no notes in emails");
+  assert.ok(sentTo("carly")[0] && /Crew going too: @pat/.test(sentTo("carly")[0].html), "Carly sees Pat is going too");
+  // nothing at all -> no recap; weekly off -> no recap
+  store.set("users/zed", { name: "Zed", handle: "zed" });
+  store.set("users/ken", { name: "Ken", handle: "kenny", settings: { upcoming: "private", emailWeekly: "off" } });
+  emails.length = 0; await F.runRecap(); assert.ok(!sentTo("ken").length && !sentTo("zed").length);
+  // the Sunday evening digest doesn't repeat reminders the recap already covered
+  store.set("users/pat/shows/w2", { date: tomorrow, lineup: ["Tomorrow Band"], venue: "TLA" });
+  emails.length = 0; await F.runRecap(); await F.runDigest();
+  assert.strictEqual(sentTo("pat").length, 1, "one email that day, not two");
+
   console.log("All email function tests passed.");
 })().catch(e => { console.error(e); process.exit(1); });

@@ -55,7 +55,7 @@ async function friendsOf(uid){
 }
 
 /* ---------- sending ---------- */
-const KIND_PREF = { requests: "emailRequests", tags: "emailTags", digest: "emailDigest" };
+const KIND_PREF = { requests: "emailRequests", tags: "emailTags", digest: "emailDigest", weekly: "emailWeekly" };
 async function send(uid, kind, { subject, title, intro, body, button }){
   const user = await userDoc(uid); if (!user) return false;
   const p = L.prefs(user);
@@ -184,7 +184,8 @@ async function runDigest(now = new Date()){
       items.push(it);
     }
     const reminders = [];
-    if (p.emailReminders !== "off") for (const days of [1, 7]) {
+    const md = await db.doc(`mail/${u.id}`).get(), recapToday = md.exists && (md.data() || {}).recapDay === today;
+    if (p.emailReminders !== "off" && !recapToday) for (const days of [1, 7]) {
       const day = L.addDays(today, days);
       const s = await db.collection(`users/${u.id}/shows`).where("date", "==", day).get();
       for (const d of s.docs) reminders.push({ days, show: L.showSummary(d.data(), d.id) });
@@ -202,6 +203,53 @@ async function runDigest(now = new Date()){
   }
   logger.info(`digest sent to ${sent} people`);
 }
+/* ---------- weekly recap (Sunday 10 AM Eastern) ---------- */
+async function runRecap(now = new Date()){
+  const today = L.todayET(now), horizon = L.addDays(today, 90), crewHorizon = L.addDays(today, 60);
+  const users = await db.collection("users").get();
+  let sent = 0;
+  for (const u of users.docs) {
+    const p = L.prefs(u.data()); if (p.emailWeekly === "off") continue;
+    const uid = u.id;
+    // open requests: crew requests to me + Crew Family invites from someone else
+    const [reqs, famA, famB] = await Promise.all([
+      db.collection("friendRequests").where("to", "==", uid).where("status", "==", "pending").get(),
+      db.collection("friendRequests").where("from", "==", uid).where("family", "==", "pending").get(),
+      db.collection("friendRequests").where("to", "==", uid).where("family", "==", "pending").get()]);
+    const requests = reqs.docs.length + [...famA.docs, ...famB.docs].filter(d => d.data().familyBy && d.data().familyBy !== uid).length;
+    const mine = (await db.collection(`users/${uid}/shows`).get()).docs.map(d => ({ id: d.id, ...d.data() }))
+      .filter(s => s.date && s.date >= today && s.date <= horizon).sort((a, b) => a.date.localeCompare(b.date));
+    const upcoming = mine.map(s => ({ raw: s, show: L.showSummary(s, s.id), crew: [] }));
+    const crewUpcoming = [];
+    for (const f of await friendsOf(uid)) {
+      const fu = await userDoc(f.uid); if (!fu) continue;
+      if (!L.canSee(fu.settings || {}, "upcoming", f.family)) continue; // they keep upcoming shows private from you
+      const theirs = (await db.collection(`users/${f.uid}/shows`).get()).docs.map(d => d.data()).filter(s => s.date && s.date >= today && s.date <= crewHorizon);
+      const other = [];
+      for (const s of theirs) {
+        const m = upcoming.find(x => L.sameShow(x.raw, s));
+        if (m) { if (!m.crew.includes(handleOf(fu))) m.crew.push(handleOf(fu)); } else if (!f.family) other.push(L.showSummary(s));
+      }
+      if (other.length) crewUpcoming.push({ handle: handleOf(fu), shows: other.sort((a, b) => a.date.localeCompare(b.date)) });
+    }
+    const inbox = p.emailDigest === "off" ? { docs: [] } : await db.collection(`users/${uid}/inbox`).where("sent", "==", false).limit(200).get();
+    const items = [];
+    for (const d of inbox.docs) { const it = d.data(); if (it.show && it.show.id && !(await db.doc(`users/${it.from}/shows/${it.show.id}`).get()).exists) continue; items.push(it); }
+    const rc = L.buildRecap({ requests, upcoming, crewUpcoming, items, today });
+    if (rc.empty) continue; // nothing at all to say: no email
+    const ok = await send(uid, "weekly", { subject: rc.subject, title: "Your week on Pit Log", intro: L.esc(rc.summary), body: rc.body, button: { label: "Open Pit Log", url: L.SITE } });
+    if (ok) {
+      sent++;
+      if (inbox.docs.length) { const b = db.batch(); inbox.docs.forEach(d => b.delete(d.ref)); await b.commit(); }
+      await db.doc(`mail/${uid}`).set({ recapDay: today }, { merge: true }); // tonight's digest won't repeat today's reminders
+    }
+    await new Promise(r => setTimeout(r, 600));
+  }
+  logger.info(`weekly recap sent to ${sent} people`);
+}
+exports.weeklyRecap = onSchedule({ schedule: "0 10 * * 0", timeZone: "America/New_York", secrets: [RESEND_API_KEY], timeoutSeconds: 540 }, () => runRecap());
+module.exports.runRecap = runRecap;
+
 exports.dailyDigest = onSchedule({ schedule: "0 18 * * *", timeZone: "America/New_York", secrets: [RESEND_API_KEY], timeoutSeconds: 540 }, () => runDigest());
 
 /* ---------- one-tap unsubscribe (thepitlog.com/u redirects here) ---------- */
@@ -211,7 +259,7 @@ exports.unsubscribe = onRequest({ cors: false }, async (req, res) => {
   if (!u || !t) return page("That link isn't complete.");
   const d = await db.doc(`mail/${u}`).get();
   if (!d.exists || d.data().token !== t) return page("That link has expired. Change your emails in the app under Profile → Settings → Notifications.");
-  const keys = k === "all" ? ["emailRequests", "emailTags", "emailDigest", "emailReminders"] : [KIND_PREF[k] || "emailDigest"];
+  const keys = k === "all" ? ["emailRequests", "emailTags", "emailDigest", "emailReminders", "emailWeekly"] : [KIND_PREF[k] || "emailDigest"];
   const patch = {}; for (const key of keys) patch[`settings.${key}`] = "off";
   await db.doc(`users/${u}`).update(patch);
   page(k === "all" ? "Done. Pit Log won't email you anymore." : "Done. You won't get those emails anymore.");
