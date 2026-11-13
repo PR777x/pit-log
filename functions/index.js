@@ -33,6 +33,15 @@ async function unsubToken(uid){
   await ref.set({ token }, { merge: true });
   return token;
 }
+// Anti-spam: remember when someone was last emailed about a given thing (kept in mail/{uid},
+// which no app user can read). Returns true if it's been long enough, and records "now" if so.
+async function cooldownOk(uid, key, minutes){
+  const ref = db.doc(`mail/${uid}`); const d = await ref.get();
+  const last = (d.exists && d.data().last && d.data().last[key]) || 0, now = Date.now();
+  if (now - last < minutes * 60000) return false;
+  await ref.set({ last: { [key]: now } }, { merge: true });
+  return true;
+}
 async function relation(a, b){
   const [x, y] = await Promise.all([db.doc(`friendRequests/${a}_${b}`).get(), db.doc(`friendRequests/${b}_${a}`).get()]);
   const r = [x, y].find(d => d.exists && d.data().status === "accepted");
@@ -71,6 +80,7 @@ const nameOf = u => (u && (u.name || u.handle)) || "Someone";
 /* ---------- crew requests and Crew Family ---------- */
 exports.onCrewRequest = onDocumentCreated({ document: "friendRequests/{id}", database: DB_ID, secrets: [RESEND_API_KEY] }, async event => {
   const r = event.data && event.data.data(); if (!r || r.status !== "pending") return;
+  if (!(await cooldownOk(r.to, `req_${r.from}`, 24 * 60))) return; // re-sent/cancelled requests don't re-email for a day
   const from = await userDoc(r.from);
   await send(r.to, "requests", {
     subject: `${nameOf(from)} wants to add you to their crew`,
@@ -86,7 +96,7 @@ exports.onCrewRequestChange = onDocumentUpdated({ document: "friendRequests/{id}
     await send(a.from, "requests", { subject: `@${handleOf(to)} accepted your crew request`, title: `@${handleOf(to)} is in your crew`,
       intro: `${L.esc(nameOf(to))} accepted your request. Their shows now show up in your crew.`, button: { label: "See their shows", url: L.SITE } });
   }
-  if (a.family === "pending" && b.family !== "pending" && a.familyBy) {
+  if (a.family === "pending" && b.family !== "pending" && a.familyBy && await cooldownOk(a.familyBy === a.from ? a.to : a.from, `fam_${a.familyBy}`, 24 * 60)) {
     const other = a.familyBy === a.from ? a.to : a.from, by = await userDoc(a.familyBy);
     await send(other, "requests", { subject: `@${handleOf(by)} invited you to Crew Family`, title: "Crew Family invite",
       intro: `@${L.esc(handleOf(by))} wants to link logs with you. If you approve, every show either of you adds lands in both logs. Ratings, notes, photos and spend stay your own.`,
@@ -115,6 +125,13 @@ exports.onShowWrite = onDocumentWritten({ document: "users/{uid}/shows/{showId}"
     if (t === uid || was.has(t)) continue;
     const rel = await relation(uid, t); if (!rel.friends) continue;
     const tagged = await userDoc(t); if (!L.canSee(L.prefs(tagged), "tagMe", rel.family)) continue;
+    if (L.prefs(tagged).emailTags === "off") continue;
+    // Linking old tags can tag someone on dozens of shows at once: only the first gets its own email,
+    // the rest wait for the next digest.
+    if (!(await cooldownOk(t, `tag_${uid}`, 120))) {
+      if (L.prefs(tagged).emailDigest !== "off") await db.collection(`users/${t}/inbox`).add({ type: "tagged", from: uid, fromHandle: handleOf(owner), show, sent: false, at: FieldValue.serverTimestamp() });
+      continue;
+    }
     await send(t, "tags", { subject: `@${handleOf(owner)} tagged you at ${L.showLine(show)}`, title: `@${handleOf(owner)} tagged you`,
       intro: "Add it to your log with one tap from the Crew tab, as just the show or with their details.", body: L.showCard(show), button: { label: "Open Pit Log", url: L.SITE } });
   }
@@ -125,6 +142,8 @@ exports.onShowWrite = onDocumentWritten({ document: "users/{uid}/shows/{showId}"
   const batch = db.batch(); let n = 0;
   for (const f of await friendsOf(uid)) {
     if (f.family) continue; // linked logs already get the show itself
+    const fUser = await userDoc(f.uid);
+    if (L.prefs(fUser).emailDigest === "off") continue; // nothing piles up for people who turned the digest off
     if (L.isUpcoming(show.date, today) && !L.canSee(ownerSet, "upcoming", false)) continue;
     const theirs = await db.collection(`users/${f.uid}/shows`).where("date", "==", show.date).get();
     const match = theirs.docs.find(d => L.sameShow(after, d.data()));
@@ -132,8 +151,8 @@ exports.onShowWrite = onDocumentWritten({ document: "users/{uid}/shows/{showId}"
     if (match) {
       batch.set(inbox, { type: "together", from: uid, fromHandle: handleOf(owner), show, sent: false, at: FieldValue.serverTimestamp() });
       // ...and tell the person who just added it, if the friend's settings let them see it.
-      const friend = await userDoc(f.uid);
-      if (!L.isUpcoming(show.date, today) || L.canSee((friend && friend.settings) || {}, "upcoming", false))
+      const friend = fUser;
+      if (L.prefs(owner).emailDigest !== "off" && (!L.isUpcoming(show.date, today) || L.canSee((friend && friend.settings) || {}, "upcoming", false)))
         batch.set(db.collection(`users/${uid}/inbox`).doc(), { type: "together", from: f.uid, fromHandle: handleOf(friend), show, sent: false, at: FieldValue.serverTimestamp() });
     } else {
       batch.set(inbox, { type: "added", from: uid, fromHandle: handleOf(owner), show, sent: false, at: FieldValue.serverTimestamp() });
@@ -151,15 +170,29 @@ async function runDigest(now = new Date()){
   for (const u of users.docs) {
     const p = L.prefs(u.data());
     const digestDue = p.emailDigest === "daily" || (p.emailDigest === "weekly" && sunday);
+    if (p.emailDigest === "off") { // turned off: throw away anything queued so it can't arrive later as a backlog
+      const old = await db.collection(`users/${u.id}/inbox`).limit(400).get();
+      if (old.docs.length) { const b = db.batch(); old.docs.forEach(d => b.delete(d.ref)); await b.commit(); }
+    }
     const inbox = digestDue ? await db.collection(`users/${u.id}/inbox`).where("sent", "==", false).limit(200).get() : { docs: [] };
-    const items = inbox.docs.map(d => d.data());
+    // Skip shows that were deleted since, and anything listed twice.
+    const items = [], seen = new Set();
+    for (const d of inbox.docs) {
+      const it = d.data(), key = `${it.type}|${it.from}|${it.show && it.show.id}`;
+      if (seen.has(key)) continue; seen.add(key);
+      if (it.show && it.show.id && !(await db.doc(`users/${it.from}/shows/${it.show.id}`).get()).exists) continue;
+      items.push(it);
+    }
     const reminders = [];
     if (p.emailReminders !== "off") for (const days of [1, 7]) {
       const day = L.addDays(today, days);
       const s = await db.collection(`users/${u.id}/shows`).where("date", "==", day).get();
       for (const d of s.docs) reminders.push({ days, show: L.showSummary(d.data(), d.id) });
     }
-    if (!items.length && !reminders.length) continue;
+    if (!items.length && !reminders.length) { // nothing new: no email, just tidy the queue
+      if (inbox.docs.length) { const b = db.batch(); inbox.docs.forEach(d => b.delete(d.ref)); await b.commit(); }
+      continue;
+    }
     const dg = L.buildDigest({ items, reminders, today });
     const ok = await send(u.id, "digest", { subject: dg.subject, title: items.length ? (p.emailDigest === "weekly" ? "Your crew this week" : "Your crew today") : "Show reminder",
       intro: L.esc(dg.summary), body: dg.body, button: { label: "Open Pit Log", url: L.SITE } });

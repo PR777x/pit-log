@@ -8,13 +8,14 @@ const clone = v => JSON.parse(JSON.stringify(v));
 function docRef(path){
   return { path, id: path.split("/").pop(),
     get: async () => ({ exists: store.has(path), id: path.split("/").pop(), ref: docRef(path), data: () => clone(store.get(path)) }),
-    set: async (v, o) => { store.set(path, o && o.merge ? { ...(store.get(path) || {}), ...clean(v) } : clean(v)); },
+    set: async (v, o) => { const cur = store.get(path) || {}, nv = clean(v);
+      if (o && o.merge) { for (const [k, x] of Object.entries(nv)) cur[k] = x && typeof x === "object" && !Array.isArray(x) ? { ...(cur[k] || {}), ...x } : x; store.set(path, cur); } else store.set(path, nv); },
     update: async v => { const cur = store.get(path) || {}; for (const [k, val] of Object.entries(v)) { if (k.includes(".")) { const [a, b] = k.split("."); cur[a] = { ...(cur[a] || {}), [b]: val }; } else cur[k] = val; } store.set(path, cur); },
     delete: async () => { store.delete(path); } };
 }
 const clean = v => JSON.parse(JSON.stringify(v, (k, x) => (x && x.__ts ? "ts" : x)));
 function coll(path, filters = [], lim = 1e9){
-  return { doc: id => docRef(`${path}/${id || "auto" + (++auto)}`),
+  return { doc: id => docRef(`${path}/${id || "auto" + (++auto)}`), add: async v => docRef(`${path}/auto${++auto}`).set(v),
     where: (f, op, v) => coll(path, [...filters, [f, op, v]], lim), limit: n => coll(path, filters, n),
     get: async () => ({ docs: [...store.keys()].filter(k => k.startsWith(path + "/") && k.split("/").length === path.split("/").length + 1)
       .filter(k => filters.every(([f, , v]) => (store.get(k) || {})[f] === v)).slice(0, lim).map(k => ({ id: k.split("/").pop(), ref: docRef(k), data: () => clone(store.get(k)) })) }) };
@@ -107,6 +108,38 @@ const sentTo = who => emails.filter(e => e.to[0] === who + "@example.com");
   await F.unsubscribe({ query: { u: "carly", t: tok, k: "digest" } }, res);
   assert.strictEqual(store.get("users/carly").settings.emailDigest, "off"); assert.match(page, /won't get those/);
   await F.unsubscribe({ query: { u: "carly", t: "wrong", k: "all" } }, res); assert.match(page, /expired/);
+
+  // 6. Anti-spam
+  // a) a quiet day sends nothing at all
+  for (const k of [...store.keys()]) if (/\/inbox\//.test(k)) store.delete(k);
+  store.delete("users/carly/shows/c1"); store.set("users/carly", { name: "Carly", handle: "carly_r" });
+  for (const k of [...store.keys()]) if (/\/shows\//.test(k) && [soon, tomorrow].includes(store.get(k).date)) store.delete(k); // no reminders due
+  emails.length = 0; await F.runDigest();
+  assert.strictEqual(emails.length, 0, "no news, no email");
+  // b) re-sending a crew request the same day doesn't email again
+  store.set("users/dana", { name: "Dana", handle: "dana" });
+  const r2 = { from: "dana", to: "carly", status: "pending" };
+  await F.onCrewRequest({ data: { data: () => r2 } }); await F.onCrewRequest({ data: { data: () => r2 } });
+  assert.strictEqual(sentTo("carly").length, 1, "one request email per person per day");
+  // c) bulk tagging (linking old tags): 1 email now, the rest go into the next digest
+  emails.length = 0;
+  for (let i = 0; i < 10; i++) await write(`users/pat/shows/old${i}`, { date: L.addDays(today, -300 - i), lineup: ["Old " + i] }, { date: L.addDays(today, -300 - i), lineup: ["Old " + i], taggedUids: ["carly"] });
+  assert.strictEqual(sentTo("carly").length, 0, "Carly was already emailed a tag from Pat in the last 2 hours");
+  assert.strictEqual(inbox("carly").filter(i => i.type === "tagged").length, 10);
+  emails.length = 0; await F.runDigest();
+  assert.strictEqual(sentTo("carly").length, 1); assert.match(sentTo("carly")[0].html, /You were tagged/); assert.match(sentTo("carly")[0].html, /and 4 more/);
+  // d) shows deleted before the digest aren't reported
+  await write("users/pat/shows/gone", null, { date: soon, lineup: ["Deleted Band"], venue: "TLA" });
+  await write("users/pat/shows/gone", store.get("users/pat/shows/gone"), null);
+  emails.length = 0; await F.runDigest();
+  assert.ok(!emails.some(e => /Deleted Band/.test(e.html)), "deleted shows are skipped");
+  assert.ok(!sentTo("carly").length, "and if that was the only news, no email");
+  // e) digest off: nothing queues, and nothing arrives later as a backlog
+  store.set("users/carly", { name: "Carly", handle: "carly_r", settings: { emailDigest: "off" } });
+  await write("users/pat/shows/x9", null, { date: soon, lineup: ["Queued Band"], venue: "TLA" });
+  assert.strictEqual(inbox("carly").length, 0);
+  store.set("users/carly", { name: "Carly", handle: "carly_r" }); emails.length = 0; await F.runDigest();
+  assert.ok(!sentTo("carly").some(e => /Queued Band/.test(e.html)));
 
   console.log("All email function tests passed.");
 })().catch(e => { console.error(e); process.exit(1); });

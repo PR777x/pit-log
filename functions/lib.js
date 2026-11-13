@@ -70,6 +70,11 @@ function buildDigest({ items, reminders, today }){
     sections.push(`<h2 style="font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:#7f9a5a;margin:18px 0 8px">Same show as your crew</h2>` +
       together.slice(0, 10).map(i => showCard(i.show, `${isUpcoming(i.show.date, today) ? "Looks like @" + i.fromHandle + " is going too" : "@" + i.fromHandle + " was there too"}`)).join(""));
   }
+  const tagged = items.filter(i => i.type === "tagged");
+  if (tagged.length) {
+    sections.push(`<h2 style="font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:#7f9a5a;margin:18px 0 8px">You were tagged</h2>` +
+      tagged.slice(0, 6).map(i => showCard(i.show, "Tagged by @" + i.fromHandle)).join("") + (tagged.length > 6 ? `<p style="margin:0 0 8px;font-size:13px;color:#a2958d">and ${tagged.length - 6} more</p>` : ""));
+  }
   const added = items.filter(i => i.type === "added");
   if (added.length) {
     const byFriend = new Map();
@@ -87,10 +92,12 @@ function buildDigest({ items, reminders, today }){
   const bits = [];
   if (reminders.length) bits.push(`${reminders.length} show${reminders.length > 1 ? "s" : ""} coming up`);
   if (together.length) bits.push(`${together.length} you share with your crew`);
+  if (tagged.length) bits.push(`${tagged.length} tag${tagged.length > 1 ? "s" : ""}`);
   if (added.length) bits.push(`${added.length} new from your crew`);
   const subject = reminders.length && !items.length
     ? (reminders[0].days === 1 ? `Tomorrow: ${showLine(reminders[0].show)}` : `Coming up: ${showLine(reminders[0].show)}`)
     : together.length ? `@${together[0].fromHandle} is at ${showLine(together[0].show)} too`
+    : tagged.length && !added.length ? `@${tagged[0].fromHandle} tagged you on ${tagged.length} show${tagged.length > 1 ? "s" : ""}`
     : `Your crew logged ${added.length} new show${added.length > 1 ? "s" : ""}`;
   return { subject, body: sections.join(""), summary: bits.join(" · ") };
 }
