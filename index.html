@@ -16,7 +16,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Pirata+One&family=Barlow+Condensed:wght@400;500;600;700&family=Barlow:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="styles.css?v=35">
+<link rel="stylesheet" href="styles.css?v=36">
 </head>
 <body>
 
@@ -27,9 +27,72 @@
   </div>
 </section>
 
-<section id="gate" class="gate" hidden>
-  <div class="gbox">
-    <h1>Pit <span>Log</span></h1>
+<section id="gate" class="gate landing" hidden>
+  <div class="lwrap">
+    <nav class="lnav"><span class="lbrand">Pit <span>Log</span></span><button type="button" class="btn ghost sm" data-goauth="in">Sign in</button></nav>
+    <header class="lhero">
+      <div class="lhero-t">
+        <p class="kick">A concert diary for heavy music fans</p>
+        <h1 class="lh1">Every show.<br>Every pit.<br><em>Every night you were there.</em></h1>
+        <p class="lsub">Log the shows, rate the pits, keep the posters and photos, see who in your crew was in the room, and find out the second your bands announce a date.</p>
+        <div class="lcta"><button type="button" class="btn red" data-goauth="up">Start your log</button><button type="button" class="btn ghost" data-goauth="in">I already have one</button></div>
+        <p class="ro lfree">Free. Private by default. Works on your phone like an app.</p>
+      </div>
+      <div class="lhero-s"><figure class="phone h1p"><img src="tour/shows.webp?v=1" alt="Pit Log shows list" loading="lazy" width="600" height="1022"></figure><figure class="phone h2p"><img src="tour/night.webp?v=1" alt="Rating a show" loading="lazy" width="600" height="1022"></figure></div>
+    </header>
+    <div class="ticker" aria-hidden="true"><div class="trk"><span>Wall of death</span><span>Barricade</span><span>Circle pit</span><span>Crowd surf</span><span>Encore</span><span>Merch line</span><span>Opener you'll brag about</span><span>Ringing ears</span><span>Wall of death</span><span>Barricade</span><span>Circle pit</span><span>Crowd surf</span><span>Encore</span><span>Merch line</span><span>Opener you'll brag about</span><span>Ringing ears</span></div></div>
+    <section class="lsteps" aria-label="How it works">
+      <div class="lstub"><b>01</b><h4>Log it</h4><p>Band, venue, date. Ten seconds, even from the parking lot.</p></div>
+      <div class="lstub"><b>02</b><h4>Rate it</h4><p>Skulls for the show, bars for the pit.</p></div>
+      <div class="lstub"><b>03</b><h4>Share it</h4><p>Your crew sees it. Everyone else only if you want.</p></div>
+      <div class="lstub"><b>04</b><h4>Find the next</h4><p>New dates for your bands, every morning.</p></div>
+    </section>
+    <section class="lfeats" aria-label="What you can do">
+      <h2 class="lh2">What's in the pit</h2>
+      <article class="feat">
+        <div class="ftext"><span class="fnum">01</span><p class="kick">Your shows</p><h3>The setlist of your life</h3><p>Every gig you've hit, laid out like a stack of torn ticket stubs. Lineup, venue, tour, who you went with. Flip to the calendar to see your whole year of noise at a glance.</p></div>
+        <div class="fshots"><figure class="phone "><img src="tour/shows.webp?v=1" alt="Shows list with ticket-stub cards" loading="lazy" width="600" height="1022"></figure><figure class="phone alt"><img src="tour/calendar.webp?v=1" alt="Calendar view of the year's shows" loading="lazy" width="600" height="1022"></figure></div>
+      </article>
+      <article class="feat">
+        <div class="ftext"><span class="fnum">02</span><p class="kick">The night</p><h3>Rate the carnage</h3><p>Skulls for how good it was. Pit intensity from polite sway to wall of death. Where you stood, best band of the night, the moment you'll be telling people about for years.</p></div>
+        <div class="fshots"><figure class="phone "><img src="tour/night.webp?v=1" alt="Rating a show with skulls and pit intensity" loading="lazy" width="600" height="1022"></figure></div>
+      </article>
+      <article class="feat">
+        <div class="ftext"><span class="fnum">03</span><p class="kick">The Vault</p><h3>Posters, photos, merch haul</h3><p>Keep the tour poster, the blurry phone shots and the shirt you overpaid for. The Vault sorts it all by band or venue, so the memories are one tap away.</p></div>
+        <div class="fshots"><figure class="phone "><img src="tour/poster.webp?v=1" alt="Tour poster on a show" loading="lazy" width="600" height="1022"></figure><figure class="phone alt"><img src="tour/vault.webp?v=1" alt="The Vault, sorted by band" loading="lazy" width="600" height="1022"></figure></div>
+      </article>
+      <article class="feat">
+        <div class="ftext"><span class="fnum">04</span><p class="kick">Crew</p><h3>Bring the crew</h3><p>Add your friends and see their shows next to yours. Tag them on the nights they were there, find the gigs you hit together, and link logs with Crew Family so a show added once lands in both.</p></div>
+        <div class="fshots"><figure class="phone "><img src="tour/crew.webp?v=1" alt="Crew tab with requests" loading="lazy" width="600" height="1022"></figure></div>
+      </article>
+      <article class="feat">
+        <div class="ftext"><span class="fnum">05</span><p class="kick">Discover</p><h3>Find the next one</h3><p>Fresh tour dates for PA, NJ, DE and NY every morning. One card per tour, flagged when it stops at a venue you've been to, with tickets and one-tap add. Hide anything you'll never go to.</p></div>
+        <div class="fshots"><figure class="phone "><img src="tour/discover.webp?v=1" alt="Discover with tour cards" loading="lazy" width="600" height="1022"></figure></div>
+      </article>
+      <article class="feat">
+        <div class="ftext"><span class="fnum">06</span><p class="kick">Bucket list</p><h3>The bands you still need</h3><p>Keep a list of the bands you haven't caught yet. When they announce a date nearby, it shows up in Discover and your Sunday recap, so you're never the one who found out too late.</p></div>
+        <div class="fshots"><figure class="phone "><img src="tour/bucket.webp?v=1" alt="Bucket list with dates on sale" loading="lazy" width="600" height="1022"></figure></div>
+      </article>
+      <article class="feat">
+        <div class="ftext"><span class="fnum">07</span><p class="kick">Quick add</p><h3>Log it before the ringing stops</h3><p>Type a band or tour and Pit Log finds the show, from your crew's logs or the announced listings, and fills in the rest: lineup, venue, date and tour.</p></div>
+        <div class="fshots"><figure class="phone "><img src="tour/add.webp?v=1" alt="Adding a show with matching shows" loading="lazy" width="600" height="1022"></figure></div>
+      </article>
+      <article class="feat">
+        <div class="ftext"><span class="fnum">08</span><p class="kick">Stats</p><h3>Receipts for your obsession</h3><p>Shows attended, bands and venues, miles driven, what you spent on tickets and merch, your average rating, plus badges for the barricade regulars.</p></div>
+        <div class="fshots"><figure class="phone "><img src="tour/stats.webp?v=1" alt="Stats tab" loading="lazy" width="600" height="1022"></figure><figure class="phone alt"><img src="tour/search.webp?v=1" alt="Band search across logs" loading="lazy" width="600" height="1022"></figure></div>
+      </article>
+    </section>
+    <section class="lfaq" aria-label="Questions">
+      <h2 class="lh2">Before you jump in</h2>
+      <details><summary>Does it cost anything?</summary><p>No. Pit Log is free.</p></details>
+      <details><summary>Who can see my shows?</summary><p>You choose. Each detail (ticket cost, photos, ratings, notes and more) can be Private, Crew Family, Crew or Public, and your crew only sees what you allow.</p></details>
+      <details><summary>Is it only for metal?</summary><p>Log anything with a stage. The tour listings lean heavy (metal, rock, punk and alternative) because that's who built it.</p></details>
+      <details><summary>Will it flood my inbox?</summary><p>No. At most one evening email on days something actually happened, and a Sunday recap. You can turn either off.</p></details>
+      <details><summary>Can I get it on my home screen?</summary><p>Yes. Open thepitlog.com in your phone's browser and choose "Add to Home screen." It opens like an app.</p></details>
+    </section>
+  </div>
+  <div class="gbox" id="join">
+    <h2 class="gh2 join-h">Grab your wristband</h2>
     <p class="gtag">Every show. Every pit. Every night you were there.</p>
     <button class="btn red gbtn" id="signinBtn">Sign in with Google</button>
     <div class="or"><span>or use email</span></div>
@@ -38,8 +101,8 @@
       <button type="button" data-authmode="up" aria-pressed="false">Create account</button>
     </div>
     <form id="emailForm" class="authform" autocomplete="on" novalidate>
-      <label class="field up-only" hidden><span class="lbl">Your name</span><input id="auName" maxlength="40" autocomplete="name"></label>
-      <label class="field up-only" hidden><span class="lbl">Username</span><input id="auHandle" maxlength="20" autocapitalize="none" spellcheck="false" placeholder="e.g. pat_reeves" autocomplete="username"></label>
+      <label class="field up-only" hidden><span class="lbl">Your name</span><input id="auName" maxlength="40" autocomplete="name" placeholder="Ex: Sam Rivera"></label>
+      <label class="field up-only" hidden><span class="lbl">Username</span><input id="auHandle" maxlength="20" autocapitalize="none" spellcheck="false" placeholder="Ex: riff_raider" autocomplete="username"></label>
       <label class="field"><span class="lbl">Email</span><input id="auEmail" type="email" autocomplete="email" autocapitalize="none" spellcheck="false" required></label>
       <label class="field"><span class="lbl">Password</span><input id="auPass" type="password" autocomplete="current-password" minlength="6" required></label>
       <label class="field up-only" hidden><span class="lbl">Confirm password</span><input id="auPass2" type="password" autocomplete="new-password" minlength="6"></label>
@@ -48,7 +111,7 @@
     </form>
     <p class="ro" id="signinMsg" role="alert"></p>
     <p class="ro">Your log is private. Friends you accept can see your shows.</p>
-    <p class="ro" style="opacity:.5">build 35</p>
+    <p class="ro" style="opacity:.5">build 36</p>
     <p class="ro" id="inapp" hidden>Opened inside another app? Use ⋮ → <b>Open in Chrome</b> (or Safari on iPhone) for sign-in to work.</p>
   </div>
 </section>
@@ -57,8 +120,8 @@
   <form class="gbox" id="setupForm" autocomplete="off">
     <h2 class="gh2">Claim your name</h2>
     <p class="ro">Friends find you by username.</p>
-    <label class="field"><span class="lbl">Your name</span><input id="setupName" maxlength="40"></label>
-    <label class="field"><span class="lbl">Username</span><input id="setupHandle" maxlength="20" autocapitalize="none" spellcheck="false" placeholder="e.g. pat_reeves"></label>
+    <label class="field"><span class="lbl">Your name</span><input id="setupName" maxlength="40" placeholder="Ex: Sam Rivera"></label>
+    <label class="field"><span class="lbl">Username</span><input id="setupHandle" maxlength="20" autocapitalize="none" spellcheck="false" placeholder="Ex: riff_raider"></label>
     <p class="ro" id="setupMsg" role="alert" style="color:var(--rust)"></p>
     <button class="btn red gbtn" id="setupGo" type="submit">Enter the pit</button>
   </form>
@@ -96,6 +159,6 @@
 <div id="modalRoot"></div>
 <div id="toastRoot"></div>
 
-<script type="module" src="app.js?v=35"></script>
+<script type="module" src="app.js?v=36"></script>
 </body>
 </html>

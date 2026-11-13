@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=35";
+import { VENUES } from "./venues.js?v=36";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -478,7 +478,7 @@ function renderSheet(fresh){
     <div class="sect"><h3>The bill</h3>
       <div class="grid2">
         <label class="field"><span class="lbl">Date</span><input id="f-date" type="date" value="${esc(d.date)}" ${ro?"disabled":""}></label>
-        <label class="field"><span class="lbl">Tour name</span><input id="f-tour" value="${esc(d.tour||"")}" placeholder="Name of the tour" ${ro?"disabled":""}></label>
+        <label class="field"><span class="lbl">Tour name</span><input id="f-tour" value="${esc(d.tour||"")}" placeholder="Ex: Mega Monsters Tour" ${ro?"disabled":""}></label>
       </div>
       ${lineupFields(d, ro)}
       ${isNew && !ro ? `<div id="matchbox" class="matchbox" aria-live="polite" hidden></div>` : ""}
@@ -505,8 +505,8 @@ function renderSheet(fresh){
         <label class="field"><span class="lbl">Where you stood</span><select id="f-spot" ${ro?"disabled":""}>${SPOTS.map(o=>`<option value="${esc(o)}" ${d.spot===o?"selected":""}>${o||"—"}</option>`).join("")}</select></label>
         <label class="field"><span class="lbl">Best band of the night</span><select id="f-best" ${ro?"disabled":""}><option value="">—</option>${lineup(d).map(b=>`<option ${d.best===b?"selected":""}>${esc(b)}</option>`).join("")}</select></label>
       </div>
-      <label class="field"><span class="lbl">Highlight moment</span><input id="f-highlight" value="${esc(d.highlight||"")}" placeholder="Wall of death during…" ${ro?"disabled":""}></label>
-      <label class="field"><span class="lbl">Setlist notes</span><textarea id="f-setlist" placeholder="Opened with… closed with…" ${ro?"disabled":""}>${esc(d.setlist||"")}</textarea></label>
+      <label class="field"><span class="lbl">Highlight moment</span><input id="f-highlight" value="${esc(d.highlight||"")}" placeholder="Ex: Wall of death during…" ${ro?"disabled":""}></label>
+      <label class="field"><span class="lbl">Setlist notes</span><textarea id="f-setlist" placeholder="Ex: Opened with… closed with…" ${ro?"disabled":""}>${esc(d.setlist||"")}</textarea></label>
       <label class="field"><span class="lbl">Notes</span><textarea id="f-notes" ${ro?"disabled":""}>${esc(d.notes||"")}</textarea></label>
       <div class="grid2">
         <label class="field"><span class="lbl">Tickets bought</span><input id="f-ticketQty" type="number" min="0" step="1" inputmode="numeric" value="${esc(d.ticketQty??"")}" ${ro?"disabled":""}></label>
@@ -1958,7 +1958,7 @@ function bucketBlock(){
   const seen = new Set(S.shows.filter(s => !isUpcoming(s)).flatMap(lineup).map(normBand)), going = new Set(S.shows.filter(isUpcoming).flatMap(lineup).map(normBand));
   return `<section class="sect bucket"><h3>Bucket list <span class="lbl">${list.length}</span></h3>
     <div class="ro" style="margin:-4px 0 10px">Bands you want to see. When they announce a date nearby, it shows up in Search → Bands → Just announced and in your Sunday recap.</div>
-    <div class="bkadd acwrap"><input id="bk-in" data-ac="band" autocomplete="off" maxlength="60" placeholder="Add a band" aria-label="Add a bucket list band"><div class="acbox" hidden></div><button class="btn red" data-bkadd>Add</button></div>
+    <div class="bkadd acwrap"><input id="bk-in" data-ac="band" autocomplete="off" maxlength="60" placeholder="Ex: Gojira" aria-label="Add a bucket list band"><div class="acbox" hidden></div><button class="btn red" data-bkadd>Add</button></div>
     ${list.length ? `<div class="tagrow bklist">${list.map((b, i) => { const k = normBand(b), st = going.has(k) ? "going" : seen.has(k) ? "seen" : "";
       return `<span class="chip bk ${st}">${st === "seen" ? "✓ " : ""}${esc(b)}${st === "going" ? ` <i>got tickets</i>` : st === "seen" ? ` <i>seen</i>` : ""}<button class="bkx" data-bkdel="${i}" aria-label="Remove ${esc(b)}">×</button></span>`; }).join("")}</div>`
       : `<div class="ro">Nothing yet. Try the bands you keep missing.</div>`}
@@ -2069,10 +2069,10 @@ function drawEdit(){
         ${g && e.photoURL !== g ? `<button class="btn ghost" data-avgoogle>Use Google photo</button>` : ""}
         ${e.photoURL ? `<button class="btn ghost" data-avnone>Use my initial</button>` : ""}
       </div></div>
-    <label class="field"><span class="lbl">Name</span><input id="pf-name" maxlength="40" value="${esc(e.name)}"></label>
-    <label class="field"><span class="lbl">Bio <span id="pf-count">${(e.bio||"").length}/140</span></span><textarea id="pf-bio" maxlength="140" placeholder="Doom, deathcore and barricade spots.">${esc(e.bio)}</textarea></label>
-    <div class="field"><span class="lbl">Top 5 bands</span><div class="top5edit">${e.favBands.map((b, i) => `<label><span class="num">${i + 1}</span><input id="pf-fav${i}" maxlength="40" list="dl-bands" value="${esc(b)}" placeholder="${i ? "" : "Katatonia"}" aria-label="Favorite band ${i + 1}"></label>`).join("")}</div></div>
-    <label class="field"><span class="lbl">Favorite venue</span><input id="pf-venue" maxlength="60" list="dl-venues" value="${esc(e.favVenue)}" placeholder="Union Transfer"></label>
+    <label class="field"><span class="lbl">Name</span><input id="pf-name" maxlength="40" value="${esc(e.name)}" placeholder="Ex: Sam Rivera"></label>
+    <label class="field"><span class="lbl">Bio <span id="pf-count">${(e.bio||"").length}/140</span></span><textarea id="pf-bio" maxlength="140" placeholder="Ex: Doom, deathcore and barricade spots.">${esc(e.bio)}</textarea></label>
+    <div class="field"><span class="lbl">Top 5 bands</span><div class="top5edit">${e.favBands.map((b, i) => `<label><span class="num">${i + 1}</span><input id="pf-fav${i}" maxlength="40" list="dl-bands" value="${esc(b)}" placeholder="${i ? "" : "Ex: Katatonia"}" aria-label="Favorite band ${i + 1}"></label>`).join("")}</div></div>
+    <label class="field"><span class="lbl">Favorite venue</span><input id="pf-venue" maxlength="60" list="dl-venues" value="${esc(e.favVenue)}" placeholder="Ex: Union Transfer"></label>
     <datalist id="dl-bands">${counts(S.shows.flatMap(lineup)).slice(0, 200).map(b => `<option value="${esc(b.name)}">`).join("")}</datalist>
     <datalist id="dl-venues">${[...new Set([...counts(S.shows.map(x => x.venue || "")).filter(v => v.name).map(v => v.name), ...VENUES.map(v => v.name)])].map(v => `<option value="${esc(v)}">`).join("")}</datalist>
     <label class="field"><span class="lbl">Username</span><div class="hrow"><span>@</span><input id="pf-handle" maxlength="20" value="${esc(e.handle)}" autocapitalize="none" spellcheck="false" ${handleLock() ? "disabled" : ""}></div></label>
@@ -2368,6 +2368,12 @@ function setAuthMode(m){
   $("#signinMsg").textContent = "";
 }
 document.querySelectorAll("[data-authmode]").forEach(b => b.addEventListener("click", () => setAuthMode(b.dataset.authmode)));
+// Landing page buttons jump to the sign-in box, already on the right tab.
+document.querySelectorAll("[data-goauth]").forEach(b => b.addEventListener("click", () => {
+  setAuthMode(b.dataset.goauth);
+  const j = document.getElementById("join"); if (j) j.scrollIntoView({ behavior: "smooth", block: "start" });
+  setTimeout(() => { const f = document.getElementById(b.dataset.goauth === "up" ? "auName" : "auEmail"); if (f) f.focus({ preventScroll: true }); }, 450);
+}));
 const AUTH_MSG = {
   "auth/invalid-email": "That email address doesn't look right.",
   "auth/missing-password": "Enter your password.",
