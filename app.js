@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile, applyActionCode } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=50";
+import { VENUES } from "./venues.js?v=51";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -539,7 +539,9 @@ async function baseCanvas(){
   const em = await loadImg("brand/emblem-256.webp"), wm = await loadImg("brand/wordmark-180.webp");
   if (em) x.drawImage(em, 70, 1700, 150, 150);
   if (wm) x.drawImage(wm, 236, 1730, 188, 90);
-  x.fillStyle = "#a2958d"; x.font = '700 30px "Barlow Condensed", sans-serif'; x.textAlign = "right"; x.fillText("THEPITLOG.COM", 1010, 1790); x.textAlign = "left";
+  x.fillStyle = "#a2958d"; x.font = '700 30px "Barlow Condensed", sans-serif'; x.textAlign = "right"; x.fillText("THEPITLOG.COM", 1010, 1790);
+  if (PROFILE && PROFILE.handle) { x.fillStyle = "#e0313a"; x.font = '700 40px "Barlow Condensed", sans-serif'; x.fillText("@" + PROFILE.handle, 1010, 1744); }
+  x.textAlign = "left";
   return { c, x };
 }
 async function deliverImage(c, name, title){
@@ -550,11 +552,21 @@ async function deliverImage(c, name, title){
   const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
   toast("Image saved. Share it from your photos.");
 }
+// Load a picture so it can be drawn into a share image. The poster on screen was loaded without CORS, and
+// some phones reuse that cached copy, which then can't go on a canvas, so fetch a fresh copy as a blob first.
+async function canvasImg(url){
+  if (!url) return null;
+  try {
+    const r = await fetch(url, { mode: "cors", cache: "no-store", credentials: "omit" });
+    if (r.ok) { const b = await r.blob(); const u = URL.createObjectURL(b); const im = await loadImg(u); setTimeout(() => URL.revokeObjectURL(u), 60000); if (im) return im; }
+  } catch (_) {}
+  return await loadImg(url + (url.includes("?") ? "&" : "?") + "pl=" + Date.now(), true);
+}
 async function shareShow(d){
   toast("Making your image…", 1500);
   const { c, x } = await baseCanvas();
   let y = 140;
-  if (d.poster) { const im = await loadImg(src(pid(d.poster)), true);
+  if (d.poster) { const im = await canvasImg(src(pid(d.poster)));
     if (im) { const h = 900, w = Math.min(860, im.width * h / im.height); try { x.save(); x.shadowColor = "rgba(0,0,0,.6)"; x.shadowBlur = 40; x.drawImage(im, (1080 - w) / 2, y, w, h); x.restore(); x.getImageData(0, 0, 1, 1); y += h + 60; } catch (_) { x.restore(); const r = await baseCanvas(); return drawShowText(r, d, 260); } } }
   return drawShowText({ c, x }, d, d.poster && y > 140 ? y : 300);
 }
@@ -2645,7 +2657,7 @@ function drawEdit(){
   const keep = () => { PEDIT.handle = $("#pf-handle").value; PEDIT.name = $("#pf-name").value; PEDIT.bio = $("#pf-bio").value; PEDIT.favBands = [0,1,2,3,4].map(i => $("#pf-fav" + i).value); PEDIT.favVenue = $("#pf-venue").value; };
   root.querySelector("[data-pcancel]").onclick = () => { if (PEDIT.photoPath && PEDIT.photoPath !== PROFILE.photoPath) removeFile(PEDIT.photoPath); if (PEDIT.coverPath && PEDIT.coverPath !== PROFILE.coverPath) removeFile(PEDIT.coverPath); PEDIT = null; root.innerHTML = ""; };
   const ca = root.querySelector("[data-coveradjust]"); if (ca) ca.onclick = async () => {
-    keep(); const img = PEDIT.coverSrc || await loadImg(PEDIT.coverURL, true);
+    keep(); const img = PEDIT.coverSrc || await canvasImg(PEDIT.coverURL);
     if (!img) { toast("Couldn't load your background. Choose it again with Change background.", 4000); return; }
     uploadCover(img);
   };
@@ -2653,7 +2665,7 @@ function drawEdit(){
   root.querySelector("[data-psave]").onclick = () => { keep(); saveProfileEdit(); };
   const gb = root.querySelector("[data-avgoogle]"); if (gb) gb.onclick = () => { keep(); dropPendingAvatar(); PEDIT.photoURL = g; PEDIT.photoPath = ""; drawEdit(); };
   const ab = root.querySelector("[data-avadjust]"); if (ab) ab.onclick = async () => {
-    const img = PEDIT.avSrc || await loadImg(PEDIT.photoURL, true);
+    const img = PEDIT.avSrc || await canvasImg(PEDIT.photoURL);
     if (!img) { toast("Couldn't load your photo. Choose it again with Change photo.", 4000); return; }
     uploadAvatar(img);
   };
