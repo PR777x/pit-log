@@ -34,3 +34,10 @@ listings in PA, NJ, DE and NY for the next 15 months from the Ticketmaster Disco
 - Needs a free Ticketmaster key (developer.ticketmaster.com → Consumer Key) saved as the GitHub
   secret `TICKETMASTER_API_KEY`. Without it the job skips quietly.
 - To change genres or states, edit `GENRES` / `STATES` in `functions/catalog.js`.
+
+## Backups and rolling back
+- **build 43** (before the full-review changes) is saved on the `backup/build-43` branch, and a working copy
+  of it runs at **thepitlog.com/classic/** (same accounts and data).
+- To put the whole site back (app, emails/functions and database rules): GitHub → Actions →
+  **Roll back to a backup** → Run workflow. Leave "Dry run" ticked first to see what would change,
+  then run again with it unticked.

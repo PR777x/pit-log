@@ -1,0 +1,76 @@
+name: Roll back to a backup
+
+# One click puts the whole site back to a saved build: the web app (GitHub Pages), the Cloud Functions
+# (emails, Discover catalog) and the database rules. Run it from Actions -> "Roll back to a backup" -> Run workflow.
+# "Dry run" (on by default) only shows what would change; untick it to actually roll back.
+on:
+  workflow_dispatch:
+    inputs:
+      backup:
+        description: "Backup branch to restore"
+        default: "backup/build-43"
+        required: true
+      dry_run:
+        description: "Dry run (just show what would change)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  pages: write
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Put the backup's files in place (keeps these workflows and the /classic copy)
+        env:
+          BACKUP: ${{ inputs.backup }}
+        run: |
+          git fetch origin "$BACKUP"
+          keep=$(mktemp -d); cp -r .github "$keep/"; [ -d classic ] && cp -r classic "$keep/" || true
+          git rm -rq --ignore-unmatch . && git clean -fdq
+          git checkout "origin/$BACKUP" -- .
+          rm -rf .github classic; cp -r "$keep/.github" .; [ -d "$keep/classic" ] && cp -r "$keep/classic" . || true
+          git add -A
+          echo "### Files that change" >> "$GITHUB_STEP_SUMMARY"
+          git diff --cached --stat HEAD | tail -40 | sed 's/^/    /' >> "$GITHUB_STEP_SUMMARY"
+          git diff --cached --stat HEAD | tail -5
+      - name: Commit and publish the web app
+        if: ${{ !inputs.dry_run }}
+        env:
+          BACKUP: ${{ inputs.backup }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git -c user.name="PR777x" -c user.email="PR777x@users.noreply.github.com" commit -qm "Roll back to $BACKUP" || echo "Nothing to change"
+          git push origin HEAD:main
+          # pushes made by this workflow don't start other workflows, so ask Pages to rebuild directly
+          gh api -X POST "repos/${{ github.repository }}/pages/builds" >/dev/null && echo "Pages rebuild requested"
+      - uses: actions/setup-node@v4
+        if: ${{ !inputs.dry_run }}
+        with:
+          node-version: 22
+      - name: Install function dependencies
+        if: ${{ !inputs.dry_run }}
+        working-directory: functions
+        run: npm install --no-audit --no-fund
+      - name: Prepare deploy credentials
+        if: ${{ !inputs.dry_run }}
+        env:
+          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          node -e '
+            const fs = require("fs");
+            let raw = process.env.SA.replace(/[\r\n\t]/g, "").trim();
+            if (!raw.startsWith("{")) raw = Buffer.from(raw, "base64").toString("utf8");
+            const key = JSON.parse(raw);
+            fs.writeFileSync(process.argv[1], JSON.stringify(key), { mode: 0o600 });
+          ' "$RUNNER_TEMP/sa.json"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/sa.json" >> "$GITHUB_ENV"
+      - name: Deploy the backup's functions and database rules
+        if: ${{ !inputs.dry_run }}
+        run: npx -y firebase-tools@latest deploy --only functions,firestore:rules --project pit-log --force --non-interactive
