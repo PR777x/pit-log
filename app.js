@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile, applyActionCode } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=46";
+import { VENUES } from "./venues.js?v=47";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -659,8 +659,8 @@ function renderShowView(fresh){
       <div class="vstat">${r ? `<div><span class="lbl">The show</span>${skulls(r)} <b>${fmtRating(r)}</b></div>` : ""}${pv ? `<div><span class="lbl">The pit</span>${bars(pv)} <b>${fmtRating(pv)}</b></div>` : ""}</div>
       ${d.highlight ? `<blockquote class="vquote">${esc(d.highlight)}</blockquote>` : ""}
     </div>` : ""}
-    <div class="sect"><h3>The bill</h3><div class="vbands">${lu.map(b => `<div class="vband"><span class="bn">${esc(b)}${d.best === b ? ` <span class="chip up">Best of the night</span>` : ""}</span>
-      <span class="tagrow">${Number(br[b]) ? skulls(Number(br[b])) : ""}<a class="chip spot" data-band="${esc(b)}" href="${spotifyUrl(b)}" target="_blank" rel="noopener" aria-label="Listen to ${esc(b)} on Spotify">▶ Listen</a></span></div>`).join("")}</div>
+    <div class="sect"><h3>The bill</h3><div class="vbands">${lu.map(b => `<div class="vband"><span class="bn">${esc(b)}${d.best === b ? `<span class="bestn">★ Best of the night</span>` : ""}</span>
+      <span class="tagrow vright">${Number(br[b]) ? skulls(Number(br[b])) : ""}<a class="chip spot" data-band="${esc(b)}" href="${spotifyUrl(b)}" target="_blank" rel="noopener" aria-label="Listen to ${esc(b)} on Spotify">▶ Listen</a></span></div>`).join("")}</div>
       ${up && d.date ? `<div class="tagrow" style="margin-top:10px"><a class="btn" href="${esc(googleCalUrl(d))}" target="_blank" rel="noopener">Google Calendar</a><button class="btn" data-ics1>Apple / other (.ics)</button></div>` : ""}
     </div>
     ${allSongs ? `<div class="sect"><h3>Setlist <span class="lbl">${allSongs} songs</span></h3>${Object.entries(songs).map(([b, list]) => `<div class="vset"><div class="lbl">${esc(b)}</div><ol>${(list || []).map(x => `<li>${esc(x)}</li>`).join("")}</ol></div>`).join("")}${d.setlistUrl ? `<div class="ro">From <a href="${esc(d.setlistUrl)}" target="_blank" rel="noopener">setlist.fm</a></div>` : ""}</div>`
@@ -1073,6 +1073,7 @@ document.addEventListener("click", e => {
   else if (t.id === "searchBtn") { S.tab = "search"; S.search.profile = null; renderTab(); window.scrollTo(0, 0); setTimeout(() => $("#sq") && $("#sq").focus(), 50); }
   else if (searchClick(t)) {}
   else if (t.hasAttribute("data-editprofile")) editProfile();
+  else if (t.hasAttribute("data-myprofile") && S.tab === "search") { S.search.profile = null; S.search.pub = null; S.pubView = "public"; S.tab = "me"; renderTab(); window.scrollTo(0, 0); }
   else if (t.hasAttribute("data-myprofile2")) { S.tab = "me"; renderTab(); window.scrollTo(0, 0); }
   else if (t.hasAttribute("data-crewtoggle")) { S.crewOn = !S.crewOn; try { localStorage.setItem("pitlog.crewOn", S.crewOn ? "1" : "0"); } catch (_) {} renderTab(); }
   else if (t.dataset.tagf) { readForm(); toggleTag(t.dataset.tagf); }

@@ -646,9 +646,13 @@ nav.tabs .bslot:empty{display:none}
 .vbars i.half{background:linear-gradient(90deg,var(--blood) 50%,var(--slab) 50%)}
 .vquote{margin:0;padding:10px 14px;border-left:3px solid var(--blood);background:var(--crypt);font-size:17px;font-style:italic;color:var(--bone)}
 .vbands{display:grid;gap:6px}
-.vband{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 10px;background:var(--void);border:1px solid var(--iron)}
+.vband{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 10px;background:var(--void);border:1px solid var(--iron)}
 .vband .bn{font-family:var(--f-label);font-weight:700;font-size:18px;color:var(--bone)}
 .vband .skulls svg{width:18px;height:18px}
+.vband .bn{min-width:0;overflow-wrap:anywhere}
+.vband .bestn{display:block;margin-top:2px;font-family:var(--f-label);font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--rust)}
+.vband .vright{flex:0 0 auto;flex-wrap:nowrap;justify-content:flex-end}
+@media(max-width:420px){.vband .skulls svg{width:15px;height:15px}}
 .chip.spot{text-decoration:none;color:#1ed760;border-color:rgba(30,215,96,.45)}
 .vtext{white-space:pre-wrap;color:var(--bone);line-height:1.55}
 .vset{margin:6px 0 10px}.vset ol{margin:6px 0 0;padding-left:22px;color:var(--bone);columns:2;column-gap:24px}
