@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=40";
+import { VENUES } from "./venues.js?v=41";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -63,6 +63,18 @@ const isCoHead = s => !!(s && s.coHead) && lineup(s).length > 1;
 const headline = s => { const lu = lineup(s); return isCoHead(s) ? lu[0] + " & " + lu[1] : (lu[0] || ""); };
 const support = s => lineup(s).slice(isCoHead(s) ? 2 : 1);
 const crew = s => Array.isArray(s.wentWith) ? s.wentWith.filter(Boolean) : [];
+// Who you went with, for Stats: names typed in "Went with" (matched to crew members whatever the spelling:
+// first name, full name or @handle), crew you tagged, and Crew Family on linked shows that are still in
+// their log too. Each person counts once per show.
+function companions(s){
+  const out = new Map(), fl = friendList();
+  const add = (key, label) => { if (!out.has(key)) out.set(key, label); };
+  const asFriend = f => add("u:" + f.uid, f.name || "@" + f.handle);
+  for (const n of crew(s)) { const f = fl.find(x => nameMatches(x, n)); if (f) asFriend(f); else add("n:" + n.trim().toLowerCase(), n.trim()); }
+  for (const t of tagsOf(s)) { const f = fl.find(x => x.uid === t.uid); if (f) asFriend(f); else add("n:" + String(t.name).trim().toLowerCase(), t.name); }
+  if (s.linkId) for (const f of fl) if (f.family && (f.raw || f.shows || []).some(x => x.linkId === s.linkId)) asFriend(f);
+  return [...out.values()];
+}
 // Crew tags: names in "Went with" linked to a friend's account. Stored on the show as
 // tagged: [{name, uid}] plus taggedUids: [uid] so friends can tell they were tagged.
 const tagsOf = s => Array.isArray(s && s.tagged) ? s.tagged.filter(t => t && t.uid && t.name) : [];
@@ -333,7 +345,7 @@ function orderSpend(s){
 function renderStats(){
   const all = sorted().filter(inYear), done = all.filter(s=>!isUpcoming(s)), up = all.filter(isUpcoming);
   if (!S.loaded || !all.length) { $("#view").innerHTML = `<div class="filters">${yearSeg()}${crewToggle()}</div><div class="empty" style="margin-top:16px"><h3>No stats yet</h3><div>Stats build up as shows are logged.</div></div>`; return; }
-  const bands = counts(done.flatMap(lineup)), venues = counts(done.map(s=>s.venue||"")), people = counts(done.flatMap(crew));
+  const bands = counts(done.flatMap(lineup)), venues = counts(done.map(s=>s.venue||"")), people = counts(done.flatMap(companions));
   const miles = done.reduce((a,s)=>a+(Number(s.miles)||0),0), tix = done.reduce((a,s)=>a+orderSpend(s),0), share = done.reduce((a,s)=>a+(perTicket(s)||0),0), withQty = done.filter(s=>Number(s.ticketQty)>0&&Number(s.ticketTotal)>0), qtySum = withQty.reduce((a,s)=>a+Number(s.ticketQty),0), avgTix = qtySum ? withQty.reduce((a,s)=>a+Number(s.ticketTotal),0)/qtySum : 0, merch = done.reduce((a,s)=>a+(Number(s.merchSpend)||0),0);
   const rated = done.filter(s=>Number(s.rating)>0);
   const avg = rated.length ? (rated.reduce((a,s)=>a+Number(s.rating),0)/rated.length).toFixed(1) : "–";
@@ -380,7 +392,7 @@ function renderStats(){
       <section><h2>Venues</h2>${rank(venues.filter(v=>v.name), venues[0]?.n||1)}</section>
       <section><h2>Repeat offenders</h2>${rank(repeats, repeats[0]?.n||1)}</section>
     </div>
-    <section><h2>The crew</h2>${people.length ? rank(people, people[0].n) : `<div class="ro">Add who you went with on each show and the crew leaderboard fills in.</div>`}</section>
+    <section><h2>The crew</h2>${people.length ? rank(people, people[0].n) + `<div class="ro" style="margin-top:6px">Counts names in Went with, crew you tagged, and Crew Family shows that are in both your logs.</div>` : `<div class="ro">Add who you went with on each show and the crew leaderboard fills in.</div>`}</section>
     <section><h2>Patches earned</h2><div class="badges">${badges.map(b=>`<div class="badge ${b.on?'on':'off'}"><div class="t">${esc(b.t)}</div><div class="d">${esc(b.d)}</div></div>`).join("")}</div></section>
   </div>`;
 }
