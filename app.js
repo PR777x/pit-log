@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=39";
+import { VENUES } from "./venues.js?v=40";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -1274,7 +1274,8 @@ async function loadRecent(){
 async function drawJustAnnounced(){
   const recent = await loadRecent(), box = $("#justann"); if (!box) return;
   const mine = new Set(S.shows.flatMap(lineup).map(normBand)), crewB = new Set(friendList().flatMap(f => (f.shows || []).flatMap(lineup)).map(normBand)), bucket = new Set(bucketOf(PROFILE).map(normBand));
-  const have = r => S.shows.some(s => s.date === r.d && lineup(s).some(b => r.l.some(x => normBand(x) === normBand(b))));
+  const MYK = myTourKeys();
+  const have = r => S.shows.some(s => s.date === r.d && lineup(s).some(b => r.l.some(x => normBand(x) === normBand(b)))) || onMyTour(MYK, r.l, !!r.c, r.t);
   const hits = recent.filter(r => r.d >= todayISO && !have(r)).map(r => ({ r, bk: r.l.some(b => bucket.has(normBand(b))), you: r.l.some(b => mine.has(normBand(b))), crew: r.l.some(b => crewB.has(normBand(b))) }))
     .filter(x => x.bk || x.you || x.crew).sort((a, b) => (b.bk - a.bk) || (b.you - a.you) || b.r.f.localeCompare(a.r.f) || a.r.d.localeCompare(b.r.d)).slice(0, 15);
   CAT.list = hits.map(x => catShow({ id: x.r.i, date: x.r.d, lineup: x.r.l, coHead: !!x.r.c, venue: x.r.v, city: x.r.y, tour: x.r.t, url: x.r.u }));
@@ -1284,7 +1285,7 @@ async function drawJustAnnounced(){
       <div class="pt"><div class="nm" style="font-size:20px">${esc(headline(sh))}</div>${sup.length ? `<div class="ro">w/ ${esc(sup.join(" · "))}</div>` : ""}<div class="ro">${esc([sh.venue, sh.city].filter(Boolean).join(" — "))}</div></div></button>
       <div class="tagrow who"><span class="lbl">${x.bk ? "On your bucket list" : x.you ? "You've seen them" : "Your crew's seen them"}</span>${ticketLink(sh.url)}<button class="chip catadd" data-catadd="${i}">+ Add to my log</button></div></div>`; }).join("")
     : `<div class="ro">Nothing new in the last two weeks for your bucket list or bands in your log.</div>`}</section>` : "") + `<div id="bkann"></div>`;
-  const sale = (await bucketOnSale()).filter(sh => !hits.some(x => x.r.i === sh.id.replace(/^cat_/, "")));
+  const sale = (await bucketOnSale()).filter(sh => !hits.some(x => x.r.i === sh.id.replace(/^cat_/, "")) && !onMyTour(MYK, lineup(sh), sh.coHead, sh.tour));
   const b2 = $("#bkann"); if (!b2 || !sale.length) return;
   BK.list = sale.slice(0, 10);
   b2.innerHTML = `<section class="sect"><h3>Bucket list: on sale <span class="lbl">${sale.length}</span></h3>${onSaleRows(BK.list, "data-bkcat")}${sale.length > 10 ? `<div class="ro">See all on your profile.</div>` : ""}</section>`;
@@ -2086,9 +2087,22 @@ function onSaleRows(list, attr){
       <div class="pt"><div class="nm" style="font-size:20px">${esc(headline(sh))}</div>${sup.length ? `<div class="ro">w/ ${esc(sup.join(" · "))}</div>` : ""}<div class="ro">${esc([sh.venue, sh.city].filter(Boolean).join(" — "))}</div></div></button>
       <div class="tagrow who">${mine ? `<span class="chip tog">In your log</span>` : `${ticketLink(sh.url)}<button class="chip catadd" ${attr}="${i}">+ Add to my log</button>`}</div></div>`; }).join("");
 }
+// Tours you already have a date for (an upcoming show in your log): matched by headliner/co-headliners,
+// or by tour name. Every date of such a tour is left out of the bucket list and Just announced lists.
+function myTourKeys(){
+  const keys = new Set();
+  for (const s of S.shows) if (isUpcoming(s) || s.date === todayISO) {
+    const lu = lineup(s); if (!lu.length) continue;
+    keys.add(tourGroupKey(lu, s.coHead)); keys.add("h:" + normBand(lu[0]));
+    if (s.tour && normBand(s.tour).length >= 4) keys.add("t:" + normBand(s.tour));
+  }
+  return keys;
+}
+const onMyTour = (keys, lu, co, tour) => keys.has(tourGroupKey(lu, co)) || keys.has("h:" + normBand(lu[0])) || (!!tour && keys.has("t:" + normBand(tour)));
 async function drawBucketShows(){
   const box = $("#bkshows"); if (!box) return;
-  const list = await bucketOnSale(); const b2 = $("#bkshows"); if (!b2) return;
+  const K = myTourKeys(), all = await bucketOnSale(); const b2 = $("#bkshows"); if (!b2) return;
+  const list = all.filter(sh => !onMyTour(K, lineup(sh), sh.coHead, sh.tour));
   BK.list = list.slice(0, 20);
   b2.innerHTML = `<h4 class="lbl" style="margin:16px 0 6px">On sale now · ${list.length} date${list.length === 1 ? "" : "s"}</h4>` +
     (list.length ? onSaleRows(BK.list, "data-bkcat") + (list.length > 20 ? `<div class="ro">and ${list.length - 20} more</div>` : "")

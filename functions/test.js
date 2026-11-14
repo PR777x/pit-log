@@ -254,6 +254,13 @@ const sentTo = who => emails.filter(e => e.to[0] === who + "@example.com");
   const wn = sentTo("pat")[0].html; assert.match(wn, /Just announced for you/); assert.match(wn, /On your bucket list/);
   assert.strictEqual(wn.split("The Fillmore Philadelphia").length - 1, 1, "new date listed once");
 
+  // 8b. a tour Pat already has a date for: no other dates of it in the recap
+  store.set("users/pat/shows/gojtix", { date: L.addDays(today, 30), lineup: ["Gojira", "Mastodon"], coHead: true, venue: "Xfinity Mobile Arena" });
+  emails.length = 0; await F.runRecap();
+  assert.ok(!/Still on sale: your bucket list/.test(sentTo("pat")[0].html) || !/Gojira &amp; Mastodon/.test(sentTo("pat")[0].html.split("Still on sale")[1] || ""), "tour already logged: other dates hidden");
+  assert.ok(!/The Fillmore Philadelphia/.test(sentTo("pat")[0].html.split("Just announced")[1] || ""), "new Gojira date hidden too");
+  store.delete("users/pat/shows/gojtix");
+
   // 9. Show reminders list every show in the next week, but only fire on 7-day / 1-day marks
   for (const k of [...store.keys()]) if (/\/(inbox|shows)\//.test(k) || k.startsWith("mail/") || k.startsWith("catalog")) store.delete(k);
   store.set("users/zz", { name: "Zed", handle: "zed" });

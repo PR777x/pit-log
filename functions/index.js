@@ -223,9 +223,14 @@ async function runRecap(now = new Date()){
     // Just announced (this week) for bands this person has logged, minus shows they already have.
     // ...and for bands on their bucket list (bands they want to see), which come first.
     const myBands = new Set(allMine.flatMap(s => L.lineup(s)).map(C.normBand).filter(Boolean));
+    // Tours they already have a date for: skip every other date of that tour.
+    const tourKey = (lu, co) => { const k = lu.map(C.normBand); return co && k[1] ? "c:" + [k[0], k[1]].sort().join("+") : "h:" + (k[0] || ""); };
+    const myTours = new Set();
+    for (const s of allMine) if (s.date >= today && L.lineup(s).length) { const lu = L.lineup(s); myTours.add(tourKey(lu, s.coHead)); myTours.add("h:" + C.normBand(lu[0])); if (s.tour && C.normBand(s.tour).length >= 4) myTours.add("t:" + C.normBand(s.tour)); }
+    const onMyTour = (lu, co, tour) => myTours.has(tourKey(lu, co)) || myTours.has("h:" + C.normBand(lu[0] || "")) || (!!tour && myTours.has("t:" + C.normBand(tour)));
     const bucket = new Set((Array.isArray(u.data().bucket) ? u.data().bucket : []).map(C.normBand).filter(Boolean));
     const announced = recent.filter(r => r.f >= weekAgo && r.d >= today && r.l.some(b => myBands.has(C.normBand(b)) || bucket.has(C.normBand(b))))
-      .filter(r => !allMine.some(s => L.sameShow(s, { date: r.d, lineup: r.l, venue: r.v })))
+      .filter(r => !allMine.some(s => L.sameShow(s, { date: r.d, lineup: r.l, venue: r.v })) && !onMyTour(r.l, !!r.c, r.t))
       .map(r => ({ r, bk: r.l.some(b => bucket.has(C.normBand(b))) })).sort((a, b) => (b.bk - a.bk) || a.r.d.localeCompare(b.r.d))
       .slice(0, 8).map(({ r, bk }) => ({ ...L.showSummary({ date: r.d, lineup: r.l, coHead: !!r.c, venue: r.v, city: r.y }), url: r.u, note: bk ? "On your bucket list" : "" }));
     // Bucket list bands with dates already on sale (announced before this week, or before the catalog started).
@@ -238,7 +243,7 @@ async function runRecap(now = new Date()){
       }
     }
     const shownNow = new Set(announced.map(a => a.date + "|" + a.venue));
-    const bucketOnSale = onSale.filter(c => !shownNow.has(c.date + "|" + c.venue) && !allMine.some(s => L.sameShow(s, c)))
+    const bucketOnSale = onSale.filter(c => !shownNow.has(c.date + "|" + c.venue) && !allMine.some(s => L.sameShow(s, c)) && !onMyTour(L.lineup(c), c.coHead, c.tour))
       .sort((a, b) => a.date.localeCompare(b.date)).filter((c, i, arr) => arr.findIndex(x => x.date === c.date && x.venue === c.venue) === i)
       .slice(0, 6).map(c => ({ ...L.showSummary(c), url: c.url || "" }));
     const upcoming = mine.map(s => ({ raw: s, show: L.showSummary(s, s.id), crew: [] }));
