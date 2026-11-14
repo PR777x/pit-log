@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile, applyActionCode } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=47";
+import { VENUES } from "./venues.js?v=48";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -552,13 +552,23 @@ async function shareShow(d){
   return drawShowText({ c, x }, d, d.poster && y > 140 ? y : 300);
 }
 async function drawShowText({ c, x }, d, y){
-  const p = parse(d.date);
+  const p = parse(d.date), up = isUpcoming(d), r = Number(d.rating) || 0;
+  // Status line: going vs. went, said as "we" when someone else came along, or by name for a crew member's show.
+  const other = S.openFriend && ME && S.openFriend !== ME.uid ? FR[S.openFriend] : null;
+  const who = other ? String(other.name || "@" + (other.handle || "they")).split(" ")[0] : null;
+  const group = tagsOf(d).length || (d.wentWith || []).filter(Boolean).length;
+  const days = Math.round((Date.parse(d.date) - Date.parse(todayISO)) / 864e5);
+  const when = days <= 0 ? "TONIGHT" : days === 1 ? "TOMORROW" : `IN ${days} DAYS`;
+  const status = up ? (who ? `${who.toUpperCase()} IS GOING` : group ? "WE'RE GOING" : "I'M GOING") + " · " + when
+    : (who ? `${who.toUpperCase()} WAS THERE` : group ? "WE WERE THERE" : "I WAS THERE") + " · " + (days >= -1 ? "LAST NIGHT" : days > -7 ? `${-days} DAYS AGO` : String(p.y));
+  x.font = '700 40px "Barlow Condensed", sans-serif'; const sw = x.measureText(status).width + 48;
+  x.fillStyle = up ? "#e0313a" : "#ece4d4"; x.fillRect(80, y - 44, sw, 64);
+  x.fillStyle = up ? "#ece4d4" : "#0e0b0c"; x.fillText(status, 104, y + 2); y += 100;
   x.fillStyle = "#e0313a"; x.font = '700 44px "Barlow Condensed", sans-serif'; x.fillText(new Date(p.dt).toLocaleDateString(undefined, { weekday: "short", month: "long", day: "numeric", year: "numeric" }).toUpperCase(), 80, y); y += 110;
   x.fillStyle = "#ece4d4"; x.font = '400 120px "Pirata One", Georgia, serif'; y = wrapText(x, headline(d) || "A show", 80, y, 920, 118, 2);
   if (support(d).length) { x.fillStyle = "#c9bfb3"; x.font = '500 44px "Barlow", sans-serif'; y = wrapText(x, "w/ " + support(d).join(" · "), 80, y + 6, 920, 56, 2); }
   x.fillStyle = "#a2958d"; x.font = '500 42px "Barlow", sans-serif'; y = wrapText(x, [d.venue, d.city].filter(Boolean).join(" · "), 80, y + 20, 920, 54, 2);
-  const r = Number(d.rating) || 0;
-  if (r && !isUpcoming(d)) { y += 40; drawSkulls(x, 80, y, 70, r); y += 120; }
+  if (r && !up) { y += 40; drawSkulls(x, 80, y, 70, r); x.fillStyle = "#ece4d4"; x.font = '700 56px "Barlow Condensed", sans-serif'; x.fillText(`${fmtRating(r)} / 5`, 500, y + 56); y += 120; }
   if (d.highlight && !isUpcoming(d) && y < 1560) { x.fillStyle = "#ece4d4"; x.font = 'italic 400 44px "Barlow", sans-serif'; y = wrapText(x, "“" + d.highlight + "”", 80, y + 10, 920, 58, 3); }
   if (isUpcoming(d)) { x.fillStyle = "#e0313a"; x.font = '700 50px "Barlow Condensed", sans-serif'; x.fillText("SEE YOU IN THE PIT", 80, y + 60); }
   await deliverImage(c, `pit-log-${slug(d)}.png`, headline(d));
