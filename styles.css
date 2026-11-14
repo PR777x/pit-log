@@ -687,3 +687,15 @@ nav.tabs .bslot:empty{display:none}
   nav.tabs .tabscroll button,nav.tabs .navhome{flex:1 1 0}
   .toast{bottom:calc(84px + env(safe-area-inset-bottom,0px))!important}
 }
+
+/* ---------- Profile background picture ---------- */
+.pcover{height:150px;margin:-4px -2px 0;background:#000 center/cover no-repeat;border:1px solid var(--iron);border-bottom:0;position:relative}
+.pcover::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(14,11,12,0) 40%,rgba(14,11,12,.85))}
+.prof-top.hascover{margin-top:-58px;position:relative;z-index:1;padding-left:12px;flex-direction:column;align-items:flex-start;gap:10px}
+.prof-top.hascover .prof-id{padding-left:0}
+.prof-top.hascover .av-xl,.prof-top.hascover .avatar{box-shadow:0 0 0 4px var(--void)}
+@media(min-width:600px){.pcover{height:210px}}
+.coveredit{height:110px;border:1px dashed var(--iron);background:#000 center/cover no-repeat;display:grid;place-items:center;text-align:center;padding:10px;margin-bottom:8px}
+.coveredit:not(.empty){border-style:solid}
+.pubnote{padding:10px 12px;border:1px solid var(--rust);background:rgba(201,118,47,.12);color:var(--bone);font-size:14px;margin:6px 0 10px}
+.chip.spot.exact{color:#1ed760}

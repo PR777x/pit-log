@@ -17,6 +17,7 @@ const crypto = require("crypto");
 const L = require("./lib");
 const C = require("./catalog");
 const S = require("./setlists");
+const A = require("./artists");
 
 initializeApp();
 const DB_ID = "pit-log";
@@ -379,6 +380,20 @@ exports.onUserCreated = onDocumentCreated({ document: "users/{uid}", database: D
 });
 // Called by the app (signed in): { action: "resend" } re-sends the confirm link; { action: "welcome" }
 // sends the welcome once the email is confirmed.
+// Spotify artist page per band, cached in artistLinks/{key} (re-checked after 30 days, misses after 7).
+async function artistLinks(bands, opts){
+  const out = {};
+  for (const b of bands) {
+    const key = A.norm(b); if (!key) continue;
+    const ref = db.doc(`artistLinks/${key}`), c = await ref.get();
+    const age = c.exists ? Date.now() - (c.data().at || 0) : Infinity;
+    if (c.exists && age < (c.data().spotify ? 30 : 7) * 864e5) { out[b] = c.data().spotify || ""; continue; }
+    try { const r = await A.lookup(b, opts); out[b] = r.spotify; await ref.set({ name: b, spotify: r.spotify, mbid: r.mbid, at: Date.now() }); }
+    catch (e) { logger.warn("artist lookup", b, e.message); out[b] = ""; }
+  }
+  return out;
+}
+module.exports.artistLinks = artistLinks;
 // Deletes everything a person owns: their shows, photos, public copies, username, crew links and login.
 async function deleteAccount(uid){
   const wipe = async q => { for (;;) { const snap = await q.limit(400).get(); if (!snap.docs.length) return; const b = db.batch(); snap.docs.forEach(d => b.delete(d.ref)); await b.commit(); if (snap.docs.length < 400) return; } };
@@ -410,6 +425,10 @@ exports.account = onRequest({ cors: [/thepitlog\.com$/, /localhost/, /pr777x\.gi
     if ((req.body && req.body.confirm) !== "DELETE") return res.status(400).json({ error: "type DELETE to confirm" });
     await deleteAccount(uid);
     return res.json({ result: "deleted" });
+  }
+  if (action === "artistLinks") {
+    const bands = (Array.isArray(req.body && req.body.bands) ? req.body.bands : []).map(String).filter(Boolean).slice(0, 8);
+    return res.json({ links: await artistLinks(bands) });
   }
   if (action === "setlist" || action === "setlistImport") {
     const key = SETLISTFM_API_KEY.value();

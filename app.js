@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile, applyActionCode } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=44";
+import { VENUES } from "./venues.js?v=45";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -76,10 +76,10 @@ async function familyAnswer(id, went){
 function familyReview(){
   const list = S.shows.filter(familyPending).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
   if (!list.length) { $("#modalRoot").innerHTML = ""; return; }
-  $("#modalRoot").innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-label="Were you there?"><div class="mbox famrev">
-    <h3>Were you there?</h3><div class="ro">These came from your Crew Family's log. Keep the ones you went to; "No" removes it from your log only.</div>
+  $("#modalRoot").innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-label="Are these yours too?"><div class="mbox famrev">
+    <h3>Are these yours too?</h3><div class="ro">These came from your Crew Family's log. Keep the shows you went to or are going to. "Not mine" removes it from your log only; theirs stays.</div>
     <div class="famlist">${list.slice(0, 60).map(x => `<div class="famrow"><div><b>${esc(headline(x))}</b><div class="ro">${esc(fmtDate(x.date))}${x.venue ? " · " + esc(x.venue) : ""}</div></div>
-      <span class="tagrow"><button class="btn sm red" data-fy="${esc(x.id)}">Yes</button><button class="btn sm" data-fn="${esc(x.id)}">No</button></span></div>`).join("")}</div>
+      <span class="tagrow"><button class="btn sm red" data-fy="${esc(x.id)}">Yes</button><button class="btn sm" data-fn="${esc(x.id)}">Not mine</button></span></div>`).join("")}</div>
     <div class="mbtns"><button class="btn ghost" data-mclose>Later</button><button class="btn red" data-fyall>Yes to all ${list.length}</button></div></div></div>`;
   const root = $("#modalRoot");
   root.onclick = async e => {
@@ -91,7 +91,7 @@ function familyReview(){
       root.innerHTML = ""; root.onclick = null; toast(`Kept ${ids.length} show${ids.length > 1 ? "s" : ""}`); }
   };
 }
-// Who you went with, for Stats: names typed in "Went with" (matched to crew members whatever the spelling:
+// Who you went with, for Stats (Crew Family on a linked show counts unless they removed it as "not mine"): names typed in "Went with" (matched to crew members whatever the spelling:
 // first name, full name or @handle), crew you tagged, and Crew Family on linked shows that are still in
 // their log too. Each person counts once per show.
 function companions(s){
@@ -104,7 +104,7 @@ function companions(s){
   if (s.linkId) for (const f of fl) if (f.family) {
     if (s.addedBy === f.uid) { asFriend(f); continue; }
     const p = (f.raw || f.shows || []).find(x => x.linkId === s.linkId);
-    if (p && (p.addedBy !== ME.uid || p.familyOk)) asFriend(f);
+    if (p) asFriend(f); // in both logs: counts until they say "Not mine" (which removes their copy)
   }
   return [...out.values()];
 }
@@ -171,7 +171,7 @@ function ticket(s, firsts, opts){
       ${sup.length ? `<div class="sup"><b>w/</b> ${esc(sup.join(" · "))}</div>` : ""}
       <div class="venue">${esc([s.venue, s.city].filter(Boolean).join(" — ") || "Venue unknown")}</div>
       <div class="chips">
-        ${up ? `<span class="chip up">Upcoming</span>` : ""}${s.endDate && s.endDate > s.date ? `<span class="chip">Festival · ${daysBetweenIso(s.date, s.endDate) + 1} days</span>` : ""}${familyPending(s) ? `<span class="chip unsure">Were you there?</span>` : ""}
+        ${up ? `<span class="chip up">Upcoming</span>` : ""}${s.endDate && s.endDate > s.date ? `<span class="chip">Festival · ${daysBetweenIso(s.date, s.endDate) + 1} days</span>` : ""}${familyPending(s) ? `<span class="chip unsure">Yours too?</span>` : ""}
         ${s.unsure ? `<span class="chip unsure">Unconfirmed</span>` : ""}
         ${!up && rating ? `<span class="skulls" aria-label="${fmtRating(rating)} of 5">${[1,2,3,4,5].map(i=>SKULLV(rating, i)).join("")}</span>` : ""}
         ${crew(s).map(c=>{ const tg = tagFor(s, c); const h = tg && FR[tg.uid] ? FR[tg.uid].handle : ""; return `<span class="chip crew${tg?" tg":""}"${h?` title="@${esc(h)}"`:""}>${esc(c)}</span>`; }).join("")}
@@ -236,7 +236,7 @@ function renderShows(){
   </div>` : ""}
   ${active.length ? `<div class="tagrow fchips">${active.map(([l, a, v]) => `<button class="chip fchip" ${a}="${v}" aria-label="Remove filter ${esc(l)}">${esc(l)} ×</button>`).join("")}</div>` : ""}` + statusBlock();
   const famN = S.shows.filter(familyPending).length;
-  if (famN) html += `<button class="fambanner" data-famreview><b>${famN} show${famN > 1 ? "s" : ""} from your Crew Family's log.</b> Were you there? Tap to review.</button>`;
+  if (famN) html += `<button class="fambanner" data-famreview><b>${famN} show${famN > 1 ? "s" : ""} added from your Crew Family's log.</b> Are they yours too? Tap to review.</button>`;
   if (!S.loaded) {}
   else if (!S.shows.length) html += `<div class="empty"><h3>No shows logged</h3><div>Tap <b>+ Add show</b> to log your first night in the pit.</div></div>`;
   else if (!list.length) html += `<div class="empty"><h3>Nothing matches</h3><div>Try another band, venue or name.</div></div>`;
@@ -613,7 +613,17 @@ function openWrapped(year){
 
 /* ---------- Show view (read-only; Edit button for your own) ---------- */
 const daysBetweenIso = (a, b) => Math.round((parse(b).dt - parse(a).dt) / 864e5);
-const spotifyUrl = b => `https://open.spotify.com/search/${encodeURIComponent(b)}`;
+const spotifyUrl = b => SPOT.get(normBand(b)) || `https://open.spotify.com/search/${encodeURIComponent(b)}`;
+// Real artist pages: the server looks each band up (MusicBrainz → Spotify link) and caches it.
+const SPOT = new Map(), SPOT_ASKED = new Set();
+async function resolveSpotify(bands){
+  const need = bands.filter(b => b && !SPOT_ASKED.has(normBand(b))).slice(0, 8); if (!need.length || !ME) return;
+  need.forEach(b => SPOT_ASKED.add(normBand(b)));
+  try { const r = await callAccount("artistLinks", { bands: need }); let changed = false;
+    for (const [b, url] of Object.entries(r.links || {})) if (url) { SPOT.set(normBand(b), url); changed = true; }
+    if (changed) document.querySelectorAll("a.chip.spot[data-band]").forEach(a => { const u = SPOT.get(normBand(a.dataset.band)); if (u) { a.href = u; a.classList.add("exact"); } });
+  } catch (_) {}
+}
 const dateRange = d => { const a = parse(d.date), fmt = x => new Date(x.dt).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" });
   if (!d.endDate || d.endDate <= d.date) return d.date ? fmt(a) : ""; const b = parse(d.endDate);
   return `${new Date(a.dt).toLocaleDateString(undefined, { month: "short", day: "numeric" })} – ${fmt(b)}`; };
@@ -633,7 +643,7 @@ function renderShowView(fresh){
   $("#sheetRoot").innerHTML = `<div class="sheet" role="dialog" aria-modal="true" aria-label="Show details"><div class="panel sview">
     <div class="ptop"><button class="btn ghost" data-close>← Back</button>
       <span class="tagrow">${ro ? `<span class="ro">${esc((FR[S.openFriend]?.name || "Friend") + "'s show")}</span>` : ""}<button class="btn" data-share aria-label="Share this show">Share</button>${ro ? "" : `<button class="btn red" data-editmode>Edit</button>`}</span></div>
-    ${pending ? `<div class="fampend">From @${esc(FR[d.addedBy]?.handle || "your Crew Family")}'s log. Were you there? <span class="tagrow"><button class="btn sm red" data-famyes="${esc(d.id)}">Yes, I went</button><button class="btn sm" data-famno="${esc(d.id)}">No, remove it</button></span></div>` : ""}
+    ${pending ? `<div class="fampend">Added from @${esc(FR[d.addedBy]?.handle || "your Crew Family")}'s log. Is this one yours too? <span class="tagrow"><button class="btn sm red" data-famyes="${esc(d.id)}">Yes, keep it</button><button class="btn sm" data-famno="${esc(d.id)}">Not mine, remove it</button></span></div>` : ""}
     <div class="vhero${d.poster ? " hasposter" : ""}">
       ${d.poster ? `<button class="vposter" data-lbi="0" aria-label="View poster"><img src="${src(pid(d.poster))}" alt="Tour poster"></button>` : ""}
       <div class="vhead">
@@ -650,7 +660,7 @@ function renderShowView(fresh){
       ${d.highlight ? `<blockquote class="vquote">${esc(d.highlight)}</blockquote>` : ""}
     </div>` : ""}
     <div class="sect"><h3>The bill</h3><div class="vbands">${lu.map(b => `<div class="vband"><span class="bn">${esc(b)}${d.best === b ? ` <span class="chip up">Best of the night</span>` : ""}</span>
-      <span class="tagrow">${Number(br[b]) ? skulls(Number(br[b])) : ""}<a class="chip spot" href="${spotifyUrl(b)}" target="_blank" rel="noopener" aria-label="Listen to ${esc(b)} on Spotify">▶ Listen</a></span></div>`).join("")}</div>
+      <span class="tagrow">${Number(br[b]) ? skulls(Number(br[b])) : ""}<a class="chip spot" data-band="${esc(b)}" href="${spotifyUrl(b)}" target="_blank" rel="noopener" aria-label="Listen to ${esc(b)} on Spotify">▶ Listen</a></span></div>`).join("")}</div>
       ${up && d.date ? `<div class="tagrow" style="margin-top:10px"><a class="btn" href="${esc(googleCalUrl(d))}" target="_blank" rel="noopener">Google Calendar</a><button class="btn" data-ics1>Apple / other (.ics)</button></div>` : ""}
     </div>
     ${allSongs ? `<div class="sect"><h3>Setlist <span class="lbl">${allSongs} songs</span></h3>${Object.entries(songs).map(([b, list]) => `<div class="vset"><div class="lbl">${esc(b)}</div><ol>${(list || []).map(x => `<li>${esc(x)}</li>`).join("")}</ol></div>`).join("")}${d.setlistUrl ? `<div class="ro">From <a href="${esc(d.setlistUrl)}" target="_blank" rel="noopener">setlist.fm</a></div>` : ""}</div>`
@@ -665,7 +675,7 @@ function renderShowView(fresh){
       <div class="cform"><input id="cin" maxlength="500" placeholder="${owner === (ME && ME.uid) ? "Add a note for your crew…" : "Say something…"}" aria-label="Write a comment"><button class="btn red" data-cpost>Post</button></div></div>
   </div></div>`;
   const sh = $("#sheetRoot .sheet"); if (sh && !fresh) sh.scrollTop = scroll;
-  loadComments();
+  loadComments(); resolveSpotify(lu);
 }
 // Comments live at showComments/{ownerUid}__{showId}/c. The owner's crew can read and write.
 const cKey = () => `${S.openFriend || ME.uid}__${draft.id}`;
@@ -1041,6 +1051,7 @@ document.addEventListener("click", e => {
   else if (t.hasAttribute("data-calexport")) exportMenu();
   else if (t.hasAttribute("data-addband")) { readForm(); S.luExtra = (S.luExtra || 0) + 1; renderSheet(); const ins = document.querySelectorAll(".lu-in"); if (ins.length) ins[ins.length - 1].focus(); }
   else if (t.hasAttribute("data-backup")) downloadBackup();
+  else if (t.hasAttribute("data-viewpublic")) openProfile(ME.uid, true);
   else if (t.hasAttribute("data-slimport")) importSetlistFm();
   else if (t.hasAttribute("data-delacct")) deleteAccountFlow();
   else if (t.hasAttribute("data-ics1")) { if (draft) { readForm(); deliverIcs([draft], `${slug(draft)}-${draft.date}.ics`); } }
@@ -1099,6 +1110,7 @@ document.addEventListener("change", e => {
   if (e.target.classList && e.target.classList.contains("lu-in") && draft) { readForm(); refreshBest(); }
   if (e.target.id === "f-multi" && draft) { readForm(); S.multiOpen = e.target.checked; if (!e.target.checked) draft.endDate = ""; renderSheet(); }
   if (e.target.id === "f-cohead" && draft) { readForm(); const n = $(".lu2 .lunum"); if (n) n.textContent = draft.coHead ? "CO" : "2"; const t = $(".ptitle"); if (t) t.textContent = headline(draft) || "New show"; }
+  if (e.target.id === "coverFile") { const f = e.target.files && e.target.files[0]; e.target.value = ""; if (f) uploadCover(f); }
   if (e.target.id === "avatarFile") { const f = e.target.files && e.target.files[0]; e.target.value = ""; if (f) uploadAvatar(f); }
   if (e.target.id === "importFile") { const f = e.target.files && e.target.files[0]; e.target.value = ""; if (f) importFile(f); }
 });
@@ -1262,7 +1274,7 @@ function watchFriend(uid, info){
     if (f.family) { applyPrivacy(f); scheduleFamilySync(); }
     rerenderSoft();
   }, err => { f.err = err.code === "permission-denied" ? "Their log isn't shared with you yet." : "Couldn't load their log."; f.loaded = true; rerenderSoft(); });
-  f.unsubP = onSnapshot(doc(fdb, "users", uid), p => { if (p.exists()) { const d = p.data(); f.live = true; Object.assign(f, { name: d.name || f.name, handle: d.handle || f.handle, photo: d.photoURL || f.photo, bio: d.bio || "", favBand: d.favBand || "", favBands: d.favBands || [], favVenue: d.favVenue || "", settings: d.settings || {}, interested: Array.isArray(d.interested) ? d.interested : [], bucket: Array.isArray(d.bucket) ? d.bucket : [] }); applyPrivacy(f); rerenderSoft(); } }, () => {});
+  f.unsubP = onSnapshot(doc(fdb, "users", uid), p => { if (p.exists()) { const d = p.data(); f.live = true; Object.assign(f, { name: d.name || f.name, handle: d.handle || f.handle, photo: d.photoURL || f.photo, bio: d.bio || "", favBand: d.favBand || "", favBands: d.favBands || [], favVenue: d.favVenue || "", settings: d.settings || {}, interested: Array.isArray(d.interested) ? d.interested : [], bucket: Array.isArray(d.bucket) ? d.bucket : [], cover: d.coverURL || "" }); applyPrivacy(f); rerenderSoft(); } }, () => {});
 }
 // Friends' privacy settings decide what this app shows of their log. f.raw keeps the full
 // docs for Crew Family syncing; everything you see goes through f.shows.
@@ -1531,9 +1543,9 @@ function drawSearchResults(){
   box.innerHTML = h;
   if (!res && m === "bands") drawJustAnnounced();
 }
-async function openProfile(uid){
-  if (uid === ME.uid) { S.tab = "me"; renderTab(); window.scrollTo(0, 0); return; }
-  if (FR[uid]) { S.tab = "crew"; S.crewSel = uid; S.crewView = "shows"; renderTab(); window.scrollTo(0, 0); return; }
+async function openProfile(uid, asPublic){
+  if (uid === ME.uid && !asPublic) { S.tab = "me"; renderTab(); window.scrollTo(0, 0); return; }
+  if (FR[uid] && !asPublic) { S.tab = "crew"; S.crewSel = uid; S.crewView = "shows"; renderTab(); window.scrollTo(0, 0); return; }
   S.tab = "search"; S.search.profile = uid; S.search.pub = null; renderTab(); window.scrollTo(0, 0);
   try {
     const [u, shows] = await Promise.all([getDoc(doc(fdb, "users", uid)), getDocs(query(collection(fdb, "publicShows"), where("ownerUid", "==", uid)))]);
@@ -1543,19 +1555,21 @@ async function openProfile(uid){
 }
 function renderPublicProfile(uid){
   const P = S.search.pub;
-  const back = `<button class="btn ghost" data-sback style="justify-self:start">← Search</button>`;
+  const self = uid === ME.uid;
+  const back = self ? `<button class="btn ghost" data-myprofile style="justify-self:start">← My profile</button>` : `<button class="btn ghost" data-sback style="justify-self:start">← Search</button>`;
   if (!P || P.uid !== uid) { $("#view").innerHTML = `<div class="crew">${back}<div class="ro">Loading…</div></div>`; return; }
   const u = P.user, set = settingsOf(u), rel = relationOf(uid);
   if (isBlocked(u)) { $("#view").innerHTML = `<div class="crew">${back}<div class="empty"><h3>Not available</h3><div>${myBlocks().includes(uid) ? `You blocked this account. <button class="linkbtn" data-unblock="${esc(uid)}">Unblock</button>` : "This profile isn't available."}</div></div></div>`; return; }
   const shows = [...P.shows].sort((a, b) => (b.date || "").localeCompare(a.date || "")), done = shows.filter(x => !isUpcoming(x));
-  const top = profileTop({ name: u.name, handle: u.handle, photo: u.photoURL, bio: u.bio, favBands: favList(u), favVenue: u.favVenue || "" }, false, null);
+  const top = profileTop({ name: u.name, handle: u.handle, photo: u.photoURL, cover: u.coverURL || "", bio: u.bio, favBands: favList(u), favVenue: u.favVenue || "" }, false, null);
   const act = rel === "sent" ? `<span class="chip unsure">Request sent</span>` : rel === "asked" ? `<button class="btn red" data-sacceptfrom="${esc(uid)}">Accept their request</button>` : `<button class="btn red" data-sadd="${esc(u.handle || "")}">Add to crew</button>`;
   const bands = counts(done.flatMap(lineup)), venues = counts(done.map(x => x.venue || "")).filter(v => v.name);
   const tile = (l, v) => `<div class="tile"><div class="lbl">${l}</div><div class="v num">${v}</div></div>`;
   const stats = set.stats === "public" && shows.length ? `<div class="tiles">${tile("Shows", done.length)}${tile("Bands seen", bands.length)}${tile("Venues", venues.length)}</div>` : "";
   const list = shows.length ? `<section class="sect"><h3>Shows <span class="lbl">${shows.length}</span></h3><div class="list">${shows.map(pubTicket).join("")}</div></section>`
     : `<div class="empty"><h3>Nothing public</h3><div>@${esc(u.handle || "")} keeps their shows to their crew. Add them to see more once they accept.</div></div>`;
-  $("#view").innerHTML = `<div class="crew">${back}<section class="prof">${top}</section><div class="prof-act">${act}</div>${stats}${list}${safetyRow(uid, u.handle)}</div>`;
+  const note = self ? `<div class="pubnote"><b>Public preview.</b> This is what people outside your crew see${settingsOf(u).searchable === "public" ? " (and can find in search)" : ". You're hidden from search"}. Change what's shown in Settings → Privacy.</div>` : "";
+  $("#view").innerHTML = `<div class="crew">${back}${note}<section class="prof">${top}</section>${self ? "" : `<div class="prof-act">${act}</div>`}${stats}${list}${self ? "" : safetyRow(uid, u.handle)}</div>`;
 }
 // Read-only card for a public show (only the fields its owner made public are present).
 function pubTicket(sh){
@@ -2365,14 +2379,14 @@ function familyBlock(f){
 // Top 5 bands (older profiles only have a single favBand) and a favorite venue.
 const favList = x => (x ? (Array.isArray(x.favBands) && x.favBands.filter(Boolean).length ? x.favBands : x.favBand ? [x.favBand] : []) : []).filter(Boolean).slice(0, 5);
 function profileTop(p, isMe, f){
-  return `<div class="prof-top">${avatar(p.photo, p.name, "xl")}
+  return `${p.cover ? `<div class="pcover" style="background-image:url('${esc(src(p.cover))}')" role="img" aria-label="Profile background"></div>` : ""}<div class="prof-top${p.cover ? " hascover" : ""}">${avatar(p.photo, p.name, "xl")}
     <div class="prof-id"><div class="pname">${esc(p.name || p.handle || "")}</div>
       <div class="hd">@${esc(p.handle || "")}${f && f.family ? ` <span class="chip fam">Crew Family</span>` : ""}</div>
       ${p.bio ? `<p class="pbio">${esc(p.bio)}</p>` : isMe ? `<p class="pbio ro">Add a short bio so your crew knows what you're about.</p>` : ""}
       ${(p.favBands || []).length ? `<div class="pfav"><span class="lbl">${p.favBands.length > 1 ? `Top ${p.favBands.length} bands` : "Favorite band"}</span><ol class="top5">${p.favBands.map((b, i) => `<li><span class="num">${i + 1}</span>${esc(b)}</li>`).join("")}</ol></div>` : ""}
       ${p.favVenue ? `<div class="pfav"><span class="lbl">Favorite venue</span> <b>${esc(p.favVenue)}</b></div>` : ""}
     </div></div>
-    ${isMe ? `<div class="prof-act"><button class="btn red" data-editprofile>Edit profile</button><span class="ro">This is what your crew sees.</span></div>` : ""}`;
+    ${isMe ? `<div class="prof-act"><button class="btn red" data-editprofile>Edit profile</button><button class="btn" data-viewpublic>View public profile</button><span class="ro">This is what your crew sees.</span></div>` : ""}`;
 }
 function showRow(s, ownerUid, label){
   if (!s) return "";
@@ -2406,7 +2420,7 @@ function renderMe(){
   if (!PROFILE) return;
   const openNow = [...document.querySelectorAll("[data-setgrp]")];
   if (openNow.length) S.setOpen = new Set(openNow.filter(d => d.open).map(d => d.dataset.setgrp));
-  $("#view").innerHTML = `<div class="crew">${profileBlock({ uid: ME.uid, name: PROFILE.name, handle: PROFILE.handle, photo: PROFILE.photoURL, bio: PROFILE.bio, favBands: favList(PROFILE), favVenue: PROFILE.favVenue || "", shows: S.shows }, true, null, {})}${bucketBlock()}${settingsBlock()}</div>`;
+  $("#view").innerHTML = `<div class="crew">${profileBlock({ uid: ME.uid, name: PROFILE.name, handle: PROFILE.handle, photo: PROFILE.photoURL, cover: PROFILE.coverURL || "", bio: PROFILE.bio, favBands: favList(PROFILE), favVenue: PROFILE.favVenue || "", shows: S.shows }, true, null, {})}${bucketBlock()}${settingsBlock()}</div>`;
   drawBucketShows();
 }
 /* ---------- Bucket list: bands you want to see. New dates for them show up in Just announced and the Sunday recap. ---------- */
@@ -2565,7 +2579,7 @@ function downloadBackup(){
 
 let PEDIT = null;
 function editProfile(){
-  PEDIT = { name: PROFILE.name || "", handle: PROFILE.handle || "", bio: PROFILE.bio || "", favBands: [...favList(PROFILE), "", "", "", "", ""].slice(0, 5), favVenue: PROFILE.favVenue || "", photoURL: PROFILE.photoURL || "", photoPath: PROFILE.photoPath || "", busy: false };
+  PEDIT = { name: PROFILE.name || "", handle: PROFILE.handle || "", bio: PROFILE.bio || "", favBands: [...favList(PROFILE), "", "", "", "", ""].slice(0, 5), favVenue: PROFILE.favVenue || "", photoURL: PROFILE.photoURL || "", photoPath: PROFILE.photoPath || "", coverURL: PROFILE.coverURL || "", coverPath: PROFILE.coverPath || "", busy: false };
   drawEdit();
 }
 function drawEdit(){
@@ -2578,6 +2592,9 @@ function drawEdit(){
         ${g && e.photoURL !== g ? `<button class="btn ghost" data-avgoogle>Use Google photo</button>` : ""}
         ${e.photoURL ? `<button class="btn ghost" data-avnone>Use my initial</button>` : ""}
       </div></div>
+    <div class="field"><span class="lbl">Background picture</span>
+      <div class="coveredit${e.coverURL ? "" : " empty"}" ${e.coverURL ? `style="background-image:url('${esc(e.coverURL)}')"` : ""}>${e.coverURL ? "" : `<span class="ro">A wide photo behind your name: a crowd shot, a stage, a favorite poster.</span>`}</div>
+      <div class="avbtns"><label class="btn">${e.coverBusy ? "Uploading…" : e.coverURL ? "Change background" : "Add background"}<input class="vh" type="file" id="coverFile" accept="image/*,.heic,.heif" ${e.coverBusy ? "disabled" : ""}></label>${e.coverURL ? `<button class="btn ghost" data-covernone>Remove</button>` : ""}</div></div>
     <label class="field"><span class="lbl">Name</span><input id="pf-name" maxlength="40" value="${esc(e.name)}" placeholder="Ex: Sam Rivera"></label>
     <label class="field"><span class="lbl">Bio <span id="pf-count">${(e.bio||"").length}/140</span></span><textarea id="pf-bio" maxlength="140" placeholder="Ex: Doom, deathcore and barricade spots.">${esc(e.bio)}</textarea></label>
     <div class="field"><span class="lbl">Top 5 bands</span><div class="top5edit">${e.favBands.map((b, i) => `<label><span class="num">${i + 1}</span><input id="pf-fav${i}" maxlength="40" list="dl-bands" value="${esc(b)}" placeholder="${i ? "" : "Ex: Katatonia"}" aria-label="Favorite band ${i + 1}"></label>`).join("")}</div></div>
@@ -2590,7 +2607,8 @@ function drawEdit(){
     <div class="mbtns"><button class="btn ghost" data-pcancel>Cancel</button><button class="btn red" data-psave ${e.busy ? "disabled" : ""}>Save</button></div>
   </div></div>`;
   const keep = () => { PEDIT.handle = $("#pf-handle").value; PEDIT.name = $("#pf-name").value; PEDIT.bio = $("#pf-bio").value; PEDIT.favBands = [0,1,2,3,4].map(i => $("#pf-fav" + i).value); PEDIT.favVenue = $("#pf-venue").value; };
-  root.querySelector("[data-pcancel]").onclick = () => { if (PEDIT.photoPath && PEDIT.photoPath !== PROFILE.photoPath) removeFile(PEDIT.photoPath); PEDIT = null; root.innerHTML = ""; };
+  root.querySelector("[data-pcancel]").onclick = () => { if (PEDIT.photoPath && PEDIT.photoPath !== PROFILE.photoPath) removeFile(PEDIT.photoPath); if (PEDIT.coverPath && PEDIT.coverPath !== PROFILE.coverPath) removeFile(PEDIT.coverPath); PEDIT = null; root.innerHTML = ""; };
+  const cn = root.querySelector("[data-covernone]"); if (cn) cn.onclick = () => { keep(); if (PEDIT.coverPath && PEDIT.coverPath !== PROFILE.coverPath) removeFile(PEDIT.coverPath); PEDIT.coverURL = ""; PEDIT.coverPath = ""; drawEdit(); };
   root.querySelector("[data-psave]").onclick = () => { keep(); saveProfileEdit(); };
   const gb = root.querySelector("[data-avgoogle]"); if (gb) gb.onclick = () => { keep(); dropPendingAvatar(); PEDIT.photoURL = g; PEDIT.photoPath = ""; drawEdit(); };
   const nb = root.querySelector("[data-avnone]"); if (nb) nb.onclick = () => { keep(); dropPendingAvatar(); PEDIT.photoURL = ""; PEDIT.photoPath = ""; drawEdit(); };
@@ -2606,6 +2624,19 @@ async function squareAvatar(file){
   const ctx = c.getContext("2d"); ctx.imageSmoothingQuality = "high";
   ctx.drawImage(img, (W - side) / 2, (H - side) / 2, side, side, 0, 0, out, out);
   return await new Promise(r => c.toBlob(r, "image/jpeg", 0.86));
+}
+async function uploadCover(file){
+  if (!PEDIT) return;
+  PEDIT.name = $("#pf-name").value; PEDIT.bio = $("#pf-bio").value; PEDIT.favBands = [0,1,2,3,4].map(i => $("#pf-fav" + i).value); PEDIT.favVenue = $("#pf-venue").value;
+  PEDIT.coverBusy = true; drawEdit();
+  try {
+    const blob = await compress(file, "photos");
+    const path = `users/${ME.uid}/cover-${rid()}.jpg`, r = sref(storage, path);
+    await uploadBytes(r, blob, { contentType: blob.type || "image/jpeg", cacheControl: "public,max-age=31536000" });
+    if (PEDIT.coverPath && PEDIT.coverPath !== PROFILE.coverPath) removeFile(PEDIT.coverPath);
+    PEDIT.coverURL = await getDownloadURL(r); PEDIT.coverPath = path;
+  } catch (e) { console.error(e); toast("Couldn't use that image. Try a JPG or PNG.", 4000); }
+  if (PEDIT) { PEDIT.coverBusy = false; drawEdit(); }
 }
 async function uploadAvatar(file){
   if (!PEDIT) return;
@@ -2631,7 +2662,7 @@ function handleLock(){
 async function saveProfileEdit(){
   const e = PEDIT, name = (e.name || "").trim();
   if (!name) { toast("Add your name"); return; }
-  const patch = { name, bio: (e.bio || "").trim().slice(0, 140), favBands: ((seen) => e.favBands.map(b => String(b || "").trim().slice(0, 40)).filter(b => b && !seen.has(b.toLowerCase()) && seen.add(b.toLowerCase())))(new Set()).slice(0, 5), favVenue: (e.favVenue || "").trim().slice(0, 60), photoURL: e.photoURL || "", photoPath: e.photoPath || "" };
+  const patch = { name, bio: (e.bio || "").trim().slice(0, 140), favBands: ((seen) => e.favBands.map(b => String(b || "").trim().slice(0, 40)).filter(b => b && !seen.has(b.toLowerCase()) && seen.add(b.toLowerCase())))(new Set()).slice(0, 5), favVenue: (e.favVenue || "").trim().slice(0, 60), photoURL: e.photoURL || "", photoPath: e.photoPath || "", coverURL: e.coverURL || "", coverPath: e.coverPath || "" };
   const h = String(e.handle || "").trim().replace(/^@/, "").toLowerCase(), oldH = PROFILE.handle;
   const changing = h && h !== oldH;
   if (changing && handleLock()) { toast(`You can change your username again on ${handleLock()}`, 4000); return; }
@@ -2650,8 +2681,9 @@ async function saveProfileEdit(){
       await b.commit();
       Object.assign(patch, { handle: h, handleChangedAt: ts, prevHandles: [...new Set([...(PROFILE.prevHandles || []), oldH])] });
     } else await updateDoc(doc(fdb, "users", ME.uid), patch);
-    const old = PROFILE.photoPath; Object.assign(PROFILE, patch);
+    const old = PROFILE.photoPath, oldCover = PROFILE.coverPath; Object.assign(PROFILE, patch);
     if (old && old !== patch.photoPath) removeFile(old);
+    if (oldCover && oldCover !== patch.coverPath) removeFile(oldCover);
     PEDIT = null; $("#modalRoot").innerHTML = "";
     $("#acct").innerHTML = avatar(PROFILE.photoURL, PROFILE.name);
     toast(changing ? `You're now @${patch.handle}` : "Profile saved"); renderTab(); syncSearchFields(); schedulePublish(true); cacheProfile();
@@ -2673,8 +2705,8 @@ function renderFriend(f){
   else body = theirs.length ? `<div class="list">${theirs.map(s => ticket(s, firsts, { friend: f.uid })).join("")}</div>` : `<div class="empty"><h3>Nothing logged</h3><div>${esc(f.name || "They")} haven't logged any shows yet.</div></div>`;
   $("#view").innerHTML = `<div class="crew">
     <button class="btn ghost" data-crewback style="justify-self:start">← The crew</button>
-    ${f.err ? `<section class="prof">${profileTop({ name: f.name, handle: f.handle, photo: f.photo, bio: f.bio, favBands: favList(f), favVenue: f.favVenue || "" }, false, f)}</section>`
-      : profileBlock({ uid: f.uid, name: f.name, handle: f.handle, photo: f.photo, bio: f.bio, favBands: favList(f), favVenue: f.favVenue || "", shows: f.shows || [] }, false, f, { together: together.length, shared: shared.length })}
+    ${f.err ? `<section class="prof">${profileTop({ name: f.name, handle: f.handle, photo: f.photo, cover: f.cover || "", bio: f.bio, favBands: favList(f), favVenue: f.favVenue || "" }, false, f)}</section>`
+      : profileBlock({ uid: f.uid, name: f.name, handle: f.handle, photo: f.photo, cover: f.cover || "", bio: f.bio, favBands: favList(f), favVenue: f.favVenue || "", shows: f.shows || [] }, false, f, { together: together.length, shared: shared.length })}
     <div class="seg big" role="group" aria-label="View">
       <button data-crewview="shows" aria-pressed="${v==="shows"}">Their shows</button>
       <button data-crewview="together" aria-pressed="${v==="together"}">Together</button>

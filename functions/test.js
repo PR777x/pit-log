@@ -373,5 +373,22 @@ const sentTo = who => emails.filter(e => e.to[0] === who + "@example.com");
   assert.deepStrictEqual(att.shows[0].songs.Gojira, ["Stranded", "Amazonia"]); assert.strictEqual(att.shows[1].date, "2024-02-01");
   const one = await SL.findSetlist("k", "Gojira", "2025-10-05", fakeSL); assert.deepStrictEqual(one.setlist.songs, ["Stranded", "Intro (tape)"]);
 
+  // 19. Spotify artist pages via MusicBrainz (+ Wikidata fallback), cached
+  const A = require("./artists"); let calls19 = 0;
+  const fakeMB = async url => { calls19++; const j =
+      url.includes("/ws/2/artist?query") ? (url.includes("Gojira") ? { artists: [{ id: "g1", name: "Gojira", score: 100 }, { id: "g2", name: "Gojira Tribute", score: 60 }] }
+        : url.includes("Spiritbox") ? { artists: [{ id: "s1", name: "Spiritbox", score: 100 }] } : { artists: [{ id: "x", name: "Someone Else", score: 90 }] })
+    : url.includes("/artist/g1") ? { relations: [{ url: { resource: "https://open.spotify.com/artist/0GDGKpJFhVpcjIGF8N6Ewt?si=abc" } }] }
+    : url.includes("/artist/s1") ? { relations: [{ url: { resource: "https://www.wikidata.org/wiki/Q55" } }] }
+    : url.includes("Q55") ? { entities: { Q55: { claims: { P1902: [{ mainsnak: { datavalue: { value: "4MzJMcHvrWTtxwJ7dBp6F5" } } }] } } } } : {};
+    return { ok: true, status: 200, json: async () => j }; };
+  const nopause = { fetchImpl: fakeMB, pause: async () => {} };
+  assert.deepStrictEqual(await A.lookup("Gojira", nopause), { spotify: "https://open.spotify.com/artist/0GDGKpJFhVpcjIGF8N6Ewt", mbid: "g1" });
+  assert.strictEqual((await A.lookup("Spiritbox", nopause)).spotify, "https://open.spotify.com/artist/4MzJMcHvrWTtxwJ7dBp6F5", "Wikidata fallback");
+  assert.strictEqual((await A.lookup("Unknown Band", nopause)).spotify, "", "no exact-name match, no guess");
+  calls19 = 0;
+  const l1 = await F.artistLinks(["Gojira", "Unknown Band"], nopause); assert.strictEqual(l1.Gojira, "https://open.spotify.com/artist/0GDGKpJFhVpcjIGF8N6Ewt");
+  const cc19 = calls19; await F.artistLinks(["Gojira", "Unknown Band"], nopause); assert.strictEqual(calls19, cc19, "second time comes from the cache");
+
   console.log("All email function tests passed.");
 })().catch(e => { console.error(e); process.exit(1); });
