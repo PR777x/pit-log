@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile, applyActionCode } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=51";
+import { VENUES } from "./venues.js?v=52";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -544,13 +544,28 @@ async function baseCanvas(){
   x.textAlign = "left";
   return { c, x };
 }
+// Show the finished image first, then let people send it anywhere (the phone's own share sheet:
+// Instagram / Facebook stories, Messages, Gmail…) or save it.
 async function deliverImage(c, name, title){
   const blob = await new Promise(r => { try { c.toBlob(r, "image/png"); } catch (_) { r(null); } });
   if (!blob) { toast("Couldn't make the image on this device."); return; }
-  const file = new File([blob], name, { type: "image/png" });
-  try { if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title }); return; } } catch (e) { if (e && e.name === "AbortError") return; }
-  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
-  toast("Image saved. Share it from your photos.");
+  const file = new File([blob], name, { type: "image/png" }), url = URL.createObjectURL(blob);
+  let canShare = false; try { canShare = !!(navigator.canShare && navigator.canShare({ files: [file] })); } catch (_) {}
+  const root = document.createElement("div"); root.className = "sharemodal";
+  root.innerHTML = `<div class="sharebox" role="dialog" aria-modal="true" aria-label="Share image">
+    <div class="sharetop"><h3>Ready to share</h3><button class="btn ghost sm" data-shx aria-label="Close">Close</button></div>
+    <div class="shareimg"><img src="${url}" alt="${esc(title || "Share image")}"></div>
+    <div class="sharebtns">${canShare ? `<button class="btn red" data-shgo>Share to…</button>` : ""}<button class="btn${canShare ? "" : " red"}" data-shdl>Download</button></div>
+    ${canShare ? `<div class="ro">Share to opens your phone's options: Instagram or Facebook stories, Messages, Gmail and more.</div>` : `<div class="ro">Download the image, then post it from your photos.</div>`}</div>`;
+  document.body.appendChild(root);
+  const close = () => { document.removeEventListener("keydown", key, true); root.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000); };
+  const key = e => { if (e.key === "Escape") { e.stopPropagation(); close(); } };
+  document.addEventListener("keydown", key, true);
+  root.addEventListener("click", e => { if (e.target === root) close(); });
+  root.querySelector("[data-shx]").onclick = close;
+  root.querySelector("[data-shdl]").onclick = () => { const a = document.createElement("a"); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); toast("Image saved"); };
+  const go = root.querySelector("[data-shgo]");
+  if (go) go.onclick = async () => { try { await navigator.share({ files: [file], title }); } catch (e) { if (!e || e.name !== "AbortError") toast("Couldn't open sharing. Use Download instead.", 3500); } };
 }
 // Load a picture so it can be drawn into a share image. The poster on screen was loaded without CORS, and
 // some phones reuse that cached copy, which then can't go on a canvas, so fetch a fresh copy as a blob first.

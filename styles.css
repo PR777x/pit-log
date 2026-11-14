@@ -720,3 +720,11 @@ nav.tabs .bslot:empty{display:none}
 .cropzoom input{flex:1;accent-color:var(--blood)}
 .cropbtns{display:flex;gap:8px;justify-content:flex-end;width:100%}
 .cropring.wide{border-radius:0}
+/* share image preview */
+.sharemodal{position:fixed;inset:0;z-index:90;background:rgba(5,3,4,.92);display:grid;place-items:center;padding:max(12px,env(safe-area-inset-top,0px)) 12px max(12px,env(safe-area-inset-bottom,0px))}
+.sharebox{background:var(--crypt);border:1px solid var(--iron);padding:14px;display:grid;gap:10px;width:min(420px,100%);max-height:100%;grid-template-rows:auto minmax(0,1fr) auto auto}
+.sharetop{display:flex;justify-content:space-between;align-items:center}.sharetop h3{margin:0}
+.shareimg{min-height:0;display:grid;place-items:center}
+.shareimg img{max-width:100%;max-height:calc(100dvh - 230px);aspect-ratio:9/16;object-fit:contain;border:1px solid var(--iron);display:block}
+.sharebtns{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:8px}
+.sharebtns .btn{justify-content:center;text-align:center;padding-block:12px}
