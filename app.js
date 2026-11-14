@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile, applyActionCode } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=45";
+import { VENUES } from "./venues.js?v=46";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -642,7 +642,7 @@ function renderShowView(fresh){
   const allSongs = Object.values(songs).reduce((n, a) => n + (Array.isArray(a) ? a.length : 0), 0);
   $("#sheetRoot").innerHTML = `<div class="sheet" role="dialog" aria-modal="true" aria-label="Show details"><div class="panel sview">
     <div class="ptop"><button class="btn ghost" data-close>← Back</button>
-      <span class="tagrow">${ro ? `<span class="ro">${esc((FR[S.openFriend]?.name || "Friend") + "'s show")}</span>` : ""}<button class="btn" data-share aria-label="Share this show">Share</button>${ro ? "" : `<button class="btn red" data-editmode>Edit</button>`}</span></div>
+      <span class="tagrow">${ro ? `<span class="ro">${esc(S.openFriend === ME.uid ? "Crew view of your show" : (FR[S.openFriend]?.name || "Friend") + "'s show")}</span>` : ""}<button class="btn" data-share aria-label="Share this show">Share</button>${ro ? "" : `<button class="btn red" data-editmode>Edit</button>`}</span></div>
     ${pending ? `<div class="fampend">Added from @${esc(FR[d.addedBy]?.handle || "your Crew Family")}'s log. Is this one yours too? <span class="tagrow"><button class="btn sm red" data-famyes="${esc(d.id)}">Yes, keep it</button><button class="btn sm" data-famno="${esc(d.id)}">Not mine, remove it</button></span></div>` : ""}
     <div class="vhero${d.poster ? " hasposter" : ""}">
       ${d.poster ? `<button class="vposter" data-lbi="0" aria-label="View poster"><img src="${src(pid(d.poster))}" alt="Tour poster"></button>` : ""}
@@ -747,7 +747,7 @@ function renderSheet(fresh){
   const media = gallery("photos", "Show photos") + gallery("merch", "Merch haul");
   $("#sheetRoot").innerHTML = `<div class="sheet" role="dialog" aria-modal="true" aria-label="Show details"><div class="panel">
     <div class="ptop"><button class="btn ghost" data-close>← Back</button>
-      ${ro ? `<span class="ro">${S.openFriend ? esc((FR[S.openFriend]?.name || "Friend") + "'s show · read-only") : "Read-only"}</span>` : `<span class="tagrow">${isNew ? "" : `<button class="btn ghost" data-viewmode>Cancel</button>`}<button class="btn red" data-save ${busy?"disabled":""}>${isNew?"Add show":"Save"}</button></span>`}</div>
+      ${ro ? `<span class="ro">${S.openFriend ? esc(S.openFriend === ME.uid ? "Crew view of your show · read-only" : (FR[S.openFriend]?.name || "Friend") + "'s show · read-only") : "Read-only"}</span>` : `<span class="tagrow">${isNew ? "" : `<button class="btn ghost" data-viewmode>Cancel</button>`}<button class="btn red" data-save ${busy?"disabled":""}>${isNew?"Add show":"Save"}</button></span>`}</div>
     <div class="ptitle">${esc(headline(d) || "New show")}</div>
     <div class="psub">${esc([d.venue, d.city].filter(Boolean).join(" · "))}${d.date?` · ${esc(new Date(parse(d.date).dt).toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric",year:"numeric"}))}`:""}</div>
 
@@ -1051,7 +1051,8 @@ document.addEventListener("click", e => {
   else if (t.hasAttribute("data-calexport")) exportMenu();
   else if (t.hasAttribute("data-addband")) { readForm(); S.luExtra = (S.luExtra || 0) + 1; renderSheet(); const ins = document.querySelectorAll(".lu-in"); if (ins.length) ins[ins.length - 1].focus(); }
   else if (t.hasAttribute("data-backup")) downloadBackup();
-  else if (t.hasAttribute("data-viewpublic")) openProfile(ME.uid, true);
+  else if (t.hasAttribute("data-viewpublic")) { S.pubView = "public"; openProfile(ME.uid, true); }
+  else if (t.dataset.pubview) { S.pubView = t.dataset.pubview; renderPublicProfile(ME.uid); window.scrollTo(0, 0); }
   else if (t.hasAttribute("data-slimport")) importSetlistFm();
   else if (t.hasAttribute("data-delacct")) deleteAccountFlow();
   else if (t.hasAttribute("data-ics1")) { if (draft) { readForm(); deliverIcs([draft], `${slug(draft)}-${draft.date}.ics`); } }
@@ -1258,7 +1259,7 @@ async function pushShared(show){
 }
 
 function openFriendSheet(uid, id){
-  const f = FR[uid]; const s = f && (f.shows||[]).find(x => x.id === id); if (!s) return;
+  const f = FR[uid] || (ME && uid === ME.uid ? crewPreview() : null); const s = f && (f.shows||[]).find(x => x.id === id); if (!s) return;
   closeLightbox();
   S.open = id; S.openFriend = uid; draft = JSON.parse(JSON.stringify(s)); confirmDel = false; S.editing = false;
   renderSheet(true); document.body.style.overflow = "hidden";
@@ -1557,7 +1558,9 @@ function renderPublicProfile(uid){
   const P = S.search.pub;
   const self = uid === ME.uid;
   const back = self ? `<button class="btn ghost" data-myprofile style="justify-self:start">← My profile</button>` : `<button class="btn ghost" data-sback style="justify-self:start">← Search</button>`;
-  if (!P || P.uid !== uid) { $("#view").innerHTML = `<div class="crew">${back}<div class="ro">Loading…</div></div>`; return; }
+  const seg = self ? `<div class="seg big" role="group" aria-label="Preview as"><button data-pubview="public" aria-pressed="${S.pubView !== "crew"}">Public</button><button data-pubview="crew" aria-pressed="${S.pubView === "crew"}">Crew</button></div>` : "";
+  if (self && S.pubView === "crew") { renderCrewPreview(back, seg); return; }
+  if (!P || P.uid !== uid) { $("#view").innerHTML = `<div class="crew">${back}${seg}<div class="ro">Loading…</div></div>`; return; }
   const u = P.user, set = settingsOf(u), rel = relationOf(uid);
   if (isBlocked(u)) { $("#view").innerHTML = `<div class="crew">${back}<div class="empty"><h3>Not available</h3><div>${myBlocks().includes(uid) ? `You blocked this account. <button class="linkbtn" data-unblock="${esc(uid)}">Unblock</button>` : "This profile isn't available."}</div></div></div>`; return; }
   const shows = [...P.shows].sort((a, b) => (b.date || "").localeCompare(a.date || "")), done = shows.filter(x => !isUpcoming(x));
@@ -1569,7 +1572,20 @@ function renderPublicProfile(uid){
   const list = shows.length ? `<section class="sect"><h3>Shows <span class="lbl">${shows.length}</span></h3><div class="list">${shows.map(pubTicket).join("")}</div></section>`
     : `<div class="empty"><h3>Nothing public</h3><div>@${esc(u.handle || "")} keeps their shows to their crew. Add them to see more once they accept.</div></div>`;
   const note = self ? `<div class="pubnote"><b>Public preview.</b> This is what people outside your crew see${settingsOf(u).searchable === "public" ? " (and can find in search)" : ". You're hidden from search"}. Change what's shown in Settings → Privacy.</div>` : "";
-  $("#view").innerHTML = `<div class="crew">${back}${note}<section class="prof">${top}</section>${self ? "" : `<div class="prof-act">${act}</div>`}${stats}${list}${self ? "" : safetyRow(uid, u.handle)}</div>`;
+  $("#view").innerHTML = `<div class="crew">${back}${seg}${note}<section class="prof">${top}</section>${self ? "" : `<div class="prof-act">${act}</div>`}${stats}${list}${self ? "" : safetyRow(uid, u.handle)}</div>`;
+}
+// What someone in your crew sees: your log run through your own privacy settings, as a friend would get it.
+function crewPreview(){
+  const f = { uid: ME.uid, name: PROFILE.name, handle: PROFILE.handle, photo: PROFILE.photoURL, cover: PROFILE.coverURL || "", bio: PROFILE.bio || "",
+    favBand: PROFILE.favBand || "", favBands: PROFILE.favBands || [], favVenue: PROFILE.favVenue || "", settings: PROFILE.settings || {}, raw: S.shows, family: false, preview: true };
+  applyPrivacy(f); return f;
+}
+function renderCrewPreview(back, seg){
+  const f = crewPreview(), shows = [...f.shows].sort((a, b) => (b.date || "").localeCompare(a.date || "")), firsts = {};
+  const note = `<div class="pubnote"><b>Crew preview.</b> This is what people in your crew see. Crew Family also sees anything you set to Family. Change what's shown in Settings → Privacy.</div>`;
+  const list = shows.length ? `<section class="sect"><h3>Your shows <span class="lbl">${shows.length}</span></h3><div class="list">${shows.map(s => ticket(s, firsts, { friend: ME.uid })).join("")}</div></section>`
+    : `<div class="empty"><h3>Nothing logged</h3><div>Your crew will see your shows here once you log some.</div></div>`;
+  $("#view").innerHTML = `<div class="crew">${back}${seg}${note}${profileBlock({ uid: ME.uid, name: f.name, handle: f.handle, photo: f.photo, cover: f.cover, bio: f.bio, favBands: favList(f), favVenue: f.favVenue, shows: f.shows }, false, f, { together: "–", shared: "–" })}${list}</div>`;
 }
 // Read-only card for a public show (only the fields its owner made public are present).
 function pubTicket(sh){
@@ -2386,7 +2402,7 @@ function profileTop(p, isMe, f){
       ${(p.favBands || []).length ? `<div class="pfav"><span class="lbl">${p.favBands.length > 1 ? `Top ${p.favBands.length} bands` : "Favorite band"}</span><ol class="top5">${p.favBands.map((b, i) => `<li><span class="num">${i + 1}</span>${esc(b)}</li>`).join("")}</ol></div>` : ""}
       ${p.favVenue ? `<div class="pfav"><span class="lbl">Favorite venue</span> <b>${esc(p.favVenue)}</b></div>` : ""}
     </div></div>
-    ${isMe ? `<div class="prof-act"><button class="btn red" data-editprofile>Edit profile</button><button class="btn" data-viewpublic>View public profile</button><span class="ro">This is what your crew sees.</span></div>` : ""}`;
+    ${isMe ? `<div class="prof-act"><button class="btn red" data-editprofile>Edit profile</button><button class="btn" data-viewpublic>View public profile</button><span class="ro">See what the public or your crew sees.</span></div>` : ""}`;
 }
 function showRow(s, ownerUid, label){
   if (!s) return "";
