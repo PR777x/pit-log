@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile, applyActionCode } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=52";
+import { VENUES } from "./venues.js?v=53";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -556,14 +556,15 @@ async function deliverImage(c, name, title){
     <div class="sharetop"><h3>Ready to share</h3><button class="btn ghost sm" data-shx aria-label="Close">Close</button></div>
     <div class="shareimg"><img src="${url}" alt="${esc(title || "Share image")}"></div>
     <div class="sharebtns">${canShare ? `<button class="btn red" data-shgo>Share to…</button>` : ""}<button class="btn${canShare ? "" : " red"}" data-shdl>Download</button></div>
-    ${canShare ? `<div class="ro">Share to opens your phone's options: Instagram or Facebook stories, Messages, Gmail and more.</div>` : `<div class="ro">Download the image, then post it from your photos.</div>`}</div>`;
+    ${canShare ? `<div class="ro">Share to opens your phone's options: Instagram or Facebook stories, Messages, Gmail and more${/iphone|ipad/i.test(navigator.userAgent) ? `, plus <b>Save Image</b> to put it in Photos` : ""}.</div>` : `<div class="ro">Download the image, then post it from your photos.</div>`}</div>`;
   document.body.appendChild(root);
   const close = () => { document.removeEventListener("keydown", key, true); root.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000); };
   const key = e => { if (e.key === "Escape") { e.stopPropagation(); close(); } };
   document.addEventListener("keydown", key, true);
   root.addEventListener("click", e => { if (e.target === root) close(); });
   root.querySelector("[data-shx]").onclick = close;
-  root.querySelector("[data-shdl]").onclick = () => { const a = document.createElement("a"); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); toast("Image saved"); };
+  root.querySelector("[data-shdl]").onclick = () => { const a = document.createElement("a"); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    toast(/android/i.test(navigator.userAgent) ? "Saved to Downloads. It shows in Gallery / Google Photos under Downloads. If a preview opens, tap back." : /iphone|ipad/i.test(navigator.userAgent) ? "Saved to Files. For Photos, use Share to → Save Image." : "Image saved", 6000); };
   const go = root.querySelector("[data-shgo]");
   if (go) go.onclick = async () => { try { await navigator.share({ files: [file], title }); } catch (e) { if (!e || e.name !== "AbortError") toast("Couldn't open sharing. Use Download instead.", 3500); } };
 }
