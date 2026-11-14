@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=38";
+import { VENUES } from "./venues.js?v=39";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -2124,7 +2124,7 @@ function settingsBlock(){
       selectRow("emailDigest", "Daily digest", "One email around 6 PM, only on days something happened: crew requests, tags, shows your crew adds, and show reminders. Weekly sends it Sundays instead.", [["daily", "Daily"], ["weekly", "Weekly"], ["off", "Off"]], set.emailDigest),
       selectRow("emailRequests", "Include crew requests", "Crew requests, accepts and Crew Family invites, in the digest.", [["on", "Include"], ["off", "Leave out"]], set.emailRequests),
       selectRow("emailTags", "Include tags", "When someone tags you on a show, in the digest.", [["on", "Include"], ["off", "Leave out"]], set.emailTags),
-      selectRow("emailReminders", "Include show reminders", "A heads-up 7 days and 1 day before your shows, in the digest.", [["on", "Include"], ["off", "Leave out"]], set.emailReminders),
+      selectRow("emailReminders", "Include show reminders", "Sent 7 days and 1 day before a show, listing every show you have in the next week.", [["on", "Include"], ["off", "Leave out"]], set.emailReminders),
       selectRow("emailWeekly", "Weekly recap", "Sunday mornings: open crew requests, your upcoming shows, crew going too, and new tour announcements for your bucket list and bands you've seen.", [["on", "Email me"], ["off", "Off"]], set.emailWeekly)].join(""))}
     ${grp("display", "Display", [
       selectRow("defaultView", "Shows opens to", "", [["list", "List"], ["cal", "Calendar"]], set.defaultView),

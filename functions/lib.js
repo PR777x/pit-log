@@ -23,6 +23,7 @@ function todayET(now = new Date()){
   const g = t => p.find(x => x.type === t).value;
   return `${g("year")}-${g("month")}-${g("day")}`;
 }
+const daysBetween = (a, b) => Math.round((Date.parse(b + "T12:00:00Z") - Date.parse(a + "T12:00:00Z")) / 864e5);
 function addDays(iso, n){ const [y, m, d] = iso.split("-").map(Number); const dt = new Date(Date.UTC(y, m - 1, d + n)); return dt.toISOString().slice(0, 10); }
 const isUpcoming = (iso, today) => !!iso && iso >= today;
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
@@ -80,7 +81,7 @@ function buildDigest({ items, reminders, today }){
       (famOk.length ? line(`${handles(famOk)} approved Crew Family. Your logs are linked.`) : ""));
   }
   if (reminders.length) {
-    sections.push(`<h2 style="font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:#e0313a;margin:${sections.length ? "18px" : "0"} 0 8px">Coming up for you</h2>` +
+    sections.push(`<h2 style="font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:#e0313a;margin:${sections.length ? "18px" : "0"} 0 8px">${reminders.length > 1 ? `Your week ahead: ${reminders.length} shows` : "Coming up for you"}</h2>` +
       reminders.map(r => showCard(r.show, r.days === 1 ? "Tomorrow" : `In ${r.days} days`)).join(""));
   }
   const together = items.filter(i => i.type === "together");
@@ -123,7 +124,8 @@ function buildDigest({ items, reminders, today }){
     : acc.length && !tagged.length && !added.length && !together.length ? `@${acc[0].fromHandle} accepted your crew request`
     : famOk.length && !tagged.length && !added.length && !together.length ? `@${famOk[0].fromHandle} approved Crew Family`
     : reminders.length && items.length === crewNews
-    ? (reminders[0].days === 1 ? `Tomorrow: ${showLine(reminders[0].show)}` : `Coming up: ${showLine(reminders[0].show)}`)
+    ? (reminders.length > 1 ? `${reminders.length} shows this week, ${reminders[0].days === 1 ? "starting tomorrow" : "next up in " + reminders[0].days + " days"}: ${showLine(reminders[0].show)}`
+      : reminders[0].days === 1 ? `Tomorrow: ${showLine(reminders[0].show)}` : `Coming up: ${showLine(reminders[0].show)}`)
     : together.length ? `@${together[0].fromHandle} is at ${showLine(together[0].show)} too`
     : tagged.length && !added.length ? `@${tagged[0].fromHandle} tagged you on ${tagged.length} show${tagged.length > 1 ? "s" : ""}`
     : added.length ? `Your crew logged ${added.length} new show${added.length > 1 ? "s" : ""}` : "Your crew on Pit Log";
@@ -163,5 +165,5 @@ function buildRecap({ requests, upcoming, crewUpcoming, items, announced = [], b
   return { subject, body: parts.join(""), summary: bits.join(" · "), empty: !requests && !upcoming.length && !crewUpcoming.length && !items.length && !announced.length && !bucketOnSale.length };
 }
 
-module.exports = { buildRecap, SITE, LV, canSee, EMAIL_DEFAULTS, prefs, lineup, sameShow, todayET, addDays, isUpcoming, prettyDate,
+module.exports = { daysBetween, buildRecap, SITE, LV, canSee, EMAIL_DEFAULTS, prefs, lineup, sameShow, todayET, addDays, isUpcoming, prettyDate,
   showSummary, showLine, placeLine, esc, layout, showCard, buildDigest };

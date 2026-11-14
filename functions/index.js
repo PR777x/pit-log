@@ -2,7 +2,7 @@
 //  - Nothing is instant: crew requests, accepts, Crew Family invites/approvals and tags are queued too.
 //  - Queued for the digest: crew members adding shows, and "looks like you're going too" matches.
 //  - Digest (daily 6 PM Eastern, or Sundays for weekly): queued crew activity plus your own
-//    show reminders 7 days and 1 day out.
+//    show reminders (sent when a show is 7 days or 1 day out, listing every show in the next week).
 // Email addresses come from Firebase Auth and are never written to Firestore.
 const { onDocumentCreated, onDocumentUpdated, onDocumentWritten } = require("firebase-functions/v2/firestore");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
@@ -181,10 +181,12 @@ async function runDigest(now = new Date()){
     }
     const reminders = [];
     const md = await db.doc(`mail/${u.id}`).get(), recapToday = md.exists && (md.data() || {}).recapDay === today;
-    if (p.emailReminders !== "off" && !recapToday) for (const days of [1, 7]) {
-      const day = L.addDays(today, days);
-      const s = await db.collection(`users/${u.id}/shows`).where("date", "==", day).get();
-      for (const d of s.docs) reminders.push({ days, show: L.showSummary(d.data(), d.id) });
+    // Reminders go out when a show is 7 days or 1 day away; that email then lists EVERY show
+    // logged for the next 7 days, so nothing in the week is missed (and no daily repeats).
+    if (p.emailReminders !== "off" && !recapToday) {
+      const s = await db.collection(`users/${u.id}/shows`).where("date", ">=", L.addDays(today, 1)).where("date", "<=", L.addDays(today, 7)).get();
+      const week = s.docs.map(d => ({ days: L.daysBetween(today, d.data().date), show: L.showSummary(d.data(), d.id) })).sort((a, b) => a.days - b.days || a.show.date.localeCompare(b.show.date));
+      if (week.some(r => r.days === 1 || r.days === 7)) reminders.push(...week);
     }
     if (!items.length && !reminders.length) { // nothing new: no email, just tidy the queue
       if (inbox.docs.length) { const b = db.batch(); inbox.docs.forEach(d => b.delete(d.ref)); await b.commit(); }

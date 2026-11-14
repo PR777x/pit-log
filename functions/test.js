@@ -19,7 +19,8 @@ function coll(path, filters = [], lim = 1e9){
     where: (f, op, v) => coll(path, [...filters, [f, op, v]], lim), limit: n => coll(path, filters, n),
     get: async () => ({ docs: [...store.keys()].filter(k => k.startsWith(path + "/") && k.split("/").length === path.split("/").length + 1)
       .filter(k => filters.every(([f, op, v]) => { const x = (store.get(k) || {})[f];
-        return op === "array-contains-any" ? Array.isArray(x) && x.some(y => v.includes(y)) : op === "array-contains" ? Array.isArray(x) && x.includes(v) : x === v; })).slice(0, lim).map(k => ({ id: k.split("/").pop(), ref: docRef(k), data: () => clone(store.get(k)) })) }) };
+        return op === "array-contains-any" ? Array.isArray(x) && x.some(y => v.includes(y)) : op === "array-contains" ? Array.isArray(x) && x.includes(v)
+          : op === ">=" ? x !== undefined && x >= v : op === "<=" ? x !== undefined && x <= v : x === v; })).slice(0, lim).map(k => ({ id: k.split("/").pop(), ref: docRef(k), data: () => clone(store.get(k)) })) }) };
 }
 const fakeDb = { doc: docRef, collection: p => coll(p), batch: () => { const ops = []; return { set: (r, v) => ops.push(() => r.set(v)), delete: r => ops.push(() => r.delete()), commit: async () => { for (const o of ops) await o(); } }; } };
 const fakes = {
@@ -252,6 +253,22 @@ const sentTo = who => emails.filter(e => e.to[0] === who + "@example.com");
   emails.length = 0; await F.runRecap();
   const wn = sentTo("pat")[0].html; assert.match(wn, /Just announced for you/); assert.match(wn, /On your bucket list/);
   assert.strictEqual(wn.split("The Fillmore Philadelphia").length - 1, 1, "new date listed once");
+
+  // 9. Show reminders list every show in the next week, but only fire on 7-day / 1-day marks
+  for (const k of [...store.keys()]) if (/\/(inbox|shows)\//.test(k) || k.startsWith("mail/") || k.startsWith("catalog")) store.delete(k);
+  store.set("users/zz", { name: "Zed", handle: "zed" });
+  store.set("users/zz/shows/a", { date: L.addDays(today, 1), lineup: ["Alpha"], venue: "TLA" });
+  store.set("users/zz/shows/b", { date: L.addDays(today, 4), lineup: ["Bravo"], venue: "Reverb" });
+  store.set("users/zz/shows/c", { date: L.addDays(today, 7), lineup: ["Charlie"], venue: "Union Transfer" });
+  store.set("users/zz/shows/d", { date: L.addDays(today, 9), lineup: ["Delta"], venue: "Union Transfer" });
+  emails.length = 0; await F.runDigest();
+  const rz = sentTo("zz")[0]; assert.ok(rz, "reminder sent");
+  assert.match(rz.html, /Your week ahead: 3 shows/); for (const n of ["Alpha", "Bravo", "Charlie"]) assert.match(rz.html, new RegExp(n));
+  assert.ok(!/Delta/.test(rz.html), "only the next 7 days"); assert.match(rz.html, /In 4 days/); assert.match(rz.subject, /3 shows this week, starting tomorrow/);
+  assert.ok(rz.html.indexOf("Alpha") < rz.html.indexOf("Bravo") && rz.html.indexOf("Bravo") < rz.html.indexOf("Charlie"), "in date order");
+  // a show 4 days out alone doesn't trigger an email every day
+  store.delete("users/zz/shows/a"); store.delete("users/zz/shows/c");
+  emails.length = 0; await F.runDigest(); assert.ok(!sentTo("zz").length, "no 7/1-day mark today, no email");
 
   console.log("All email function tests passed.");
 })().catch(e => { console.error(e); process.exit(1); });
