@@ -3,6 +3,7 @@ const Module = require("module");
 const assert = require("assert");
 const store = new Map(); // path -> data
 const AUTH = {}; // uid -> fake Firebase Auth user
+const DELETED_PREFIX = [], DELETED_USERS = [];
 const emails = [];
 let auto = 0;
 const clone = v => JSON.parse(JSON.stringify(v));
@@ -21,7 +22,7 @@ function coll(path, filters = [], lim = 1e9){
     get: async () => ({ docs: [...store.keys()].filter(k => k.startsWith(path + "/") && k.split("/").length === path.split("/").length + 1)
       .filter(k => filters.every(([f, op, v]) => { const x = (store.get(k) || {})[f];
         return op === "array-contains-any" ? Array.isArray(x) && x.some(y => v.includes(y)) : op === "array-contains" ? Array.isArray(x) && x.includes(v)
-          : op === ">=" ? x !== undefined && x >= v : op === "<=" ? x !== undefined && x <= v : x === v; })).slice(0, lim).map(k => ({ id: k.split("/").pop(), ref: docRef(k), data: () => clone(store.get(k)) })) }) };
+          : op === ">=" ? x !== undefined && x >= v : op === "<=" ? x !== undefined && x <= v : op === "<" ? x !== undefined && x < v : x === v; })).slice(0, lim).map(k => ({ id: k.split("/").pop(), ref: docRef(k), data: () => clone(store.get(k)) })) }) };
 }
 const fakeDb = { doc: docRef, collection: p => coll(p), batch: () => { const ops = []; return { set: (r, v) => ops.push(() => r.set(v)), delete: r => ops.push(() => r.delete()), commit: async () => { for (const o of ops) await o(); } }; } };
 const fakes = {
@@ -31,8 +32,10 @@ const fakes = {
   "firebase-functions/params": { defineSecret: () => ({ value: () => "test-key" }) },
   "firebase-functions/v2": { setGlobalOptions: () => {}, logger: { info: () => {}, error: (...a) => console.error(...a) } },
   "firebase-admin/app": { initializeApp: () => {} },
+  "firebase-admin/storage": { getStorage: () => ({ bucket: () => ({ deleteFiles: async o => { DELETED_PREFIX.push(o.prefix); } }) }) },
   "firebase-admin/auth": { getAuth: () => ({ getUser: async uid => AUTH[uid] || { email: uid + "@example.com", emailVerified: true },
     generateEmailVerificationLink: async (email, s) => `https://pit-log.firebaseapp.com/__/auth/action?mode=verifyEmail&oobCode=CODE-${encodeURIComponent(email)}&continueUrl=${encodeURIComponent(s.url)}`,
+    deleteUser: async uid => { DELETED_USERS.push(uid); },
     verifyIdToken: async t => { if (!t.startsWith("tok-")) throw new Error("bad"); return { uid: t.slice(4) }; } }) },
   "firebase-admin/firestore": { getFirestore: id => { assert.strictEqual(id, "pit-log"); return fakeDb; }, FieldValue: { serverTimestamp: () => ({ __ts: 1 }) } },
 };
@@ -307,5 +310,68 @@ const sentTo = who => emails.filter(e => e.to[0] === who + "@example.com");
 
   assert.ok(emails.every(e => e.reply_to === "support@thepitlog.com"), "replies go to support");
   assert.ok(emails.every(e => /support@thepitlog\.com/.test(e.html)), "every email names support");
+  // 11. Per-person time zones: the hourly digest only goes to people for whom it's 6 PM locally
+  for (const k of [...store.keys()]) if (/\/(inbox|shows)\//.test(k) || k.startsWith("mail/")) store.delete(k);
+  store.set("users/east", { name: "East", handle: "east", settings: { tz: "America/New_York" } });
+  store.set("users/west", { name: "West", handle: "west", settings: { tz: "America/Los_Angeles" } });
+  for (const u of ["east", "west"]) store.set(`users/${u}/shows/s`, { date: "2030-01-02", lineup: ["Tz Band"], venue: "TLA" });
+  const sixET = new Date("2030-01-01T23:00:00Z"); // 6 PM Eastern = 3 PM Pacific, Jan 1 2030 (show is tomorrow)
+  emails.length = 0; await F.runDigest(sixET, { hourly: true });
+  assert.ok(sentTo("east").length === 1 && !sentTo("west").length, "east coast at 6 PM, west coast not yet");
+  emails.length = 0; await F.runDigest(new Date("2030-01-02T02:00:00Z"), { hourly: true }); // 6 PM Pacific
+  assert.ok(sentTo("west").length === 1 && !sentTo("east").length);
+  // 12. On-sale alert for an "interested" tour, sent once
+  emails.length = 0;
+  store.set("users/east", { name: "East", handle: "east", settings: { tz: "America/New_York" }, interested: [{ k: "h:sleeptoken", n: "Sleep Token", u: "https://tm.example/st", o: "2030-01-02T15:00:00Z" }] });
+  store.delete("users/east/shows/s");
+  await F.runDigest(sixET, { hourly: true });
+  assert.match(sentTo("east")[0].subject, /Tickets on sale tomorrow: Sleep Token/); assert.match(sentTo("east")[0].html, /10 AM/);
+  emails.length = 0; await F.runDigest(sixET, { hourly: true }); assert.ok(!sentTo("east").length, "only once");
+  // 13. Comments land in the owner's digest
+  store.set("users/east/shows/c1", { date: "2029-05-05", lineup: ["Comment Band"], venue: "TLA" });
+  await F.onComment({ params: { key: "east__c1" }, data: { data: () => ({ uid: "west", text: "That pit was unreal" }) } });
+  await F.onComment({ params: { key: "east__c1" }, data: { data: () => ({ uid: "east", text: "own comment" }) } });
+  emails.length = 0; await F.runDigest(sixET, { hourly: true });
+  assert.match(sentTo("east")[0].html, /New comments/); assert.match(sentTo("east")[0].html, /That pit was unreal/); assert.ok(!/own comment/.test(sentTo("east")[0].html));
+  // 14. Reports go to support
+  emails.length = 0;
+  await F.onReport({ data: { data: () => ({ by: "east", target: "west", reason: "Spam", note: "keeps adding me" }) } });
+  assert.strictEqual(emails[0].to[0], "support@thepitlog.com"); assert.match(emails[0].subject, /Report: @west/);
+  // 15. Unconfirmed sign-ups are flagged for the database rules
+  AUTH.unver = { email: "unver@example.com", emailVerified: false }; store.set("users/unver", { name: "U", handle: "unver" });
+  await F.onUserCreated({ params: { uid: "unver" }, data: { data: () => store.get("users/unver") } });
+  assert.strictEqual(store.get("mail/unver").needsVerify, true);
+  // 16. Delete account wipes everything they own
+  store.set("users/gone", { name: "Gone", handle: "gone" }); store.set("users/gone/shows/a", { date: "2025-01-01", lineup: ["X"] });
+  store.set("users/gone/inbox/i", { type: "added", sent: false }); store.set("publicShows/gone_a", { ownerUid: "gone" }); store.set("handles/gone", { uid: "gone" });
+  store.set("friendRequests/gone_east", { from: "gone", to: "east", status: "accepted" }); store.set("friendRequests/west_gone", { from: "west", to: "gone", status: "pending" });
+  store.set("publicShows/east_x", { ownerUid: "east" });
+  let code = 0, out; const res2 = { status: c => { code = c; return res2; }, json: j => { out = j; } };
+  await F.account({ method: "POST", headers: { authorization: "Bearer tok-gone" }, body: { action: "delete" } }, res2); assert.strictEqual(code, 400, "must type DELETE");
+  code = 200; await F.account({ method: "POST", headers: { authorization: "Bearer tok-gone" }, body: { action: "delete", confirm: "DELETE" } }, res2);
+  assert.deepStrictEqual(out, { result: "deleted" });
+  assert.ok(![...store.keys()].some(k => k.includes("gone")), "nothing left: " + [...store.keys()].filter(k => k.includes("gone")).join(","));
+  assert.ok(store.has("publicShows/east_x"), "other people's data untouched");
+  assert.deepStrictEqual(DELETED_PREFIX, ["users/gone/"]); assert.deepStrictEqual(DELETED_USERS, ["gone"]);
+  // 17. Daily ops check emails support about errors / a stale catalog
+  emails.length = 0; store.set("catalogMeta/months", { list: [], updated: L.todayET() });
+  let ops = await F.runOps(); assert.strictEqual(emails.length, 0, "quiet day, no email"); assert.deepStrictEqual(ops, { errors: 0, stale: false });
+  store.set("errors/e1", { msg: "TypeError: x is undefined", where: "app.js:10", build: "44", at: new Date() });
+  store.set("errors/e2", { msg: "TypeError: x is undefined", where: "app.js:10", build: "44", at: new Date() });
+  store.set("errors/old", { msg: "ancient", at: new Date(Date.now() - 10 * 864e5) });
+  store.set("catalogMeta/months", { list: [], updated: "2020-01-01" });
+  ops = await F.runOps(); assert.match(emails[0].subject, /2 errors, catalog stale/); assert.match(emails[0].html, /2× TypeError/); assert.ok(!store.has("errors/old"), "old errors cleaned up");
+  // 18. setlist.fm mapping and grouping
+  const SL = require("./setlists");
+  const fakeSL = async url => ({ ok: true, status: 200, json: async () => url.includes("/attended") ? { itemsPerPage: 20, total: 3, setlist: [
+      { id: "1", eventDate: "05-10-2025", artist: { name: "Gojira" }, venue: { name: "Xfinity Mobile Arena", city: { name: "Philadelphia", stateCode: "PA" } }, tour: { name: "Mega Monsters" }, sets: { set: [{ song: [{ name: "Stranded" }, { name: "Amazonia" }] }] } },
+      { id: "2", eventDate: "05-10-2025", artist: { name: "Mastodon" }, venue: { name: "Xfinity Mobile Arena", city: { name: "Philadelphia", stateCode: "PA" } }, sets: { set: [{ song: [{ name: "Blood and Thunder" }] }] } },
+      { id: "3", eventDate: "01-02-2024", artist: { name: "Insomnium" }, venue: { name: "Reverb", city: { name: "Reading", stateCode: "PA" } }, sets: { set: [] } } ] }
+    : { setlist: [{ id: "9", eventDate: "05-10-2025", artist: { name: "Gojira" }, venue: { name: "X", city: { name: "Philadelphia", stateCode: "PA" } }, sets: { set: [{ song: [{ name: "Stranded" }, { name: "Intro", tape: true }] }] } }] } });
+  const att = await SL.attended("k", "pitfan", fakeSL, async () => {});
+  assert.strictEqual(att.shows.length, 2); assert.deepStrictEqual(att.shows[0].bands, ["Gojira", "Mastodon"]); assert.strictEqual(att.shows[0].tour, "Mega Monsters");
+  assert.deepStrictEqual(att.shows[0].songs.Gojira, ["Stranded", "Amazonia"]); assert.strictEqual(att.shows[1].date, "2024-02-01");
+  const one = await SL.findSetlist("k", "Gojira", "2025-10-05", fakeSL); assert.deepStrictEqual(one.setlist.songs, ["Stranded", "Intro (tape)"]);
+
   console.log("All email function tests passed.");
 })().catch(e => { console.error(e); process.exit(1); });

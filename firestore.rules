@@ -7,6 +7,11 @@ service cloud.firestore {
     function relIs(a, b, field, value) { return exists(reqPath(a, b)) && get(reqPath(a, b)).data.get(field, '') == value; }
     function friends(a, b) { return relIs(a, b, 'status', 'accepted') || relIs(b, a, 'status', 'accepted'); }
     function family(a, b) { return relIs(a, b, 'family', 'active') || relIs(b, a, 'family', 'active'); }
+    // New email-and-password accounts must confirm their email before adding content.
+    // (The server flags them in mail/{uid}; Google accounts and older accounts aren't flagged.)
+    function mailDoc() { return /databases/$(database)/documents/mail/$(me()); }
+    function verifiedOk() { return request.auth.token.email_verified == true || !exists(mailDoc()) || get(mailDoc()).data.get('needsVerify', false) != true; }
+    function blockedBy(other) { return me() in get(/databases/$(database)/documents/users/$(other)).data.get('blocked', []); }
 
     match /users/{uid} {
       allow read: if signedIn();
@@ -14,7 +19,8 @@ service cloud.firestore {
 
       match /shows/{showId} {
         allow read: if signedIn() && (me() == uid || friends(me(), uid));
-        allow write: if signedIn() && me() == uid;
+        allow delete: if signedIn() && me() == uid;
+        allow create, update: if signedIn() && me() == uid && verifiedOk();
         // Crew Family: add shows to each other's log, and sync the shared fields
         allow create: if signedIn() && family(me(), uid) && request.resource.data.addedBy == me();
         allow update: if signedIn() && family(me(), uid)
@@ -41,7 +47,7 @@ service cloud.firestore {
 
     match /publicShows/{id} {
       allow read: if signedIn();
-      allow create, update: if signedIn() && request.resource.data.ownerUid == me() && id.matches(me() + '_.+');
+      allow create, update: if signedIn() && verifiedOk() && request.resource.data.ownerUid == me() && id.matches(me() + '_.+');
       allow delete: if signedIn() && resource.data.ownerUid == me();
     }
 
@@ -52,10 +58,37 @@ service cloud.firestore {
       allow delete: if signedIn() && resource.data.uid == me();
     }
 
+    // Comments on a show: the owner and their crew can read and write; you can delete your own,
+    // and the owner can delete any on their show. key = ownerUid + "__" + showId
+    match /showComments/{key}/c/{cid} {
+      function owner() { return key.split('__')[0]; }
+      allow read: if signedIn() && (me() == owner() || friends(me(), owner()));
+      allow create: if signedIn() && verifiedOk() && (me() == owner() || friends(me(), owner()))
+        && request.resource.data.uid == me()
+        && request.resource.data.keys().hasOnly(['uid', 'name', 'handle', 'text', 'at'])
+        && request.resource.data.text is string && request.resource.data.text.size() > 0 && request.resource.data.text.size() <= 500;
+      allow delete: if signedIn() && (resource.data.uid == me() || me() == owner());
+    }
+
+    // Reports go to support (a function emails them); nobody can read them back.
+    match /reports/{id} {
+      allow create: if signedIn() && request.resource.data.by == me()
+        && request.resource.data.keys().hasOnly(['by', 'target', 'reason', 'note', 'at'])
+        && request.resource.data.get('note', '').size() <= 1000;
+    }
+
+    // App errors (for the daily support check). Write-only, small.
+    match /errors/{id} {
+      allow create: if request.resource.data.keys().hasOnly(['msg', 'where', 'build', 'ua', 'at', 'uid'])
+        && request.resource.data.msg is string && request.resource.data.msg.size() <= 600
+        && request.resource.data.get('where', '').size() <= 300 && request.resource.data.get('ua', '').size() <= 300;
+    }
+
     match /friendRequests/{id} {
       allow get: if signedIn() && (resource == null || me() == resource.data.from || me() == resource.data.to);
       allow list: if signedIn() && (me() == resource.data.from || me() == resource.data.to);
-      allow create: if signedIn()
+      allow create: if signedIn() && verifiedOk()
+        && !blockedBy(request.resource.data.to)
         && request.resource.data.from == me()
         && request.resource.data.to != me()
         && id == request.resource.data.from + '_' + request.resource.data.to

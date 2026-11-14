@@ -7,7 +7,7 @@ name: Deploy email alerts
 on:
   push:
     branches: [main]
-    paths: ["functions/**", "firebase.json", "firestore.rules", ".github/workflows/deploy-functions.yml"]
+    paths: ["functions/**", "firebase.json", "firestore.rules", "storage-cors.json", ".github/workflows/deploy-functions.yml"]
   workflow_dispatch:
 
 jobs:
@@ -76,9 +76,27 @@ jobs:
           printf '%s' "$want" > "$RUNNER_TEMP/tm.txt"
           npx -y firebase-tools@latest functions:secrets:set TICKETMASTER_API_KEY --data-file="$RUNNER_TEMP/tm.txt" --project pit-log --force --non-interactive || echo "::warning::secret saved check failed; continuing"
           rm -f "$RUNNER_TEMP/tm.txt"
+      - name: Save the setlist.fm key in Secret Manager
+        if: steps.gate.outputs.ok == 'true'
+        env:
+          SL: ${{ secrets.SETLISTFM_API_KEY }}
+        # Optional: without it, setlist lookups and imports say "not connected yet". "none" keeps the deploy working.
+        run: |
+          want="${SL:-none}"
+          cur=$(npx -y firebase-tools@latest functions:secrets:access SETLISTFM_API_KEY --project pit-log 2>/dev/null || true)
+          if [ "$cur" = "$want" ]; then echo "setlist.fm key unchanged"; exit 0; fi
+          printf '%s' "$want" > "$RUNNER_TEMP/sl.txt"
+          npx -y firebase-tools@latest functions:secrets:set SETLISTFM_API_KEY --data-file="$RUNNER_TEMP/sl.txt" --project pit-log --force --non-interactive || echo "::warning::secret saved check failed; continuing"
+          rm -f "$RUNNER_TEMP/sl.txt"
       - name: Deploy functions
         if: steps.gate.outputs.ok == 'true'
         run: npx -y firebase-tools@latest deploy --only functions,firestore:rules --project pit-log --force --non-interactive
+      - name: Let the app read photos for share images (storage CORS)
+        if: steps.gate.outputs.ok == 'true'
+        continue-on-error: true
+        run: |
+          gcloud auth activate-service-account --key-file="$GOOGLE_APPLICATION_CREDENTIALS" --quiet
+          gcloud storage buckets update gs://pit-log.firebasestorage.app --cors-file=storage-cors.json --project pit-log
       - name: Clean up old key versions
         if: steps.gate.outputs.ok == 'true'
         continue-on-error: true

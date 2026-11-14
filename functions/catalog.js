@@ -127,7 +127,7 @@ function monthShards(shows, nextIndex, today){
   for (const s of shows) {
     if (s.date < today || s.status === "cancelled") continue;
     const m = s.date.slice(0, 7), ix = nextIndex[s.id] || {};
-    (by[m] = by[m] || []).push({ i: s.id, d: s.date, h: s.time || "", l: s.lineup, c: s.coHead ? 1 : 0, v: s.venue, y: s.city, t: s.tour, u: s.url, g: s.genre || "", s: s.status === "onsale" ? "" : s.status, f: ix.f || "" });
+    (by[m] = by[m] || []).push({ i: s.id, d: s.date, h: s.time || "", l: s.lineup, c: s.coHead ? 1 : 0, v: s.venue, y: s.city, t: s.tour, u: s.url, g: s.genre || "", s: s.status === "onsale" ? "" : s.status, f: ix.f || "", o: s.onsale || "" });
   }
   for (const m of Object.keys(by)) by[m].sort((a, b) => a.d.localeCompare(b.d) || a.h.localeCompare(b.h) || a.v.localeCompare(b.v));
   return by;

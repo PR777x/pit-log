@@ -18,6 +18,13 @@ function sameShow(a, b){
 }
 
 // Dates are stored as YYYY-MM-DD; "today" is in Eastern time, where everyone using the app is.
+// Each person's local date/hour (from Settings; Eastern if unknown or invalid).
+function localParts(tz, now = new Date()){
+  let zone = "America/New_York"; try { if (tz) { new Intl.DateTimeFormat("en-US", { timeZone: tz }); zone = tz; } } catch (_) {}
+  const p = new Intl.DateTimeFormat("en-CA", { timeZone: zone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23", weekday: "short" }).formatToParts(now);
+  const g = t => (p.find(x => x.type === t) || {}).value;
+  return { date: `${g("year")}-${g("month")}-${g("day")}`, hour: Number(g("hour")), dow: ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].indexOf(g("weekday")), zone };
+}
 function todayET(now = new Date()){
   const p = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(now);
   const g = t => p.find(x => x.type === t).value;
@@ -66,7 +73,7 @@ const showCard = (s, note) => `<div style="border:1px solid #3a2f30;background:#
 <div style="font-size:13px;color:#a2958d;margin-top:2px">${esc(placeLine(s))}</div>${note ? `<div style="font-size:13px;color:#7f9a5a;margin-top:4px">${esc(note)}</div>` : ""}</div>`;
 
 // Digest: group queued items by friend so a big import reads as one line, not 30.
-function buildDigest({ items, reminders, today }){
+function buildDigest({ items, reminders, today, onsale = [] }){
   const sections = [];
   // Crew requests and Crew Family news lead the email.
   const reqs = items.filter(i => i.type === "request"), fam = items.filter(i => i.type === "familyInvite");
@@ -83,6 +90,17 @@ function buildDigest({ items, reminders, today }){
   if (reminders.length) {
     sections.push(`<h2 style="font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:#e0313a;margin:${sections.length ? "18px" : "0"} 0 8px">${reminders.length > 1 ? `Your week ahead: ${reminders.length} shows` : "Coming up for you"}</h2>` +
       reminders.map(r => showCard(r.show, r.days === 1 ? "Tomorrow" : `In ${r.days} days`)).join(""));
+  }
+  if (onsale.length) {
+    sections.push(`<h2 style="font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:#c9762f;margin:${sections.length ? "18px" : "0"} 0 8px">Tickets on sale</h2>` +
+      onsale.map(o => `<div style="border:1px solid #3a2f30;background:#0e0b0c;padding:10px 12px;margin:0 0 8px"><div style="font-size:16px;font-weight:bold;color:#ece4d4">${esc(o.name)}</div>` +
+        `<div style="font-size:13px;color:#c9762f;margin-top:2px">${o.when === "today" ? "On sale today" : "On sale tomorrow"}${o.time ? " at " + esc(o.time) : ""}</div>` +
+        (o.url ? `<div style="margin-top:6px"><a href="${esc(o.url)}" style="font-size:13px;color:#e0313a;text-decoration:none;font-weight:bold">Tickets ›</a></div>` : "") + `</div>`).join(""));
+  }
+  const comments = items.filter(i => i.type === "comment");
+  if (comments.length) {
+    sections.push(`<h2 style="font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:#7f9a5a;margin:${sections.length ? "18px" : "0"} 0 8px">New comments</h2>` +
+      comments.slice(0, 8).map(i => showCard(i.show, `@${i.fromHandle}: “${String(i.text || "").slice(0, 140)}”`)).join("") + (comments.length > 8 ? `<p style="margin:0 0 8px;font-size:13px;color:#a2958d">and ${comments.length - 8} more</p>` : ""));
   }
   const together = items.filter(i => i.type === "together");
   if (together.length) {
@@ -115,11 +133,15 @@ function buildDigest({ items, reminders, today }){
   if (acc.length) bits.push(`${acc.length} accepted`);
   if (famOk.length) bits.push("Crew Family linked");
   if (reminders.length) bits.push(`${reminders.length} show${reminders.length > 1 ? "s" : ""} coming up`);
+  if (onsale.length) bits.push(`${onsale.length} going on sale`);
+  if (comments.length) bits.push(`${comments.length} comment${comments.length > 1 ? "s" : ""}`);
   if (together.length) bits.push(`${together.length} you share with your crew`);
   if (tagged.length) bits.push(`${tagged.length} tag${tagged.length > 1 ? "s" : ""}`);
   if (added.length) bits.push(`${added.length} new from your crew`);
   const crewNews = reqs.length + fam.length + acc.length + famOk.length;
-  const subject = reqs.length ? `@${reqs[0].fromHandle}${reqs.length > 1 ? ` and ${reqs.length - 1} more` : ""} want${reqs.length > 1 ? "" : "s"} you in their crew`
+  const subject = onsale.length && !reqs.length && !fam.length ? `Tickets on sale ${onsale[0].when}: ${onsale[0].name}`
+    : comments.length && !reqs.length && !fam.length && !tagged.length && !added.length && !together.length ? `@${comments[0].fromHandle} commented on ${showLine(comments[0].show)}`
+    : reqs.length ? `@${reqs[0].fromHandle}${reqs.length > 1 ? ` and ${reqs.length - 1} more` : ""} want${reqs.length > 1 ? "" : "s"} you in their crew`
     : fam.length ? `@${fam[0].fromHandle} invited you to Crew Family`
     : acc.length && !tagged.length && !added.length && !together.length ? `@${acc[0].fromHandle} accepted your crew request`
     : famOk.length && !tagged.length && !added.length && !together.length ? `@${famOk[0].fromHandle} approved Crew Family`
@@ -187,5 +209,5 @@ function welcomeEmail({ name, handle }){
     button: { label: "Log a show", url: SITE } };
 }
 
-module.exports = { verifyEmail, welcomeEmail, daysBetween, buildRecap, SITE, LV, canSee, EMAIL_DEFAULTS, prefs, lineup, sameShow, todayET, addDays, isUpcoming, prettyDate,
+module.exports = { localParts, verifyEmail, welcomeEmail, daysBetween, buildRecap, SITE, LV, canSee, EMAIL_DEFAULTS, prefs, lineup, sameShow, todayET, addDays, isUpcoming, prettyDate,
   showSummary, showLine, placeLine, esc, layout, showCard, buildDigest };

@@ -12,15 +12,20 @@ const { setGlobalOptions, logger } = require("firebase-functions/v2");
 const { initializeApp } = require("firebase-admin/app");
 const { getAuth } = require("firebase-admin/auth");
 const { getFirestore, FieldValue } = require("firebase-admin/firestore");
+const { getStorage } = require("firebase-admin/storage");
 const crypto = require("crypto");
 const L = require("./lib");
 const C = require("./catalog");
+const S = require("./setlists");
 
 initializeApp();
 const DB_ID = "pit-log";
 const db = getFirestore(DB_ID);
 const RESEND_API_KEY = defineSecret("RESEND_API_KEY");
 const TICKETMASTER_API_KEY = defineSecret("TICKETMASTER_API_KEY");
+const SETLISTFM_API_KEY = defineSecret("SETLISTFM_API_KEY");
+const SUPPORT = "support@thepitlog.com";
+const BUCKET = "pit-log.firebasestorage.app";
 const FROM = "Pit Log <alerts@thepitlog.com>";
 setGlobalOptions({ region: "us-central1", maxInstances: 3 });
 
@@ -159,11 +164,14 @@ exports.onShowWrite = onDocumentWritten({ document: "users/{uid}/shows/{showId}"
 });
 
 /* ---------- digest + reminders ---------- */
-async function runDigest(now = new Date()){
-  const today = L.todayET(now), sunday = new Date(today + "T12:00:00Z").getUTCDay() === 0;
+// hourly: run every hour and only handle people for whom it's 6 PM locally (their Settings time zone).
+async function runDigest(now = new Date(), { hourly = false } = {}){
   const users = await db.collection("users").get();
   let sent = 0;
   for (const u of users.docs) {
+    const lp = L.localParts((u.data().settings || {}).tz, now);
+    if (hourly && lp.hour !== 18) continue;
+    const today = lp.date, sunday = lp.dow === 0;
     const p = L.prefs(u.data());
     const digestDue = p.emailDigest === "daily" || (p.emailDigest === "weekly" && sunday);
     if (p.emailDigest === "off") { // turned off: throw away anything queued so it can't arrive later as a backlog
@@ -176,7 +184,7 @@ async function runDigest(now = new Date()){
     for (const d of inbox.docs) {
       const it = d.data(), key = `${it.type}|${it.from}|${it.show && it.show.id}`;
       if (seen.has(key)) continue; seen.add(key);
-      if (it.show && it.show.id && !(await db.doc(`users/${it.from}/shows/${it.show.id}`).get()).exists) continue;
+      if (it.show && it.show.id && !(await db.doc(`users/${it.owner || it.from}/shows/${it.show.id}`).get()).exists) continue;
       items.push(it);
     }
     const reminders = [];
@@ -188,28 +196,38 @@ async function runDigest(now = new Date()){
       const week = s.docs.map(d => ({ days: L.daysBetween(today, d.data().date), show: L.showSummary(d.data(), d.id) })).sort((a, b) => a.days - b.days || a.show.date.localeCompare(b.show.date));
       if (week.some(r => r.days === 1 || r.days === 7)) reminders.push(...week);
     }
-    if (!items.length && !reminders.length) { // nothing new: no email, just tidy the queue
+    // "Interested" tours going on sale today or tomorrow (once each).
+    const onsale = [], md0 = md.exists ? (md.data() || {}) : {}, saleSent = md0.saleSent || {};
+    for (const it of (Array.isArray(u.data().interested) ? u.data().interested : [])) {
+      if (!it || !it.o || saleSent[it.k]) continue;
+      const od = L.localParts((u.data().settings || {}).tz, new Date(it.o));
+      const when = od.date === today ? "today" : od.date === L.addDays(today, 1) ? "tomorrow" : "";
+      if (!when || Date.parse(it.o) < now.getTime()) continue;
+      onsale.push({ k: it.k, name: it.n, url: it.u || "", when, time: `${(od.hour % 12) || 12}${od.hour < 12 ? " AM" : " PM"}` });
+    }
+    if (!items.length && !reminders.length && !onsale.length) { // nothing new: no email, just tidy the queue
       if (inbox.docs.length) { const b = db.batch(); inbox.docs.forEach(d => b.delete(d.ref)); await b.commit(); }
       continue;
     }
-    const dg = L.buildDigest({ items, reminders, today });
+    const dg = L.buildDigest({ items, reminders, today, onsale });
     const ok = await send(u.id, "digest", { subject: dg.subject, title: items.length ? (p.emailDigest === "weekly" ? "Your crew this week" : "Your crew today") : "Show reminder",
       intro: L.esc(dg.summary), body: dg.body, button: { label: "Open Pit Log", url: L.SITE } });
     if (ok && inbox.docs.length) { const b = db.batch(); inbox.docs.forEach(d => b.delete(d.ref)); await b.commit(); }
+    if (ok && onsale.length) await db.doc(`mail/${u.id}`).set({ saleSent: Object.fromEntries(onsale.map(o => [o.k, today])) }, { merge: true });
     if (ok) sent++;
     await new Promise(r => setTimeout(r, 600)); // stay under the email service's rate limit
   }
   logger.info(`digest sent to ${sent} people`);
 }
 /* ---------- weekly recap (Sunday 10 AM Eastern) ---------- */
-async function runRecap(now = new Date()){
-  const today = L.todayET(now), horizon = L.addDays(today, 90), crewHorizon = L.addDays(today, 60);
+async function runRecap(now = new Date(), { hourly = false } = {}){
   const users = await db.collection("users").get();
-  let sent = 0;
-  const recentDoc = await db.doc("catalogMeta/recent").get();
-  let recent = []; try { recent = JSON.parse((recentDoc.exists && recentDoc.data().data) || "[]"); } catch (_) {}
-  const weekAgo = L.addDays(today, -7);
+  let sent = 0, recent = null;
   for (const u of users.docs) {
+    const lp = L.localParts((u.data().settings || {}).tz, now);
+    if (hourly && !(lp.dow === 0 && lp.hour === 10)) continue; // Sunday 10 AM their time
+    const today = lp.date, horizon = L.addDays(today, 90), crewHorizon = L.addDays(today, 60), weekAgo = L.addDays(today, -7);
+    if (!recent) { const recentDoc = await db.doc("catalogMeta/recent").get(); recent = []; try { recent = JSON.parse((recentDoc.exists && recentDoc.data().data) || "[]"); } catch (_) {} }
     const p = L.prefs(u.data()); if (p.emailWeekly === "off") continue;
     const uid = u.id;
     // open requests: crew requests to me + Crew Family invites from someone else
@@ -261,7 +279,7 @@ async function runRecap(now = new Date()){
     }
     const inbox = p.emailDigest === "off" ? { docs: [] } : await db.collection(`users/${uid}/inbox`).where("sent", "==", false).limit(200).get();
     const items = [];
-    for (const d of inbox.docs) { const it = d.data(); if (it.show && it.show.id && !(await db.doc(`users/${it.from}/shows/${it.show.id}`).get()).exists) continue; items.push(it); }
+    for (const d of inbox.docs) { const it = d.data(); if (it.show && it.show.id && !(await db.doc(`users/${it.owner || it.from}/shows/${it.show.id}`).get()).exists) continue; items.push(it); }
     const rc = L.buildRecap({ requests, upcoming, crewUpcoming, items, announced, bucketOnSale, today });
     if (rc.empty) continue; // nothing at all to say: no email
     const ok = await send(uid, "weekly", { subject: rc.subject, title: "Your week on Pit Log", intro: L.esc(rc.summary), body: rc.body, button: { label: "Open Pit Log", url: L.SITE } });
@@ -311,10 +329,10 @@ async function runCatalog({ apiKey, now = new Date(), fetchImpl, pause } = {}){
 exports.refreshCatalog = onSchedule({ schedule: "17 5 * * *", timeZone: "America/New_York", secrets: [TICKETMASTER_API_KEY], timeoutSeconds: 540, memory: "512MiB" }, () => runCatalog());
 module.exports.runCatalog = runCatalog;
 
-exports.weeklyRecap = onSchedule({ schedule: "0 10 * * 0", timeZone: "America/New_York", secrets: [RESEND_API_KEY], timeoutSeconds: 540 }, () => runRecap());
+exports.weeklyRecap = onSchedule({ schedule: "2 * * * *", timeZone: "UTC", secrets: [RESEND_API_KEY], timeoutSeconds: 540 }, () => runRecap(new Date(), { hourly: true }));
 module.exports.runRecap = runRecap;
 
-exports.dailyDigest = onSchedule({ schedule: "0 18 * * *", timeZone: "America/New_York", secrets: [RESEND_API_KEY], timeoutSeconds: 540 }, () => runDigest());
+exports.dailyDigest = onSchedule({ schedule: "5 * * * *", timeZone: "UTC", secrets: [RESEND_API_KEY], timeoutSeconds: 540 }, () => runDigest(new Date(), { hourly: true }));
 
 /* ---------- one-tap unsubscribe (thepitlog.com/u redirects here) ---------- */
 /* ---------- account emails: confirm your email + welcome ----------
@@ -356,11 +374,27 @@ exports.onUserCreated = onDocumentCreated({ document: "users/{uid}", database: D
   const uid = event.params.uid, profile = event.data && event.data.data();
   let au; try { au = await getAuth().getUser(uid); } catch (_) { return; }
   if (!au.email) return;
-  if (au.emailVerified) await sendWelcome(uid, au, profile); else await sendVerify(uid, au, profile);
+  if (au.emailVerified) await sendWelcome(uid, au, profile);
+  else { await db.doc(`mail/${uid}`).set({ needsVerify: true }, { merge: true }); await sendVerify(uid, au, profile); }
 });
 // Called by the app (signed in): { action: "resend" } re-sends the confirm link; { action: "welcome" }
 // sends the welcome once the email is confirmed.
-exports.account = onRequest({ cors: [/thepitlog\.com$/, /localhost/, /pr777x\.github\.io$/], secrets: [RESEND_API_KEY] }, async (req, res) => {
+// Deletes everything a person owns: their shows, photos, public copies, username, crew links and login.
+async function deleteAccount(uid){
+  const wipe = async q => { for (;;) { const snap = await q.limit(400).get(); if (!snap.docs.length) return; const b = db.batch(); snap.docs.forEach(d => b.delete(d.ref)); await b.commit(); if (snap.docs.length < 400) return; } };
+  await wipe(db.collection(`users/${uid}/shows`));
+  await wipe(db.collection(`users/${uid}/inbox`));
+  await wipe(db.collection("publicShows").where("ownerUid", "==", uid));
+  await wipe(db.collection("handles").where("uid", "==", uid));
+  await wipe(db.collection("friendRequests").where("from", "==", uid));
+  await wipe(db.collection("friendRequests").where("to", "==", uid));
+  try { await getStorage().bucket(BUCKET).deleteFiles({ prefix: `users/${uid}/` }); } catch (e) { logger.warn("storage cleanup", e.message); }
+  await db.doc(`mail/${uid}`).delete().catch(() => {});
+  await db.doc(`users/${uid}`).delete();
+  await getAuth().deleteUser(uid).catch(e => logger.warn("auth delete", e.message));
+  logger.info(`deleted account ${uid}`);
+}
+exports.account = onRequest({ cors: [/thepitlog\.com$/, /localhost/, /pr777x\.github\.io$/], secrets: [RESEND_API_KEY, SETLISTFM_API_KEY], timeoutSeconds: 120 }, async (req, res) => {
   if (req.method !== "POST") return res.status(405).json({ error: "POST only" });
   const m = String(req.headers.authorization || "").match(/^Bearer (.+)$/); if (!m) return res.status(401).json({ error: "sign in first" });
   let tok; try { tok = await getAuth().verifyIdToken(m[1]); } catch (_) { return res.status(401).json({ error: "sign in again" }); }
@@ -372,12 +406,69 @@ exports.account = onRequest({ cors: [/thepitlog\.com$/, /localhost/, /pr777x\.gi
     const r = await sendVerify(uid, au, profile);
     return res.status(r === "failed" ? 502 : 200).json({ result: r });
   }
+  if (action === "delete") {
+    if ((req.body && req.body.confirm) !== "DELETE") return res.status(400).json({ error: "type DELETE to confirm" });
+    await deleteAccount(uid);
+    return res.json({ result: "deleted" });
+  }
+  if (action === "setlist" || action === "setlistImport") {
+    const key = SETLISTFM_API_KEY.value();
+    if (!key || key === "none") return res.status(503).json({ error: "setlist.fm isn't connected yet" });
+    try {
+      if (action === "setlist") return res.json(await S.findSetlist(key, String(req.body.artist || ""), String(req.body.date || "")));
+      return res.json(await S.attended(key, String(req.body.username || "")));
+    } catch (e) { logger.warn("setlist.fm", e.message); return res.status(e.status || 502).json({ error: e.message }); }
+  }
   if (action === "welcome") {
     if (!au.emailVerified) return res.status(400).json({ error: "confirm your email first" });
     return res.json({ result: await sendWelcome(uid, au, profile) });
   }
   return res.status(400).json({ error: "unknown action" });
 });
+
+/* ---------- reports, comments, ops ---------- */
+async function mailSupport(subject, html){
+  const res = await fetch("https://api.resend.com/emails", { method: "POST", headers: { Authorization: `Bearer ${RESEND_API_KEY.value()}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ from: FROM, to: [SUPPORT], subject, html }) });
+  if (!res.ok) logger.error("support mail failed", res.status, await res.text());
+  return res.ok;
+}
+exports.onReport = onDocumentCreated({ document: "reports/{id}", database: DB_ID, secrets: [RESEND_API_KEY] }, async event => {
+  const r = event.data && event.data.data(); if (!r) return;
+  const by = await userDoc(r.by), target = await userDoc(r.target);
+  await mailSupport(`Report: @${handleOf(target)} (${r.reason || "no reason"})`,
+    `<p><b>@${L.esc(handleOf(by))}</b> (${L.esc(r.by)}) reported <b>@${L.esc(handleOf(target))}</b> (${L.esc(r.target)}).</p><p>Reason: ${L.esc(r.reason || "")}</p><p>${L.esc(r.note || "")}</p>`);
+});
+exports.onComment = onDocumentCreated({ document: "showComments/{key}/c/{id}", database: DB_ID }, async event => {
+  const c = event.data && event.data.data(); if (!c) return;
+  const [owner, showId] = String(event.params.key).split("__");
+  if (!owner || !showId || c.uid === owner) return;
+  const show = await db.doc(`users/${owner}/shows/${showId}`).get(); if (!show.exists) return;
+  const ou = await userDoc(owner); if (!ou || L.prefs(ou).emailDigest === "off") return;
+  const by = await userDoc(c.uid);
+  await db.collection(`users/${owner}/inbox`).add({ type: "comment", from: c.uid, owner, fromHandle: handleOf(by), show: L.showSummary(show.data(), showId), text: String(c.text || "").slice(0, 300), sent: false, at: FieldValue.serverTimestamp() });
+});
+// Every morning: email support if the app logged errors, or if the Discover catalog didn't refresh.
+async function runOps(now = new Date()){
+  const since = new Date(now.getTime() - 864e5);
+  const errs = (await db.collection("errors").where("at", ">=", since).limit(300).get()).docs.map(d => d.data());
+  const months = await db.doc("catalogMeta/months").get(), today = L.todayET(now);
+  const stale = !months.exists || months.data().updated !== today;
+  const problems = [];
+  if (stale) problems.push(`<p><b>Discover catalog didn't refresh today</b> (last update: ${L.esc(months.exists ? months.data().updated : "never")}). Check the refreshCatalog job and the Ticketmaster key.</p>`);
+  if (errs.length) {
+    const groups = new Map(); for (const e of errs) { const k = String(e.msg || "").slice(0, 160); const g = groups.get(k) || { n: 0, e }; g.n++; groups.set(k, g); }
+    problems.push(`<p><b>${errs.length} app error${errs.length > 1 ? "s" : ""} in the last day</b></p><ul>` + [...groups.values()].sort((a, b) => b.n - a.n).slice(0, 15)
+      .map(g => `<li>${g.n}× ${L.esc(g.e.msg)}<br><span style="color:#888;font-size:12px">${L.esc(g.e.where || "")} · build ${L.esc(g.e.build || "?")} · ${L.esc(g.e.ua || "")}</span></li>`).join("") + "</ul>");
+  }
+  const old = await db.collection("errors").where("at", "<", new Date(now.getTime() - 7 * 864e5)).limit(400).get();
+  if (old.docs.length) { const b = db.batch(); old.docs.forEach(d => b.delete(d.ref)); await b.commit(); }
+  if (problems.length) await mailSupport(`Pit Log daily check: ${errs.length} error${errs.length === 1 ? "" : "s"}${stale ? ", catalog stale" : ""}`, problems.join(""));
+  return { errors: errs.length, stale };
+}
+exports.opsReport = onSchedule({ schedule: "37 7 * * *", timeZone: "America/New_York", secrets: [RESEND_API_KEY] }, () => runOps());
+module.exports.runOps = runOps;
+module.exports.deleteAccount = deleteAccount;
 
 exports.unsubscribe = onRequest({ cors: false }, async (req, res) => {
   const { u, t, k } = req.query;

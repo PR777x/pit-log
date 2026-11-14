@@ -41,3 +41,14 @@ listings in PA, NJ, DE and NY for the next 15 months from the Ticketmaster Disco
 - To put the whole site back (app, emails/functions and database rules): GitHub → Actions →
   **Roll back to a backup** → Run workflow. Leave "Dry run" ticked first to see what would change,
   then run again with it unticked.
+
+## Build 44 (full-review changes)
+- Trust: delete account (Settings → Your data), privacy.html + terms.html, spending/notes/spot default to Crew,
+  block and report (reports email support), new email accounts must confirm before adding content (database rule).
+- Crew Family: shows a family member adds ask "Were you there?" (Yes keeps it, No removes your copy only).
+- Phones: bottom tab bar with Home, compact header, Shows search + Filter panel, read-only show view with Edit.
+- New: per-band ratings, festivals (multi-day), share-a-show image, Year in review, Interested tours (crew sees it,
+  email the day before tickets go on sale), show comments (in the digest), Spotify links,
+  setlist.fm setlists + history import (needs the `SETLISTFM_API_KEY` repo secret; free key at setlist.fm → API).
+- Emails go out at 6 PM / Sunday 10 AM in each person's own time zone. A daily 7:37 AM check emails support
+  about app errors or a Discover catalog that didn't refresh.
