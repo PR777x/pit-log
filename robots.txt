@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+Disallow: /classic/
+Disallow: /u/
+
+Sitemap: https://thepitlog.com/sitemap.xml
