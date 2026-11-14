@@ -24,7 +24,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Pirata+One&family=Barlow+Condensed:wght@400;500;600;700&family=Barlow:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="styles.css?v=41">
+<link rel="stylesheet" href="styles.css?v=42">
 </head>
 <body>
 
@@ -127,7 +127,7 @@
     </form>
     <p class="ro" id="signinMsg" role="alert"></p>
     <p class="ro">Your log is private. Friends you accept can see your shows.</p>
-    <p class="ro" style="opacity:.5">build 41</p>
+    <p class="ro" style="opacity:.5">build 42</p>
     <p class="ro" id="inapp" hidden>Opened inside another app? Use ⋮ → <b>Open in Chrome</b> (or Safari on iPhone) for sign-in to work.</p>
   </div>
 </section>
@@ -141,6 +141,19 @@
     <p class="ro" id="setupMsg" role="alert" style="color:var(--rust)"></p>
     <button class="btn red gbtn" id="setupGo" type="submit">Enter the pit</button>
   </form>
+</section>
+
+<section id="verify" class="gate" hidden>
+  <div class="gbox">
+    <img class="em-join" src="brand/emblem-256.webp" alt="" width="130" height="130">
+    <h2 class="gh2">Check your inbox</h2>
+    <p class="ro" style="font-size:16px;color:var(--bone)">We sent a link to <b id="verifyEmail">your email</b>. Tap it to confirm it's you, then you're in.</p>
+    <button class="btn red gbtn" id="verifyDone" type="button">I've confirmed it</button>
+    <button class="btn gbtn" id="verifyResend" type="button">Resend the email</button>
+    <p class="ro" id="verifyMsg" role="status" style="color:var(--rust)"></p>
+    <p class="ro">Not seeing it? Check spam or promotions. It comes from alerts@thepitlog.com.</p>
+    <button class="linkbtn" type="button" id="verifyOut">Use a different account</button>
+  </div>
 </section>
 
 <div id="appRoot" hidden>
@@ -180,6 +193,6 @@
 <div id="modalRoot"></div>
 <div id="toastRoot"></div>
 
-<script type="module" src="app.js?v=41"></script>
+<script type="module" src="app.js?v=42"></script>
 </body>
 </html>

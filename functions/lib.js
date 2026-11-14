@@ -165,5 +165,27 @@ function buildRecap({ requests, upcoming, crewUpcoming, items, announced = [], b
   return { subject, body: parts.join(""), summary: bits.join(" · "), empty: !requests && !upcoming.length && !crewUpcoming.length && !items.length && !announced.length && !bucketOnSale.length };
 }
 
-module.exports = { daysBetween, buildRecap, SITE, LV, canSee, EMAIL_DEFAULTS, prefs, lineup, sameShow, todayET, addDays, isUpcoming, prettyDate,
+// Account emails
+function verifyEmail({ name, link }){
+  return { subject: "Confirm your email for Pit Log",
+    title: `${name ? esc(name) + ", one" : "One"} more step`,
+    intro: "Tap the button to confirm this is your email. Then you're in: log shows, rate the pits, and bring the crew.",
+    body: `<p style="margin:0 0 8px;font-size:13px;color:#a2958d">The link works for 3 days. If the button doesn't work, copy this into your browser:<br><span style="word-break:break-all;color:#c9bfb3">${esc(link)}</span></p>`,
+    button: { label: "Confirm my email", url: link } };
+}
+function welcomeEmail({ name, handle }){
+  const step = (n, h, t) => `<tr><td style="padding:0 0 12px;vertical-align:top;width:40px"><div style="font-family:Georgia,serif;font-size:26px;line-height:1;color:#e0313a">${n}</div></td><td style="padding:0 0 12px"><div style="font-size:15px;font-weight:bold;color:#ece4d4">${h}</div><div style="font-size:14px;line-height:1.5;color:#c9bfb3">${t}</div></td></tr>`;
+  return { subject: `Welcome to the pit${name ? ", " + name : ""}`,
+    title: `Welcome to the pit${name ? ", " + esc(name) : ""}`,
+    intro: `Your log is ready${handle ? ` and your username is <b style="color:#ece4d4">@${esc(handle)}</b>` : ""}. Here's how to make it yours:`,
+    body: `<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;margin:6px 0 4px">` +
+      step("01", "Log your first show", "Tap + and type a band. Pit Log finds the show and fills in the venue, date and lineup.") +
+      step("02", "Rate the carnage", "Skulls for the show, bars for the pit, where you stood, and the moment you'll never shut up about.") +
+      step("03", "Bring your crew", "Add friends by username to see their shows, tag them on the nights they were there, and link logs with Crew Family.") +
+      step("04", "Build your bucket list", "Add the bands you still need to see. When they announce a date nearby, it shows up in Discover and your Sunday recap.") +
+      `</table><p style="margin:4px 0 0;font-size:13px;color:#a2958d">Tip: open thepitlog.com on your phone and choose "Add to Home screen" so it opens like an app.</p>`,
+    button: { label: "Log a show", url: SITE } };
+}
+
+module.exports = { verifyEmail, welcomeEmail, daysBetween, buildRecap, SITE, LV, canSee, EMAIL_DEFAULTS, prefs, lineup, sameShow, todayET, addDays, isUpcoming, prettyDate,
   showSummary, showLine, placeLine, esc, layout, showCard, buildDigest };

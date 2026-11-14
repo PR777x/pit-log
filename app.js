@@ -1,8 +1,8 @@
 // Pit Log — Firebase edition
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile, applyActionCode } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=41";
+import { VENUES } from "./venues.js?v=42";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -2390,7 +2390,7 @@ async function importCosts(costs){
 }
 
 /* ---------- Auth + profile ---------- */
-function showOnly(id){ for (const x of ["boot", "gate", "setup", "appRoot"]) $("#"+x).hidden = x !== id; }
+function showOnly(id){ for (const x of ["boot", "gate", "setup", "verify", "appRoot"]) $("#"+x).hidden = x !== id; }
 // The last profile seen on this device, so a refresh can open the app right away
 // instead of waiting on the network (it's refreshed from the server straight after).
 const profKey = uid => "pitlog.profile." + uid;
@@ -2429,7 +2429,7 @@ async function saveProfile(){
     if (!taken.exists()) b.set(doc(fdb, "handles", h), { uid: ME.uid });
     b.set(doc(fdb, "users", ME.uid), prof);
     await b.commit();
-    PROFILE = prof; cacheProfile(); startApp();
+    PROFILE = prof; cacheProfile(); enterApp();
   } catch (e) { console.error(e); msg.textContent = e.code === "permission-denied" ? `@${h} is taken, or the Firestore rules aren't published yet.` : "Couldn't save: " + (e.code || e.message); btn.disabled = false; }
 }
 
@@ -2440,6 +2440,68 @@ function resetState(){
   closeLightbox(); if (S.open) closeSheet(); $("#modalRoot").innerHTML = "";
   ME = null; PROFILE = null; db = null; assets = null;
 }
+
+/* ---------- Email confirmation (email + password sign-ups) ----------
+   New email accounts confirm their address before getting in. The server emails a link to
+   thepitlog.com/?mode=verifyEmail&oobCode=…, which this page applies. Google accounts are already
+   confirmed. Accounts made before this step existed aren't asked. */
+const VERIFY_SINCE = Date.parse("2026-11-14T09:00:00Z");
+const ACCOUNT_URL = "https://us-central1-pit-log.cloudfunctions.net/account";
+const isPasswordUser = u => !!u && (u.providerData || []).some(p => p && p.providerId === "password");
+const newAccount = u => !!u && Date.parse((u.metadata && u.metadata.creationTime) || 0) >= VERIFY_SINCE;
+const needsVerify = u => isPasswordUser(u) && !u.emailVerified && newAccount(u);
+// A confirm link opened on this page: apply it right away (works signed in or out).
+const VERIFY_LINK = (() => { try { const q = new URLSearchParams(location.search); return q.get("mode") === "verifyEmail" && q.get("oobCode"); } catch (_) { return null; } })();
+const verifyDone = !VERIFY_LINK ? Promise.resolve(null) : applyActionCode(auth, VERIFY_LINK)
+  .then(() => "ok").catch(e => (console.warn("verify", e), e.code === "auth/invalid-action-code" || e.code === "auth/expired-action-code" ? "expired" : "error"))
+  .then(r => { try { history.replaceState(null, "", location.pathname); } catch (_) {} if (r === "ok") setTimeout(() => toast("Email confirmed. Welcome to the pit!", 3500), 300);
+    else if (r) $("#signinMsg").textContent = r === "expired" ? "That confirm link has expired or was already used. Sign in and tap Resend for a new one." : "Couldn't confirm that link. Sign in and tap Resend."; return r; });
+async function callAccount(action){
+  const tok = await ME.getIdToken();
+  const r = await fetch(ACCOUNT_URL, { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + tok }, body: JSON.stringify({ action }) });
+  let j = {}; try { j = await r.json(); } catch (_) {}
+  if (!r.ok) throw new Error(j.error || "HTTP " + r.status);
+  return j;
+}
+let verifyPoll = null;
+async function enterApp(){
+  await verifyDone;
+  if (ME && needsVerify(ME)) { try { await ME.reload(); ME = auth.currentUser || ME; } catch (_) {} }
+  if (ME && needsVerify(ME)) return showVerify();
+  clearInterval(verifyPoll);
+  startApp();
+  maybeWelcome();
+}
+// Welcome email for new email accounts, once they've confirmed (Google accounts get it from the server).
+function maybeWelcome(){
+  if (!ME || !isPasswordUser(ME) || !ME.emailVerified || !newAccount(ME) || (PROFILE && PROFILE.welcomed)) return;
+  try { if (sessionStorage.getItem("pitlog.welcomed") === ME.uid) return; sessionStorage.setItem("pitlog.welcomed", ME.uid); } catch (_) {}
+  ME.getIdToken(true).then(() => callAccount("welcome")).then(() => { if (PROFILE) PROFILE.welcomed = true; }).catch(e => console.warn("welcome", e));
+}
+function showVerify(){
+  showOnly("verify");
+  $("#verifyEmail").textContent = ME.email || "your email";
+  $("#verifyMsg").textContent = "";
+  // Confirmed on another device? Notice it without a tap.
+  clearInterval(verifyPoll);
+  verifyPoll = setInterval(async () => { if (document.hidden || !ME || $("#verify").hidden) return; try { await ME.reload(); } catch (_) { return; } if (!needsVerify(auth.currentUser || ME)) { ME = auth.currentUser || ME; clearInterval(verifyPoll); await ME.getIdToken(true).catch(() => {}); enterApp(); } }, 6000);
+}
+$("#verifyDone")?.addEventListener("click", async () => {
+  const b = $("#verifyDone"); b.disabled = true; $("#verifyMsg").textContent = "Checking…";
+  try { await ME.reload(); ME = auth.currentUser || ME; } catch (_) {}
+  b.disabled = false;
+  if (needsVerify(ME)) { $("#verifyMsg").textContent = "Not confirmed yet. Tap the button in the email first (check spam or promotions too)."; return; }
+  await ME.getIdToken(true).catch(() => {}); enterApp();
+});
+$("#verifyResend")?.addEventListener("click", async () => {
+  const b = $("#verifyResend"); b.disabled = true; $("#verifyMsg").textContent = "Sending…";
+  try {
+    const r = await callAccount("resend");
+    $("#verifyMsg").textContent = r.verified ? "You're already confirmed. Tap \"I've confirmed it\"." : r.result === "wait" ? "We just sent one. Give it a few minutes, and check spam." : "Sent. Check your inbox.";
+  } catch (e) { $("#verifyMsg").textContent = "Couldn't send right now. Try again in a minute."; }
+  setTimeout(() => { b.disabled = false; }, 30000);
+});
+$("#verifyOut")?.addEventListener("click", () => { clearInterval(verifyPoll); signOut(auth); });
 
 function startApp(){
   db = fdb; assets = true; S.canWrite = true;
@@ -2556,7 +2618,7 @@ onAuthStateChanged(auth, async user => {
   const cached = !wasRedirect && cachedProfile(user.uid);
   if (cached) {
     // Open straight away from the saved profile, then quietly swap in the server copy.
-    PROFILE = cached; startApp();
+    PROFILE = cached; enterApp();
     getDoc(doc(fdb, "users", user.uid)).then(p => { if (p.exists() && p.data().handle && ME && ME.uid === user.uid) { PROFILE = { ...p.data() }; cacheProfile(); const a = $("#acct"); if (a) a.innerHTML = avatar(PROFILE.photoURL, PROFILE.name); } }).catch(() => {});
     return;
   }
@@ -2566,7 +2628,7 @@ onAuthStateChanged(auth, async user => {
       getDoc(doc(fdb, "users", user.uid)),
       new Promise((_, rej) => setTimeout(() => rej({ code: "timeout" }), 12000))
     ]);
-    if (p.exists() && p.data().handle) { PROFILE = p.data(); cacheProfile(); startApp(); }
+    if (p.exists() && p.data().handle) { PROFILE = p.data(); cacheProfile(); enterApp(); }
     else showSetup();
   } catch (e) {
     console.error(e); showSetup();

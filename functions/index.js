@@ -317,6 +317,68 @@ module.exports.runRecap = runRecap;
 exports.dailyDigest = onSchedule({ schedule: "0 18 * * *", timeZone: "America/New_York", secrets: [RESEND_API_KEY], timeoutSeconds: 540 }, () => runDigest());
 
 /* ---------- one-tap unsubscribe (thepitlog.com/u redirects here) ---------- */
+/* ---------- account emails: confirm your email + welcome ----------
+   Transactional, so notification settings don't apply. Sent once each (resends are rate-limited). */
+async function sendAccount(uid, to, { subject, title, intro, body, button }){
+  const footer = `You're getting this because this email address was used to sign up for Pit Log. If that wasn't you, you can ignore it.`;
+  const html = L.layout({ title, intro, body, button, footer });
+  const res = await fetch("https://api.resend.com/emails", {
+    method: "POST", headers: { Authorization: `Bearer ${RESEND_API_KEY.value()}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ from: FROM, to: [to], subject, html }) });
+  if (!res.ok) { logger.error("resend failed", res.status, await res.text()); return false; }
+  return true;
+}
+// Our own link (thepitlog.com/?mode=verifyEmail&oobCode=…) so confirming happens on Pit Log's page,
+// not Firebase's plain one. The app applies the code itself.
+async function verifyLink(email){
+  const link = await getAuth().generateEmailVerificationLink(email, { url: `${L.SITE}/?verified=1` });
+  const code = new URL(link).searchParams.get("oobCode");
+  return `${L.SITE}/?mode=verifyEmail&oobCode=${encodeURIComponent(code)}`;
+}
+async function sendVerify(uid, au, profile){
+  if (!(await cooldownOk(uid, "verify", 3))) return "wait";
+  const link = await verifyLink(au.email);
+  const name = (profile && profile.name || au.displayName || "").split(" ")[0];
+  return (await sendAccount(uid, au.email, L.verifyEmail({ name, link }))) ? "sent" : "failed";
+}
+async function sendWelcome(uid, au, profile){
+  const ref = db.doc(`mail/${uid}`), m = await ref.get();
+  if (m.exists && m.data().welcomedAt) return "already";
+  await ref.set({ welcomedAt: FieldValue.serverTimestamp() }, { merge: true }); // claim first, so two calls can't both send
+  const ok = await sendAccount(uid, au.email, L.welcomeEmail({ name: (profile && profile.name || au.displayName || "").split(" ")[0], handle: profile && profile.handle }));
+  if (ok) await db.doc(`users/${uid}`).set({ welcomed: true }, { merge: true });
+  else await ref.set({ welcomedAt: null }, { merge: true });
+  return ok ? "sent" : "failed";
+}
+// New profile (right after someone claims their username): Google accounts are already confirmed and get
+// the welcome; email-and-password accounts get the "confirm your email" message first.
+exports.onUserCreated = onDocumentCreated({ document: "users/{uid}", database: DB_ID, secrets: [RESEND_API_KEY] }, async event => {
+  const uid = event.params.uid, profile = event.data && event.data.data();
+  let au; try { au = await getAuth().getUser(uid); } catch (_) { return; }
+  if (!au.email) return;
+  if (au.emailVerified) await sendWelcome(uid, au, profile); else await sendVerify(uid, au, profile);
+});
+// Called by the app (signed in): { action: "resend" } re-sends the confirm link; { action: "welcome" }
+// sends the welcome once the email is confirmed.
+exports.account = onRequest({ cors: [/thepitlog\.com$/, /localhost/, /pr777x\.github\.io$/], secrets: [RESEND_API_KEY] }, async (req, res) => {
+  if (req.method !== "POST") return res.status(405).json({ error: "POST only" });
+  const m = String(req.headers.authorization || "").match(/^Bearer (.+)$/); if (!m) return res.status(401).json({ error: "sign in first" });
+  let tok; try { tok = await getAuth().verifyIdToken(m[1]); } catch (_) { return res.status(401).json({ error: "sign in again" }); }
+  const uid = tok.uid, au = await getAuth().getUser(uid), profile = await userDoc(uid);
+  const action = (req.body && req.body.action) || "";
+  if (!au.email) return res.status(400).json({ error: "no email on this account" });
+  if (action === "resend") {
+    if (au.emailVerified) return res.json({ verified: true });
+    const r = await sendVerify(uid, au, profile);
+    return res.status(r === "failed" ? 502 : 200).json({ result: r });
+  }
+  if (action === "welcome") {
+    if (!au.emailVerified) return res.status(400).json({ error: "confirm your email first" });
+    return res.json({ result: await sendWelcome(uid, au, profile) });
+  }
+  return res.status(400).json({ error: "unknown action" });
+});
+
 exports.unsubscribe = onRequest({ cors: false }, async (req, res) => {
   const { u, t, k } = req.query;
   const page = msg => res.status(200).send(`<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><body style="background:#0e0b0c;color:#ece4d4;font-family:Arial,sans-serif;padding:32px"><h1 style="font-family:Georgia,serif;font-weight:normal">Pit Log</h1><p>${msg}</p><p><a style="color:#e0313a" href="${L.SITE}">Open Pit Log</a></p></body>`);

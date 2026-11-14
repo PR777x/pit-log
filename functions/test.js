@@ -2,6 +2,7 @@
 const Module = require("module");
 const assert = require("assert");
 const store = new Map(); // path -> data
+const AUTH = {}; // uid -> fake Firebase Auth user
 const emails = [];
 let auto = 0;
 const clone = v => JSON.parse(JSON.stringify(v));
@@ -30,7 +31,9 @@ const fakes = {
   "firebase-functions/params": { defineSecret: () => ({ value: () => "test-key" }) },
   "firebase-functions/v2": { setGlobalOptions: () => {}, logger: { info: () => {}, error: (...a) => console.error(...a) } },
   "firebase-admin/app": { initializeApp: () => {} },
-  "firebase-admin/auth": { getAuth: () => ({ getUser: async uid => ({ email: uid + "@example.com" }) }) },
+  "firebase-admin/auth": { getAuth: () => ({ getUser: async uid => AUTH[uid] || { email: uid + "@example.com", emailVerified: true },
+    generateEmailVerificationLink: async (email, s) => `https://pit-log.firebaseapp.com/__/auth/action?mode=verifyEmail&oobCode=CODE-${encodeURIComponent(email)}&continueUrl=${encodeURIComponent(s.url)}`,
+    verifyIdToken: async t => { if (!t.startsWith("tok-")) throw new Error("bad"); return { uid: t.slice(4) }; } }) },
   "firebase-admin/firestore": { getFirestore: id => { assert.strictEqual(id, "pit-log"); return fakeDb; }, FieldValue: { serverTimestamp: () => ({ __ts: 1 }) } },
 };
 const orig = Module._load;
@@ -276,6 +279,31 @@ const sentTo = who => emails.filter(e => e.to[0] === who + "@example.com");
   // a show 4 days out alone doesn't trigger an email every day
   store.delete("users/zz/shows/a"); store.delete("users/zz/shows/c");
   emails.length = 0; await F.runDigest(); assert.ok(!sentTo("zz").length, "no 7/1-day mark today, no email");
+
+  // 10. Account emails: confirm-your-email for email sign-ups, welcome once confirmed (or right away for Google)
+  emails.length = 0;
+  AUTH.newbie = { email: "newbie@example.com", emailVerified: false };
+  store.set("users/newbie", { name: "Sam Rivera", handle: "samr" });
+  await F.onUserCreated({ params: { uid: "newbie" }, data: { data: () => store.get("users/newbie") } });
+  const ve = sentTo("newbie")[0]; assert.ok(ve, "verification sent");
+  assert.match(ve.subject, /Confirm your email/); assert.match(ve.html, /Sam, one/);
+  assert.match(ve.html, /https:\/\/thepitlog\.com\/\?mode=verifyEmail&amp;oobCode=CODE-newbie/); assert.ok(!/firebaseapp/.test(ve.html), "branded link, not Firebase's page");
+  assert.ok(!/stop all emails/.test(ve.html), "no notification-unsubscribe footer on account emails");
+  const call = async (tok, body) => { let code = 200, out; const res = { status: c => { code = c; return res; }, json: j => { out = j; } };
+    await F.account({ method: "POST", headers: { authorization: tok ? "Bearer " + tok : "" }, body }, res); return { code, out }; };
+  assert.strictEqual((await call("", { action: "resend" })).code, 401);
+  assert.deepStrictEqual((await call("tok-newbie", { action: "resend" })).out, { result: "wait" }, "resend is rate-limited");
+  assert.strictEqual((await call("tok-newbie", { action: "welcome" })).code, 400, "no welcome before confirming");
+  AUTH.newbie.emailVerified = true; emails.length = 0;
+  assert.deepStrictEqual((await call("tok-newbie", { action: "welcome" })).out, { result: "sent" });
+  assert.match(sentTo("newbie")[0].subject, /Welcome to the pit, Sam/); assert.match(sentTo("newbie")[0].html, /@samr/); assert.match(sentTo("newbie")[0].html, /Log your first show/);
+  assert.deepStrictEqual((await call("tok-newbie", { action: "welcome" })).out, { result: "already" }, "welcome only once");
+  assert.strictEqual(store.get("users/newbie").welcomed, true);
+  assert.deepStrictEqual((await call("tok-newbie", { action: "resend" })).out, { verified: true });
+  // Google sign-up: already confirmed, so the welcome goes out when the profile is created
+  emails.length = 0; AUTH.gg = { email: "gg@example.com", emailVerified: true }; store.set("users/gg", { name: "Gee", handle: "gee" });
+  await F.onUserCreated({ params: { uid: "gg" }, data: { data: () => store.get("users/gg") } });
+  assert.strictEqual(sentTo("gg").length, 1); assert.match(sentTo("gg")[0].subject, /Welcome/);
 
   console.log("All email function tests passed.");
 })().catch(e => { console.error(e); process.exit(1); });
