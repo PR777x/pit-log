@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile, applyActionCode } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=49";
+import { VENUES } from "./venues.js?v=50";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -2630,7 +2630,7 @@ function drawEdit(){
       </div></div>
     <div class="field"><span class="lbl">Background picture</span>
       <div class="coveredit${e.coverURL ? "" : " empty"}" ${e.coverURL ? `style="background-image:url('${esc(e.coverURL)}')"` : ""}>${e.coverURL ? "" : `<span class="ro">A wide photo behind your name: a crowd shot, a stage, a favorite poster.</span>`}</div>
-      <div class="avbtns"><label class="btn">${e.coverBusy ? "Uploading…" : e.coverURL ? "Change background" : "Add background"}<input class="vh" type="file" id="coverFile" accept="image/*,.heic,.heif" ${e.coverBusy ? "disabled" : ""}></label>${e.coverURL ? `<button class="btn ghost" data-covernone>Remove</button>` : ""}</div></div>
+      <div class="avbtns"><label class="btn">${e.coverBusy ? "Uploading…" : e.coverURL ? "Change background" : "Add background"}<input class="vh" type="file" id="coverFile" accept="image/*,.heic,.heif" ${e.coverBusy ? "disabled" : ""}></label>${e.coverURL ? `<button class="btn ghost" data-coveradjust>Reposition</button><button class="btn ghost" data-covernone>Remove</button>` : ""}</div></div>
     <label class="field"><span class="lbl">Name</span><input id="pf-name" maxlength="40" value="${esc(e.name)}" placeholder="Ex: Sam Rivera"></label>
     <label class="field"><span class="lbl">Bio <span id="pf-count">${(e.bio||"").length}/140</span></span><textarea id="pf-bio" maxlength="140" placeholder="Ex: Doom, deathcore and barricade spots.">${esc(e.bio)}</textarea></label>
     <div class="field"><span class="lbl">Top 5 bands</span><div class="top5edit">${e.favBands.map((b, i) => `<label><span class="num">${i + 1}</span><input id="pf-fav${i}" maxlength="40" list="dl-bands" value="${esc(b)}" placeholder="${i ? "" : "Ex: Katatonia"}" aria-label="Favorite band ${i + 1}"></label>`).join("")}</div></div>
@@ -2644,6 +2644,11 @@ function drawEdit(){
   </div></div>`;
   const keep = () => { PEDIT.handle = $("#pf-handle").value; PEDIT.name = $("#pf-name").value; PEDIT.bio = $("#pf-bio").value; PEDIT.favBands = [0,1,2,3,4].map(i => $("#pf-fav" + i).value); PEDIT.favVenue = $("#pf-venue").value; };
   root.querySelector("[data-pcancel]").onclick = () => { if (PEDIT.photoPath && PEDIT.photoPath !== PROFILE.photoPath) removeFile(PEDIT.photoPath); if (PEDIT.coverPath && PEDIT.coverPath !== PROFILE.coverPath) removeFile(PEDIT.coverPath); PEDIT = null; root.innerHTML = ""; };
+  const ca = root.querySelector("[data-coveradjust]"); if (ca) ca.onclick = async () => {
+    keep(); const img = PEDIT.coverSrc || await loadImg(PEDIT.coverURL, true);
+    if (!img) { toast("Couldn't load your background. Choose it again with Change background.", 4000); return; }
+    uploadCover(img);
+  };
   const cn = root.querySelector("[data-covernone]"); if (cn) cn.onclick = () => { keep(); if (PEDIT.coverPath && PEDIT.coverPath !== PROFILE.coverPath) removeFile(PEDIT.coverPath); PEDIT.coverURL = ""; PEDIT.coverPath = ""; drawEdit(); };
   root.querySelector("[data-psave]").onclick = () => { keep(); saveProfileEdit(); };
   const gb = root.querySelector("[data-avgoogle]"); if (gb) gb.onclick = () => { keep(); dropPendingAvatar(); PEDIT.photoURL = g; PEDIT.photoPath = ""; drawEdit(); };
@@ -2660,25 +2665,29 @@ async function avatarSource(file){
   try { return await decodeImage(file); } catch (e) { if (!isHeic(file)) throw e; return await decodeImage(await heicToJpeg(file)); }
 }
 // Drag to move, pinch / wheel / slider to zoom, inside a round frame. Resolves a square JPEG blob, or null if cancelled.
-function cropAvatar(img){
+// Same frame, wide and square-cornered, for the profile background (opts.aspect = width / height).
+function cropAvatar(img, opts){
+  opts = opts || {};
+  const aspect = opts.aspect || 1, round = aspect === 1;
   return new Promise(resolve => {
     const W = img.width || img.naturalWidth, H = img.height || img.naturalHeight;
-    const V = Math.round(Math.min(300, window.innerWidth - 72)), base = V / Math.min(W, H), MAXZ = 5;
+    const VW = Math.round(Math.min(round ? 300 : 360, window.innerWidth - 72)), VH = Math.round(VW / aspect);
+    const base = Math.max(VW / W, VH / H), MAXZ = 5;
     let z = 1, ox = 0, oy = 0;
     const root = document.createElement("div"); root.className = "cropmodal";
-    root.innerHTML = `<div class="cropbox" role="dialog" aria-modal="true" aria-label="Position your photo"><h3>Position your photo</h3>
-      <div class="cropview" style="width:${V}px;height:${V}px"><canvas width="${V * 2}" height="${V * 2}"></canvas><div class="cropring"></div></div>
+    root.innerHTML = `<div class="cropbox" role="dialog" aria-modal="true" aria-label="Position your photo"><h3>${opts.title || "Position your photo"}</h3>
+      <div class="cropview" style="width:${VW}px;height:${VH}px"><canvas width="${VW * 2}" height="${VH * 2}"></canvas><div class="cropring${round ? "" : " wide"}"></div></div>
       <label class="cropzoom"><span class="lbl">Zoom</span><input type="range" min="1" max="${MAXZ}" step="0.01" value="1" aria-label="Zoom"></label>
       <div class="ro">Drag the photo to move it. Pinch or slide to zoom.</div>
-      <div class="cropbtns"><button class="btn ghost" data-cc>Cancel</button><button class="btn red" data-cok>Use photo</button></div></div>`;
+      <div class="cropbtns"><button class="btn ghost" data-cc>Cancel</button><button class="btn red" data-cok>${opts.ok || "Use photo"}</button></div></div>`;
     document.body.appendChild(root);
     const cv = root.querySelector("canvas"), ctx = cv.getContext("2d"), rng = root.querySelector("input[type=range]");
-    const clamp = () => { const s = base * z, hw = W * s / 2, hh = H * s / 2, l = V / 2; ox = Math.max(l - hw, Math.min(hw - l, ox)); oy = Math.max(l - hh, Math.min(hh - l, oy)); };
-    const paint = (c, size) => { const k = size / V, s = base * z * k; c.fillStyle = "#000"; c.fillRect(0, 0, size, size); c.imageSmoothingQuality = "high"; c.drawImage(img, size / 2 - W * s / 2 + ox * k, size / 2 - H * s / 2 + oy * k, W * s, H * s); };
-    const draw = () => { clamp(); paint(ctx, V * 2); };
+    const clamp = () => { const s = base * z, hw = W * s / 2, hh = H * s / 2; ox = Math.max(VW / 2 - hw, Math.min(hw - VW / 2, ox)); oy = Math.max(VH / 2 - hh, Math.min(hh - VH / 2, oy)); };
+    const paint = (c, w, h) => { const k = w / VW, s = base * z * k; c.fillStyle = "#000"; c.fillRect(0, 0, w, h); c.imageSmoothingQuality = "high"; c.drawImage(img, w / 2 - W * s / 2 + ox * k, h / 2 - H * s / 2 + oy * k, W * s, H * s); };
+    const draw = () => { clamp(); paint(ctx, VW * 2, VH * 2); };
     const zoomTo = (nz, cx = 0, cy = 0) => { nz = Math.max(1, Math.min(MAXZ, nz)); const r = nz / z; ox = cx + (ox - cx) * r; oy = cy + (oy - cy) * r; z = nz; rng.value = z; draw(); };
     const pts = new Map(); let last = null;
-    const rel = e => { const b = cv.getBoundingClientRect(); return [e.clientX - b.left - V / 2, e.clientY - b.top - V / 2]; };
+    const rel = e => { const b = cv.getBoundingClientRect(); return [e.clientX - b.left - VW / 2, e.clientY - b.top - VH / 2]; };
     cv.addEventListener("pointerdown", e => { cv.setPointerCapture(e.pointerId); pts.set(e.pointerId, rel(e)); last = null; });
     cv.addEventListener("pointermove", e => {
       if (!pts.has(e.pointerId)) return; const prev = pts.get(e.pointerId), cur = rel(e); pts.set(e.pointerId, cur);
@@ -2695,18 +2704,25 @@ function cropAvatar(img){
     document.addEventListener("keydown", key, true);
     root.querySelector("[data-cc]").onclick = () => done(null);
     root.querySelector("[data-cok]").onclick = () => {
-      const out = 400, c = document.createElement("canvas"); c.width = c.height = out;
-      paint(c.getContext("2d"), out); c.toBlob(b => done(b), "image/jpeg", 0.88);
+      const ow = opts.outW || 400, oh = Math.round(ow / aspect), c = document.createElement("canvas"); c.width = ow; c.height = oh;
+      paint(c.getContext("2d"), ow, oh); c.toBlob(b => done(b), "image/jpeg", 0.86);
     };
     draw();
   });
 }
+const COVER_ASPECT = 3;   // profile background is shown at 3:1 everywhere, so what you frame is what people see
 async function uploadCover(file){
   if (!PEDIT) return;
   PEDIT.name = $("#pf-name").value; PEDIT.bio = $("#pf-bio").value; PEDIT.favBands = [0,1,2,3,4].map(i => $("#pf-fav" + i).value); PEDIT.favVenue = $("#pf-venue").value;
+  let blob;
+  try {
+    const img = file instanceof Blob ? await avatarSource(file) : file;
+    if (file instanceof Blob) PEDIT.coverSrc = img;
+    blob = await cropAvatar(img, { aspect: COVER_ASPECT, outW: 1500, title: "Position your background", ok: "Use background" });
+  } catch (e) { console.error(e); toast("Couldn't open that image. Try a JPG or PNG.", 4000); return; }
+  if (!blob || !PEDIT) return;
   PEDIT.coverBusy = true; drawEdit();
   try {
-    const blob = await compress(file, "photos");
     const path = `users/${ME.uid}/cover-${rid()}.jpg`, r = sref(storage, path);
     await uploadBytes(r, blob, { contentType: blob.type || "image/jpeg", cacheControl: "public,max-age=31536000" });
     if (PEDIT.coverPath && PEDIT.coverPath !== PROFILE.coverPath) removeFile(PEDIT.coverPath);
