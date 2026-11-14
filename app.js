@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile, applyActionCode } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=48";
+import { VENUES } from "./venues.js?v=49";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -41,7 +41,7 @@ const fmtRating = r => (Math.round(r * 2) / 2).toString();
 const stepRating = (cur, i) => cur === i ? i - 0.5 : cur === i - 0.5 ? 0 : i;
 
 let S = { shows: [], loaded: false, slow: false, error: "", tab: "shows", filter: "all", q: "",
-  open: null, canWrite: true, year: "all", sort: (()=>{ try { const v = localStorage.getItem("pitlog.sort"); return ["newest","oldest","rating","venue","band"].includes(v) ? v : "newest"; } catch(_) { return "newest"; } })(), vault: { by: "band", sel: null, type: "all", q: "" },
+  open: null, canWrite: true, year: "all", listYear: String(new Date().getFullYear()), sort: (()=>{ try { const v = localStorage.getItem("pitlog.sort"); return ["newest","oldest","rating","venue","band"].includes(v) ? v : "newest"; } catch(_) { return "newest"; } })(), vault: { by: "band", sel: null, type: "all", q: "" },
   cal: { y: new Date().getFullYear(), m: new Date().getMonth() } };
 let db = null, assets = null;
 let ME = null, PROFILE = null;
@@ -122,6 +122,13 @@ const sorted = () => [...S.shows].sort((a,b) => (a.date||"").localeCompare(b.dat
 const inYear = s => S.year === "all" || parse(s.date).y === Number(S.year);
 const years = () => [...new Set([new Date().getFullYear(), ...S.shows.map(s=>parse(s.date).y).filter(Boolean)])].sort((a,b)=>b-a);
 const yearSeg = () => `<div class="seg" role="group" aria-label="Year"><button data-year="all" aria-pressed="${S.year==="all"}">All years</button>${years().map(y=>`<button data-year="${y}" aria-pressed="${String(S.year)===String(y)}">${y}</button>`).join("")}</div>`;
+// The Shows list has its own year (starts on this year) with the choices always in view.
+const inListYear = s => S.listYear === "all" || parse(s.date).y === Number(S.listYear);
+function yearBar(){
+  const yrs = years(), n = y => S.shows.filter(s => y === "all" || parse(s.date).y === y).length;
+  if (S.listYear !== "all" && !yrs.includes(Number(S.listYear))) yrs.unshift(Number(S.listYear));
+  return `<div class="yearbar" role="group" aria-label="Year">${yrs.map(y => `<button data-lyear="${y}" aria-pressed="${String(S.listYear) === String(y)}">${y}<span class="yn">${n(y)}</span></button>`).join("")}<button data-lyear="all" aria-pressed="${S.listYear === "all"}">All<span class="yn">${S.shows.length}</span></button></div>`;
+}
 const norm = x => typeof x === "string" ? { id: x, url: x, type: "image", bands: [] } : { type: "image", bands: [], ...x, id: x.url || x.id };
 const pid = p => p ? (p.url || p) : null;
 const items = (s, kind) => (Array.isArray(s?.[kind]) ? s[kind] : []).filter(Boolean).map(norm);
@@ -212,7 +219,7 @@ function groupOf(s){
 
 function renderShows(){
   if (S.showView === "cal") return renderCal();
-  let list = [...S.shows, ...(S.crewOn ? crewOverlay() : [])].filter(inYear);
+  let list = [...S.shows, ...(S.crewOn ? crewOverlay() : [])].filter(inListYear);
   if (S.filter === "attended") list = list.filter(s => !isUpcoming(s));
   if (S.filter === "upcoming") list = list.filter(isUpcoming);
   const q = S.q.trim().toLowerCase();
@@ -221,7 +228,6 @@ function renderShows(){
   const firsts = firstSightings();
   // One search box + a Filter panel (folded away) instead of four rows of controls; what's on shows as chips.
   const active = [];
-  if (S.year !== "all") active.push([`Year: ${S.year}`, "data-year", "all"]);
   if (S.filter !== "all") active.push([S.filter === "attended" ? "Attended" : "Upcoming", "data-filter", "all"]);
   if (S.crewOn) active.push(["Crew shows on", "data-crewtoggle", ""]);
   if (S.sort !== "newest") active.push([`Sort: ${SORTS[S.sort]}`, "data-sortreset", ""]);
@@ -229,17 +235,18 @@ function renderShows(){
   <div class="fbar"><input class="search" id="q" type="search" placeholder="Search band, venue, crew…" value="${esc(S.q)}" aria-label="Search shows">
     <button class="btn fbtn${S.fopen ? " on" : ""}" data-fpanel aria-expanded="${!!S.fopen}">Filter${active.length ? ` <b>${active.length}</b>` : ""}</button></div>
   ${S.fopen ? `<div class="fpanel">
-    <div class="frow"><span class="lbl">Year</span>${yearSeg()}</div>
     <div class="frow"><span class="lbl">Show</span><div class="seg" role="group" aria-label="Filter">${["all","attended","upcoming"].map(f=>`<button data-filter="${f}" aria-pressed="${S.filter===f}">${f}</button>`).join("")}</div></div>
     ${friendList().length ? `<div class="frow"><span class="lbl">Crew</span>${crewToggle()}</div>` : ""}
     <div class="frow"><span class="lbl">Sort</span><select id="sort" aria-label="Sort shows">${Object.entries(SORTS).map(([v,l])=>`<option value="${v}" ${S.sort===v?"selected":""}>${l}</option>`).join("")}</select></div>
   </div>` : ""}
+  ${yearBar()}
   ${active.length ? `<div class="tagrow fchips">${active.map(([l, a, v]) => `<button class="chip fchip" ${a}="${v}" aria-label="Remove filter ${esc(l)}">${esc(l)} ×</button>`).join("")}</div>` : ""}` + statusBlock();
   const famN = S.shows.filter(familyPending).length;
   if (famN) html += `<button class="fambanner" data-famreview><b>${famN} show${famN > 1 ? "s" : ""} added from your Crew Family's log.</b> Are they yours too? Tap to review.</button>`;
   if (!S.loaded) {}
   else if (!S.shows.length) html += `<div class="empty"><h3>No shows logged</h3><div>Tap <b>+ Add show</b> to log your first night in the pit.</div></div>`;
-  else if (!list.length) html += `<div class="empty"><h3>Nothing matches</h3><div>Try another band, venue or name.</div></div>`;
+  else if (!list.length) html += S.listYear !== "all" && !q && S.filter === "all" ? `<div class="empty"><h3>No shows in ${esc(S.listYear)}</h3><div>Pick another year above, or <button class="linkbtn" data-lyear="all">show all years</button>.</div></div>`
+    : `<div class="empty"><h3>Nothing matches</h3><div>Try another band, venue or name${S.listYear !== "all" ? `, or <button class="linkbtn" data-lyear="all">search all years</button>` : ""}.</div></div>`;
   else {
     const counts = {}; for (const s of list) { const g = groupOf(s).join("|"); counts[g] = (counts[g]||0) + 1; }
     let lastKey = null; html += `<div class="list">`;
@@ -1055,6 +1062,7 @@ document.addEventListener("click", e => {
   else if (t.dataset.gotab) { S.tab = t.dataset.gotab; renderTab(); scrollToContent(); }
   else if (t.dataset.sview) { S.showView = t.dataset.sview; try { localStorage.setItem("pitlog.showView", S.showView); } catch (_) {} renderShows(); window.scrollTo(0, 0); }
   else if (t.dataset.year) { S.year = t.dataset.year; renderTab(); }
+  else if (t.dataset.lyear) { S.listYear = t.dataset.lyear; renderShows(); }
   else if (t.dataset.caly) { S.cal.y = Number(t.dataset.caly); renderCal(); }
   else if (t.dataset.calm) { S.cal.m = Number(t.dataset.calm); renderCal(); }
   else if (t.dataset.calnav) { let m = S.cal.m + Number(t.dataset.calnav), y = S.cal.y; if (m < 0) { m = 11; y--; } if (m > 11) { m = 0; y++; } S.cal = { y, m }; renderCal(); }
@@ -2617,6 +2625,7 @@ function drawEdit(){
       <div class="avbtns">
         <label class="btn">${e.busy ? "Uploading…" : "Change photo"}<input class="vh" type="file" id="avatarFile" accept="image/*,.heic,.heif" ${e.busy ? "disabled" : ""}></label>
         ${g && e.photoURL !== g ? `<button class="btn ghost" data-avgoogle>Use Google photo</button>` : ""}
+        ${e.photoURL && (e.avSrc || e.photoPath) ? `<button class="btn ghost" data-avadjust>Reposition</button>` : ""}
         ${e.photoURL ? `<button class="btn ghost" data-avnone>Use my initial</button>` : ""}
       </div></div>
     <div class="field"><span class="lbl">Background picture</span>
@@ -2638,19 +2647,59 @@ function drawEdit(){
   const cn = root.querySelector("[data-covernone]"); if (cn) cn.onclick = () => { keep(); if (PEDIT.coverPath && PEDIT.coverPath !== PROFILE.coverPath) removeFile(PEDIT.coverPath); PEDIT.coverURL = ""; PEDIT.coverPath = ""; drawEdit(); };
   root.querySelector("[data-psave]").onclick = () => { keep(); saveProfileEdit(); };
   const gb = root.querySelector("[data-avgoogle]"); if (gb) gb.onclick = () => { keep(); dropPendingAvatar(); PEDIT.photoURL = g; PEDIT.photoPath = ""; drawEdit(); };
+  const ab = root.querySelector("[data-avadjust]"); if (ab) ab.onclick = async () => {
+    const img = PEDIT.avSrc || await loadImg(PEDIT.photoURL, true);
+    if (!img) { toast("Couldn't load your photo. Choose it again with Change photo.", 4000); return; }
+    uploadAvatar(img);
+  };
   const nb = root.querySelector("[data-avnone]"); if (nb) nb.onclick = () => { keep(); dropPendingAvatar(); PEDIT.photoURL = ""; PEDIT.photoPath = ""; drawEdit(); };
   $("#pf-bio").oninput = ev => { $("#pf-count").textContent = ev.target.value.length + "/140"; };
 }
 function dropPendingAvatar(){ if (PEDIT.photoPath && PEDIT.photoPath !== PROFILE.photoPath) removeFile(PEDIT.photoPath); }
-async function squareAvatar(file){
-  let img;
-  try { img = await decodeImage(file); } catch (e) { if (!isHeic(file)) throw e; img = await decodeImage(await heicToJpeg(file)); }
-  const W = img.width || img.naturalWidth, H = img.height || img.naturalHeight;
-  const side = Math.min(W, H), out = Math.min(400, side);
-  const c = document.createElement("canvas"); c.width = c.height = out;
-  const ctx = c.getContext("2d"); ctx.imageSmoothingQuality = "high";
-  ctx.drawImage(img, (W - side) / 2, (H - side) / 2, side, side, 0, 0, out, out);
-  return await new Promise(r => c.toBlob(r, "image/jpeg", 0.86));
+async function avatarSource(file){
+  try { return await decodeImage(file); } catch (e) { if (!isHeic(file)) throw e; return await decodeImage(await heicToJpeg(file)); }
+}
+// Drag to move, pinch / wheel / slider to zoom, inside a round frame. Resolves a square JPEG blob, or null if cancelled.
+function cropAvatar(img){
+  return new Promise(resolve => {
+    const W = img.width || img.naturalWidth, H = img.height || img.naturalHeight;
+    const V = Math.round(Math.min(300, window.innerWidth - 72)), base = V / Math.min(W, H), MAXZ = 5;
+    let z = 1, ox = 0, oy = 0;
+    const root = document.createElement("div"); root.className = "cropmodal";
+    root.innerHTML = `<div class="cropbox" role="dialog" aria-modal="true" aria-label="Position your photo"><h3>Position your photo</h3>
+      <div class="cropview" style="width:${V}px;height:${V}px"><canvas width="${V * 2}" height="${V * 2}"></canvas><div class="cropring"></div></div>
+      <label class="cropzoom"><span class="lbl">Zoom</span><input type="range" min="1" max="${MAXZ}" step="0.01" value="1" aria-label="Zoom"></label>
+      <div class="ro">Drag the photo to move it. Pinch or slide to zoom.</div>
+      <div class="cropbtns"><button class="btn ghost" data-cc>Cancel</button><button class="btn red" data-cok>Use photo</button></div></div>`;
+    document.body.appendChild(root);
+    const cv = root.querySelector("canvas"), ctx = cv.getContext("2d"), rng = root.querySelector("input[type=range]");
+    const clamp = () => { const s = base * z, hw = W * s / 2, hh = H * s / 2, l = V / 2; ox = Math.max(l - hw, Math.min(hw - l, ox)); oy = Math.max(l - hh, Math.min(hh - l, oy)); };
+    const paint = (c, size) => { const k = size / V, s = base * z * k; c.fillStyle = "#000"; c.fillRect(0, 0, size, size); c.imageSmoothingQuality = "high"; c.drawImage(img, size / 2 - W * s / 2 + ox * k, size / 2 - H * s / 2 + oy * k, W * s, H * s); };
+    const draw = () => { clamp(); paint(ctx, V * 2); };
+    const zoomTo = (nz, cx = 0, cy = 0) => { nz = Math.max(1, Math.min(MAXZ, nz)); const r = nz / z; ox = cx + (ox - cx) * r; oy = cy + (oy - cy) * r; z = nz; rng.value = z; draw(); };
+    const pts = new Map(); let last = null;
+    const rel = e => { const b = cv.getBoundingClientRect(); return [e.clientX - b.left - V / 2, e.clientY - b.top - V / 2]; };
+    cv.addEventListener("pointerdown", e => { cv.setPointerCapture(e.pointerId); pts.set(e.pointerId, rel(e)); last = null; });
+    cv.addEventListener("pointermove", e => {
+      if (!pts.has(e.pointerId)) return; const prev = pts.get(e.pointerId), cur = rel(e); pts.set(e.pointerId, cur);
+      if (pts.size === 1) { ox += cur[0] - prev[0]; oy += cur[1] - prev[1]; draw(); return; }
+      const [a, b] = [...pts.values()], d = Math.hypot(a[0] - b[0], a[1] - b[1]), mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+      if (last) zoomTo(z * d / last, mid[0], mid[1]); last = d;
+    });
+    const up = e => { pts.delete(e.pointerId); last = null; };
+    cv.addEventListener("pointerup", up); cv.addEventListener("pointercancel", up);
+    cv.addEventListener("wheel", e => { e.preventDefault(); const [cx, cy] = rel(e); zoomTo(z * Math.exp(-e.deltaY / 400), cx, cy); }, { passive: false });
+    rng.addEventListener("input", () => zoomTo(Number(rng.value)));
+    const done = blob => { document.removeEventListener("keydown", key, true); root.remove(); resolve(blob); };
+    const key = e => { if (e.key === "Escape") { e.stopPropagation(); done(null); } };
+    document.addEventListener("keydown", key, true);
+    root.querySelector("[data-cc]").onclick = () => done(null);
+    root.querySelector("[data-cok]").onclick = () => {
+      const out = 400, c = document.createElement("canvas"); c.width = c.height = out;
+      paint(c.getContext("2d"), out); c.toBlob(b => done(b), "image/jpeg", 0.88);
+    };
+    draw();
+  });
 }
 async function uploadCover(file){
   if (!PEDIT) return;
@@ -2668,9 +2717,15 @@ async function uploadCover(file){
 async function uploadAvatar(file){
   if (!PEDIT) return;
   PEDIT.name = $("#pf-name").value; PEDIT.bio = $("#pf-bio").value; PEDIT.favBands = [0,1,2,3,4].map(i => $("#pf-fav" + i).value); PEDIT.favVenue = $("#pf-venue").value;
+  let blob;
+  try {
+    const img = file instanceof Blob ? await avatarSource(file) : file;
+    if (file instanceof Blob) PEDIT.avSrc = img;
+    blob = await cropAvatar(img);
+  } catch (e) { console.error(e); toast("Couldn't open that image. Try a JPG or PNG.", 4000); return; }
+  if (!blob || !PEDIT) return;
   PEDIT.busy = true; drawEdit();
   try {
-    const blob = await squareAvatar(file);
     const path = `users/${ME.uid}/avatar-${rid()}.jpg`, r = sref(storage, path);
     await uploadBytes(r, blob, { contentType: "image/jpeg", cacheControl: "public,max-age=31536000" });
     dropPendingAvatar();
