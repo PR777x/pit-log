@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile, applyActionCode } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=42";
+import { VENUES } from "./venues.js?v=43";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -2161,6 +2161,7 @@ function settingsBlock(){
       selectRow("distance", "Distance", "", [["mi", "Miles"], ["km", "Kilometers"]], set.distance)].join(""))}
     ${grp("data", "Your data", `<div class="ro" style="margin:4px 0 10px">Download a backup of every show you've logged. Import it from the account menu to restore it.</div>
       <button class="btn" data-backup>Download my data</button>`)}
+    <div class="support"><b>Need a hand?</b> Questions, bugs, ideas, or a show that won't save: email <a href="mailto:support@thepitlog.com?subject=Pit%20Log%20help%20(%40${encodeURIComponent(PROFILE.handle || "")})">support@thepitlog.com</a>. A real person reads every one.</div>
   </section>`;
 }
 async function saveSetting(key, val){

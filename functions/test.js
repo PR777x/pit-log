@@ -305,5 +305,7 @@ const sentTo = who => emails.filter(e => e.to[0] === who + "@example.com");
   await F.onUserCreated({ params: { uid: "gg" }, data: { data: () => store.get("users/gg") } });
   assert.strictEqual(sentTo("gg").length, 1); assert.match(sentTo("gg")[0].subject, /Welcome/);
 
+  assert.ok(emails.every(e => e.reply_to === "support@thepitlog.com"), "replies go to support");
+  assert.ok(emails.every(e => /support@thepitlog\.com/.test(e.html)), "every email names support");
   console.log("All email function tests passed.");
 })().catch(e => { console.error(e); process.exit(1); });

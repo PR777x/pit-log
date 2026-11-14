@@ -65,12 +65,12 @@ async function send(uid, kind, { subject, title, intro, body, button }){
   const to = await emailOf(uid); if (!to) return false;
   const token = await unsubToken(uid);
   const unsub = k => `${L.SITE}/u?u=${encodeURIComponent(uid)}&t=${encodeURIComponent(token)}&k=${k}`;
-  const footer = `You're getting this because of your Pit Log notification settings. <a href="${L.SITE}" style="color:#a2958d">Change them in the app</a> (Profile → Settings → Notifications) or <a href="${unsub(kind)}" style="color:#a2958d">stop these emails</a> · <a href="${unsub("all")}" style="color:#a2958d">stop all emails</a>.`;
+  const footer = `You're getting this because of your Pit Log notification settings. <a href="${L.SITE}" style="color:#a2958d">Change them in the app</a> (Profile → Settings → Notifications) or <a href="${unsub(kind)}" style="color:#a2958d">stop these emails</a> · <a href="${unsub("all")}" style="color:#a2958d">stop all emails</a>.<br>Questions? <a href="mailto:support@thepitlog.com" style="color:#a2958d">support@thepitlog.com</a>`;
   const html = L.layout({ title, intro, body, button, footer });
   const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: `Bearer ${RESEND_API_KEY.value()}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ from: FROM, to: [to], subject, html,
+    body: JSON.stringify({ from: FROM, to: [to], reply_to: "support@thepitlog.com", subject, html,
       headers: { "List-Unsubscribe": `<${unsub(kind === "digest" ? "digest" : kind)}>` } })
   });
   if (!res.ok) { logger.error("resend failed", res.status, await res.text()); return false; }
@@ -320,11 +320,11 @@ exports.dailyDigest = onSchedule({ schedule: "0 18 * * *", timeZone: "America/Ne
 /* ---------- account emails: confirm your email + welcome ----------
    Transactional, so notification settings don't apply. Sent once each (resends are rate-limited). */
 async function sendAccount(uid, to, { subject, title, intro, body, button }){
-  const footer = `You're getting this because this email address was used to sign up for Pit Log. If that wasn't you, you can ignore it.`;
+  const footer = `You're getting this because this email address was used to sign up for Pit Log. If that wasn't you, you can ignore it.<br>Questions? Just reply, or email <a href="mailto:support@thepitlog.com" style="color:#a2958d">support@thepitlog.com</a>`;
   const html = L.layout({ title, intro, body, button, footer });
   const res = await fetch("https://api.resend.com/emails", {
     method: "POST", headers: { Authorization: `Bearer ${RESEND_API_KEY.value()}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ from: FROM, to: [to], subject, html }) });
+    body: JSON.stringify({ from: FROM, to: [to], reply_to: "support@thepitlog.com", subject, html }) });
   if (!res.ok) { logger.error("resend failed", res.status, await res.text()); return false; }
   return true;
 }
@@ -381,7 +381,7 @@ exports.account = onRequest({ cors: [/thepitlog\.com$/, /localhost/, /pr777x\.gi
 
 exports.unsubscribe = onRequest({ cors: false }, async (req, res) => {
   const { u, t, k } = req.query;
-  const page = msg => res.status(200).send(`<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><body style="background:#0e0b0c;color:#ece4d4;font-family:Arial,sans-serif;padding:32px"><h1 style="font-family:Georgia,serif;font-weight:normal">Pit Log</h1><p>${msg}</p><p><a style="color:#e0313a" href="${L.SITE}">Open Pit Log</a></p></body>`);
+  const page = msg => res.status(200).send(`<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><body style="background:#0e0b0c;color:#ece4d4;font-family:Arial,sans-serif;padding:32px"><h1 style="font-family:Georgia,serif;font-weight:normal">Pit Log</h1><p>${msg}</p><p><a style="color:#e0313a" href="${L.SITE}">Open Pit Log</a></p><p style="color:#a2958d;font-size:14px">Questions? <a style="color:#a2958d" href="mailto:support@thepitlog.com">support@thepitlog.com</a></p></body>`);
   if (!u || !t) return page("That link isn't complete.");
   const d = await db.doc(`mail/${u}`).get();
   if (!d.exists || d.data().token !== t) return page("That link has expired. Change your emails in the app under Profile → Settings → Notifications.");

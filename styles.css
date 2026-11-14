@@ -569,3 +569,10 @@ nav.tabs{margin-bottom:12px}
 nav.tabs .navarrow.dot{position:relative}
 nav.tabs .navarrow.dot::after{content:"";position:absolute;top:-4px;right:-4px;width:10px;height:10px;border-radius:50%;background:var(--blood-hi);box-shadow:0 0 0 2px #0a0708}
 .lwrap{width:100%;box-sizing:border-box}.lfeats,.lftrack,.lfdots{max-width:100%;min-width:0}
+
+/* support contact */
+.support{margin-top:18px;padding:12px 14px;border:1px solid var(--iron);border-left:3px solid var(--blood);background:var(--crypt);color:var(--ash);font-size:14px;line-height:1.5}
+.support b{color:var(--bone)}
+.support a,.suplink,.lfaq a,.lfoot a{color:var(--blood-hi);text-decoration:none;font-weight:600}
+.support a:hover,.suplink:hover,.lfaq a:hover,.lfoot a:hover{text-decoration:underline}
+.lfoot{max-width:1080px;margin:0 auto;padding:18px max(16px,env(safe-area-inset-left,0px)) calc(24px + env(safe-area-inset-bottom,0px));display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;border-top:1px solid var(--iron);font-family:var(--f-label);letter-spacing:.08em;font-size:14px;color:var(--dim)}
