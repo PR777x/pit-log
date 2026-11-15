@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile, applyActionCode } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=55";
+import { VENUES } from "./venues.js?v=56";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -691,7 +691,10 @@ async function openWrapped(year){
     x.fillStyle = ASH; x.font = '500 42px "Barlow", sans-serif'; y = wrapText(x, [fmtDate(top.date), top.venue].filter(Boolean).join(" · "), 80, y + 6, 920, 54, 2);
     drawSkulls(x, 80, y + 20, 64, Number(top.rating)); x.fillStyle = BONE; x.font = '700 54px "Barlow Condensed", sans-serif'; x.fillText(`${fmtRating(Number(top.rating))} / 5`, 460, y + 72); y += 140;
     if (top.highlight && y < 1560) { x.fillStyle = BONE; x.font = 'italic 400 42px "Barlow", sans-serif'; y = wrapText(x, "“" + top.highlight + "”", 80, y + 10, 920, 56, 2); }
-    if (pit[0] && pit[0] !== top && y < 1600) { x.fillStyle = RED; x.font = '700 40px "Barlow Condensed", sans-serif'; y = wrapText(x, `WILDEST PIT: ${headline(pit[0]).toUpperCase()} · ${fmtRating(Number(pit[0].pit))}/5`, 80, y + 40, 920, 50, 1); }
+    // Pit intensity is rated for the whole night, so name the show (date, venue, full bill), not one band.
+    if (pit[0] && pit[0] !== top && y < 1560) { const ps = pit[0], lu = lineup(ps);
+      x.fillStyle = RED; x.font = '700 40px "Barlow Condensed", sans-serif'; x.fillText(`WILDEST PIT OF THE YEAR · ${fmtRating(Number(ps.pit))}/5`, 80, y + 40);
+      x.fillStyle = SOFT; x.font = '500 38px "Barlow", sans-serif'; y = wrapText(x, `${fmtDate(ps.date)}${ps.venue ? " at " + ps.venue : ""}: ${lu.slice(0, 3).join(", ")}${lu.length > 3 ? ` +${lu.length - 3}` : ""}`, 80, y + 92, 920, 48, 2); }
     const runners = rated.slice(1, 4);
     if (runners.length && y < 1400) {
       x.fillStyle = ASH; x.font = '700 38px "Barlow Condensed", sans-serif'; x.fillText("RUNNERS-UP", 80, y + 70); y += 140;
