@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile, applyActionCode } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=53";
+import { VENUES } from "./venues.js?v=54";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -2402,7 +2402,10 @@ function renderCrew(){
       <div class="ro">Friends add you with this username.</div></div>
       <div style="display:flex;flex-direction:column;gap:6px"><button class="btn" data-copyhandle>Copy</button><button class="btn ghost" data-myprofile2>Profile</button></div></section>
     <section class="sect" style="margin-top:0"><h3>Add a friend</h3>
-      <form class="addrow" id="addForm" autocomplete="off"><input class="search" id="addHandle" placeholder="@username" value="${esc(S.crewAdd||"")}" autocapitalize="none" spellcheck="false" aria-label="Friend's username"><button class="btn red" type="submit">Send</button></form></section>`;
+      <form class="addrow" id="addForm" autocomplete="off"><input class="search" id="addHandle" placeholder="@username" value="${esc(S.crewAdd||"")}" autocapitalize="none" spellcheck="false" aria-label="Friend's username"><button class="btn red" type="submit">Send</button></form></section>
+    <section class="sect invite"><h3>Invite a friend</h3>
+      <div class="ro">Not on Pit Log yet? Send them a text. When they sign up from your link, a crew request comes to you automatically.</div>
+      <button class="btn red" data-invite>Invite a friend</button></section>`;
   if (inc.length) html += `<section class="sect"><h3>Requests <span class="lbl">${inc.length}</span></h3><div class="plist">${inc.map(r => { const q = person(r.from, r.fromName, r.fromHandle, r.fromPhoto); return `
       <div class="prow">${avatar(q.photo, q.name)}<div class="pt"><div class="nm">${esc(q.name || q.handle)}</div><div class="hd">@${esc(q.handle)}</div></div>
       <button class="btn red" data-accept="${esc(r.id)}">Accept</button><button class="btn ghost" data-decline="${esc(r.id)}">Decline</button></div>`; }).join("")}</div></section>`;
@@ -2845,7 +2848,28 @@ function renderFriend(f){
   </div>`;
 }
 
+// Invite text with a link that carries your username; the new account sends you a crew request after sign-up.
+const inviteLink = () => `https://thepitlog.com/?invite=${encodeURIComponent(PROFILE.handle)}`;
+const inviteText = () => `Join me on Pit Log 🤘 It's a free concert tracker for metal, rock and punk shows. Log every show you've been to, rate the pit, and see which ones we went to together. Sign up here and you'll be in my crew (I'm @${PROFILE.handle}): ${inviteLink()}`;
+function openInvite(){
+  const root = $("#modalRoot"), canShare = !!navigator.share;
+  root.innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-label="Invite a friend"><div class="mbox">
+    <h3>Invite a friend</h3>
+    <label class="field"><span class="lbl">Your message (edit it if you want)</span><textarea id="invMsg" rows="6">${esc(inviteText())}</textarea></label>
+    <div class="invbtns"><a class="btn red" id="invSms" href="#">Send as text</a>${canShare ? `<button class="btn" data-invshare>More apps…</button>` : ""}<button class="btn" data-invcopy>Copy</button></div>
+    <div class="ro">When they sign up from this link, you'll get their crew request to accept. Anyone can still find you as @${esc(PROFILE.handle)}.</div>
+    <div class="mbtns"><button class="btn ghost" data-invclose>Done</button></div></div></div>`;
+  const msg = () => $("#invMsg").value.trim() || inviteText();
+  const sms = root.querySelector("#invSms");
+  const setSms = () => { sms.href = (/iphone|ipad/i.test(navigator.userAgent) ? "sms:&body=" : "sms:?body=") + encodeURIComponent(msg()); };
+  setSms(); $("#invMsg").addEventListener("input", setSms);
+  root.querySelector("[data-invclose]").onclick = () => { root.innerHTML = ""; };
+  root.querySelector("[data-invcopy]").onclick = () => (navigator.clipboard ? navigator.clipboard.writeText(msg()) : Promise.reject()).then(() => toast("Invite copied. Paste it in any chat."), () => toast("Couldn't copy. Press and hold the message to copy it.", 4000));
+  const sh = root.querySelector("[data-invshare]");
+  if (sh) sh.onclick = async () => { try { await navigator.share({ text: msg() }); } catch (_) {} };
+}
 function crewClick(t){
+  if (t.hasAttribute("data-invite")) { openInvite(); return true; }
   if (t.hasAttribute("data-copyhandle")) { const h = "@" + PROFILE.handle; (navigator.clipboard ? navigator.clipboard.writeText(h) : Promise.reject()).then(() => toast("Copied " + h), () => toast("Your username is " + h, 4000)); return true; }
   if (t.dataset.accept) { const r = REQ.in.find(x => x.id === t.dataset.accept); if (r) acceptRequest(r); return true; }
   if (t.dataset.decline) { removeRequest(t.dataset.decline); return true; }
@@ -2996,6 +3020,21 @@ const isPasswordUser = u => !!u && (u.providerData || []).some(p => p && p.provi
 const newAccount = u => !!u && Date.parse((u.metadata && u.metadata.creationTime) || 0) >= VERIFY_SINCE;
 const needsVerify = u => isPasswordUser(u) && !u.emailVerified && newAccount(u);
 // A confirm link opened on this page: apply it right away (works signed in or out).
+// ?invite=handle from a friend's text: remember it through sign-up, then send that person a crew request.
+const INVITE = (() => { try {
+  const q = new URLSearchParams(location.search), h = String(q.get("invite") || "").toLowerCase().replace(/^@/, "");
+  if (/^[a-z0-9_]{3,20}$/.test(h)) { localStorage.setItem("pitlog.invite", h); q.delete("invite"); history.replaceState(null, "", location.pathname + (q.toString() ? "?" + q : "") + location.hash); return h; }
+  return localStorage.getItem("pitlog.invite") || "";
+} catch (_) { return ""; } })();
+if (INVITE) { const h1 = document.querySelector(".lh1"); if (h1) h1.insertAdjacentHTML("beforebegin", `<p class="invitechip">@${INVITE.replace(/[^a-z0-9_]/g, "")} invited you to their crew</p>`); }
+async function claimInvite(){
+  let h = ""; try { h = localStorage.getItem("pitlog.invite") || ""; localStorage.removeItem("pitlog.invite"); } catch (_) {}
+  if (!h || !PROFILE || h === PROFILE.handle) return;
+  try { const hs = await getDoc(doc(fdb, "handles", h)); if (!hs.exists()) return; const uid = hs.data().uid;
+    if (FR[uid] || REQ.out.some(r => r.to === uid)) return;
+    await sendRequest(h);
+  } catch (e) { console.error("invite", e); }
+}
 const VERIFY_LINK = (() => { try { const q = new URLSearchParams(location.search); return q.get("mode") === "verifyEmail" && q.get("oobCode"); } catch (_) { return null; } })();
 const verifyDone = !VERIFY_LINK ? Promise.resolve(null) : applyActionCode(auth, VERIFY_LINK)
   .then(() => "ok").catch(e => (console.warn("verify", e), e.code === "auth/invalid-action-code" || e.code === "auth/expired-action-code" ? "expired" : "error"))
@@ -3085,6 +3124,7 @@ function startApp(){
     REQ[key] = snap.docs.map(d => ({ id: d.id, ...d.data() })); syncFriends(); updateCrewBadge();
   }, err => console.error("requests", err));
   UNSUBS.push(reqs("to", "in"), reqs("from", "out"));
+  setTimeout(claimInvite, 3000);
 }
 function updateCrewBadge(){ const n = REQ.in.filter(r => r.status === "pending").length + (ME && S.loaded ? tagInbox().length : 0)
   + (ME ? friendList().filter(f => f.famState === "pending" && f.famBy && f.famBy !== ME.uid).length : 0); $("#tab-crew .bslot").innerHTML = n ? `<span class="badge-n">${n}</span>` : ""; $("#tab-crew").setAttribute("aria-selected", S.tab === "crew"); navArrows(); }
