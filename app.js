@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile, applyActionCode } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=54";
+import { VENUES } from "./venues.js?v=55";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -610,50 +610,156 @@ async function drawShowText({ c, x }, d, y){
 }
 
 /* ---------- Year in review ---------- */
-function openWrapped(year){
+// Four picture-led cards, each drawn once as a story-sized image, so what you see is exactly what you share.
+function coverDraw(x, im, dx, dy, dw, dh){
+  const iw = im.width, ih = im.height, s = Math.max(dw / iw, dh / ih), sw = dw / s, sh = dh / s;
+  x.drawImage(im, (iw - sw) / 2, (ih - sh) / 2, sw, sh, dx, dy, dw, dh);
+}
+// Photo across the top of a card that fades into the card's own background (no hard edge).
+function fadeHero(x, im, h){
+  const o = document.createElement("canvas"); o.width = 1080; o.height = h; const ox = o.getContext("2d");
+  coverDraw(ox, im, 0, 0, 1080, h);
+  ox.globalCompositeOperation = "destination-in"; const g = ox.createLinearGradient(0, 0, 0, h); g.addColorStop(0, "rgba(0,0,0,.95)"); g.addColorStop(.55, "rgba(0,0,0,.75)"); g.addColorStop(1, "rgba(0,0,0,0)"); ox.fillStyle = g; ox.fillRect(0, 0, 1080, h);
+  x.drawImage(o, 0, 0);
+}
+function containDraw(x, im, cx, top, maxW, maxH){
+  const s = Math.min(maxW / im.width, maxH / im.height), w = im.width * s, h = im.height * s;
+  x.save(); x.shadowColor = "rgba(0,0,0,.65)"; x.shadowBlur = 40; x.drawImage(im, cx - w / 2, top, w, h); x.restore();
+  return top + h;
+}
+const fitFont = (x, text, font, maxW, start, min) => { let n = start; do { x.font = font.replace("@", n + "px"); if (x.measureText(text).width <= maxW) break; n -= 6; } while (n > min); return n; };
+async function openWrapped(year){
   const yr = String(year === "all" ? parse(todayISO).y : year);
-  const done = S.shows.filter(s => !isUpcoming(s) && (s.date || "").startsWith(yr));
+  const done = S.shows.filter(s => !isUpcoming(s) && (s.date || "").startsWith(yr)).sort((a, b) => (a.date || "").localeCompare(b.date || ""));
   if (!done.length) { toast(`No shows logged in ${yr} yet.`); return; }
+  const root = $("#modalRoot");
+  root.innerHTML = `<div class="modal wrapped" role="dialog" aria-modal="true" aria-label="Your ${yr} in review"><div class="wbox"><div class="wtop"><span class="lbl">Your ${yr} in review</span><button class="btn ghost sm" data-wclose>Close</button></div><div class="wload"><div class="spin"></div><div class="ro">Pulling your posters and photos…</div></div></div></div>`;
+  let closed = false;
+  root.onclick = e => { const b = e.target.closest("button"); if (b && b.hasAttribute("data-wclose")) { closed = true; root.innerHTML = ""; root.onclick = null; } };
+
   const bands = counts(done.flatMap(lineup)), venues = counts(done.map(s => s.venue || "")).filter(v => v.name), people = counts(done.flatMap(companions));
-  const rated = done.filter(s => Number(s.rating) > 0).sort((a, b) => Number(b.rating) - Number(a.rating) || (Number(b.pit) || 0) - (Number(a.pit) || 0));
+  const cities = new Set(done.map(s => (s.city || "").trim()).filter(Boolean));
+  const rated = done.filter(s => Number(s.rating) > 0).sort((a, b) => Number(b.rating) - Number(a.rating) || (Number(b.pit) || 0) - (Number(a.pit) || 0) || (b.date || "").localeCompare(a.date || ""));
   const pit = done.filter(s => Number(s.pit) > 0).sort((a, b) => Number(b.pit) - Number(a.pit));
   const months = Array(12).fill(0); done.forEach(s => months[parse(s.date).m - 1]++); const bm = months.indexOf(Math.max(...months));
   const songs = done.reduce((n, s) => n + Object.values(s.songs || {}).reduce((a, l) => a + (Array.isArray(l) ? l.length : 0), 0), 0);
   const spend = done.reduce((a, s) => a + orderSpend(s) + (Number(s.merchSpend) || 0), 0), miles = done.reduce((a, s) => a + (Number(s.miles) || 0), 0);
-  const cards = [
-    { k: yr, big: done.length, line: `show${done.length > 1 ? "s" : ""} in ${yr}`, sub: `${bands.length} bands · ${venues.length} venues` },
-    bands[0] && { k: "Most seen", big: bands[0].name, line: bands[0].n > 1 ? `${bands[0].n} times this year` : "and you'd see them again", sub: bands.slice(1, 4).map(b => b.name).join(" · ") },
-    rated[0] && { k: "Show of the year", big: headline(rated[0]), line: `${fmtRating(Number(rated[0].rating))} skulls · ${fmtDate(rated[0].date)}`, sub: rated[0].highlight ? "“" + rated[0].highlight + "”" : rated[0].venue || "" },
-    pit[0] && { k: "Most chaotic pit", big: headline(pit[0]), line: `pit intensity ${fmtRating(Number(pit[0].pit))}`, sub: pit[0].venue || "" },
-    venues[0] && { k: "Home turf", big: venues[0].name, line: `${venues[0].n} show${venues[0].n > 1 ? "s" : ""} there`, sub: `Busiest month: ${MONTHS[bm]} (${months[bm]})` },
-    people[0] && { k: "Your pit crew", big: people[0].name, line: `${people[0].n} show${people[0].n > 1 ? "s" : ""} together`, sub: people.slice(1, 4).map(p => p.name).join(" · ") },
-    (songs || spend || miles) && { k: "The receipts", big: songs ? `${songs} songs` : spend ? money(spend) : `${Math.round(dist(miles))} ${distLbl()}`, line: songs ? "heard live" : spend ? "on tickets and merch" : "driven", sub: [songs && spend ? `${money(spend)} on tickets & merch` : "", miles && (songs || spend) ? `${Math.round(dist(miles))} ${distLbl()} driven` : ""].filter(Boolean).join(" · ") },
-  ].filter(Boolean);
+  const firstYear = {}; for (const s of S.shows) if (!isUpcoming(s)) for (const b of lineup(s)) { const k = b.toLowerCase(), y = parse(s.date).y; if (!firstYear[k] || y < firstYear[k]) firstYear[k] = y; }
+  const newBands = bands.filter(b => firstYear[b.name.toLowerCase()] === Number(yr)).length;
+
+  // Pictures: posters first (they look best in a collage), then photos.
+  const posters = done.filter(s => s.poster).map(s => ({ url: src(pid(s.poster)), show: s }));
+  const photos = done.flatMap(s => items(s, "photos").filter(m => m.type !== "video").map(m => ({ url: src(m.url || m.id), show: s, bands: m.bands || [] })));
+  const cache = new Map(), get = async u => { if (!u) return null; if (!cache.has(u)) cache.set(u, canvasImg(u).catch(() => null)); return cache.get(u); };
+  const loadAll = async list => (await Promise.all(list.map(p => get(p.url)))).filter(Boolean);
+
+  const top = rated[0];
+  const topPic = top ? (top.poster ? src(pid(top.poster)) : src((items(top, "photos").find(m => m.type !== "video") || {}).url)) : null;
+  const bandShows = new Set(done.filter(s => lineup(s).some(b => b.toLowerCase() === (bands[0] || {}).name?.toLowerCase())).map(s => s.id));
+  const bandPic = (photos.find(p => (p.bands || []).some(b => b.toLowerCase() === (bands[0] || {}).name?.toLowerCase())) || photos.find(p => bandShows.has(p.show.id)) || posters.find(p => bandShows.has(p.show.id)) || {}).url;
+  const [collage, strip, topIm, bandIm] = await Promise.all([loadAll([...posters, ...photos].slice(0, 9)), loadAll([...photos, ...posters].slice(0, 4)), get(topPic), get(bandPic)]);
+  if (closed) return;
+
+  const BONE = "#ece4d4", RED = "#e0313a", ASH = "#a2958d", SOFT = "#c9bfb3";
+  const head = (x, t) => { x.fillStyle = RED; x.font = '700 46px "Barlow Condensed", sans-serif'; x.fillText(t.toUpperCase(), 80, 150); };
+  const cards = [];
+
+  // 1. The year: poster/photo wall + the headline numbers
+  cards.push(async () => {
+    const { c, x } = await baseCanvas(); head(x, `My ${yr} in the pit`);
+    let y = 220;
+    if (collage.length) {
+      const n = collage.length, cols = n >= 5 ? 3 : n >= 2 ? 2 : 1, gap = 14, tw = (920 - gap * (cols - 1)) / cols, rows = Math.ceil(n / cols);
+      const rowsShown = Math.min(rows, 3), th = Math.min(n === 1 ? 900 : tw * 1.3, (1010 - gap * (rowsShown - 1)) / rowsShown);
+      collage.slice(0, rowsShown * cols).forEach((im, k) => { const cx = 80 + (k % cols) * (tw + gap), cy = y + Math.floor(k / cols) * (th + gap); x.save(); x.shadowColor = "rgba(0,0,0,.5)"; x.shadowBlur = 24; coverDraw(x, im, cx, cy, tw, th); x.restore(); });
+      y += rowsShown * (th + gap) + 30;
+    } else y = 560;
+    x.fillStyle = BONE; x.font = '400 300px "Pirata One", Georgia, serif'; x.fillText(String(done.length), 70, y + 210);
+    const nw = x.measureText(String(done.length)).width;
+    x.fillStyle = RED; x.font = '700 70px "Barlow Condensed", sans-serif'; x.fillText(done.length > 1 ? "SHOWS" : "SHOW", 100 + nw, y + 120);
+    x.fillStyle = SOFT; x.font = '600 44px "Barlow Condensed", sans-serif'; x.fillText(`${bands.length} BANDS · ${venues.length} VENUES${cities.size > 1 ? ` · ${cities.size} CITIES` : ""}`, 100 + nw, y + 190);
+    x.fillStyle = ASH; x.font = '500 42px "Barlow", sans-serif'; wrapText(x, `Busiest month: ${MONTHS[bm]} (${months[bm]} show${months[bm] > 1 ? "s" : ""})${newBands ? ` · ${newBands} band${newBands > 1 ? "s" : ""} seen for the first time` : ""}`, 80, y + 300, 920, 54, 3);
+    return c;
+  });
+
+  // 2. Show of the year
+  if (top) cards.push(async () => {
+    const { c, x } = await baseCanvas(); head(x, "Show of the year");
+    let y = 210;
+    if (topIm) y = containDraw(x, topIm, 540, 200, 860, 820) + 70; else { x.fillStyle = "rgba(236,228,212,.05)"; x.font = '400 600px "Pirata One", Georgia, serif'; x.fillText(yr.slice(2), 60, 760); y = 560; }
+    x.fillStyle = BONE; const hs = fitFont(x, headline(top), '400 @ "Pirata One", Georgia, serif', 920, topIm ? 130 : 170, 70); y = wrapText(x, headline(top), 80, y + hs * 0.6, 920, hs, 2);
+    x.fillStyle = ASH; x.font = '500 42px "Barlow", sans-serif'; y = wrapText(x, [fmtDate(top.date), top.venue].filter(Boolean).join(" · "), 80, y + 6, 920, 54, 2);
+    drawSkulls(x, 80, y + 20, 64, Number(top.rating)); x.fillStyle = BONE; x.font = '700 54px "Barlow Condensed", sans-serif'; x.fillText(`${fmtRating(Number(top.rating))} / 5`, 460, y + 72); y += 140;
+    if (top.highlight && y < 1560) { x.fillStyle = BONE; x.font = 'italic 400 42px "Barlow", sans-serif'; y = wrapText(x, "“" + top.highlight + "”", 80, y + 10, 920, 56, 2); }
+    if (pit[0] && pit[0] !== top && y < 1600) { x.fillStyle = RED; x.font = '700 40px "Barlow Condensed", sans-serif'; y = wrapText(x, `WILDEST PIT: ${headline(pit[0]).toUpperCase()} · ${fmtRating(Number(pit[0].pit))}/5`, 80, y + 40, 920, 50, 1); }
+    const runners = rated.slice(1, 4);
+    if (runners.length && y < 1400) {
+      x.fillStyle = ASH; x.font = '700 38px "Barlow Condensed", sans-serif'; x.fillText("RUNNERS-UP", 80, y + 70); y += 140;
+      for (const r of runners) { if (y > 1620) break; x.fillStyle = BONE; fitFont(x, headline(r), '400 @ "Pirata One", Georgia, serif', 640, 64, 40); x.fillText(headline(r), 80, y); drawSkulls(x, 740, y - 40, 40, Number(r.rating)); y += 86; }
+    }
+    return c;
+  });
+
+  // 3. On repeat: top bands over a photo of the #1
+  cards.push(async () => {
+    const { c, x } = await baseCanvas();
+    if (bandIm) fadeHero(x, bandIm, 1000);
+    head(x, "On repeat");
+    const list = bands.slice(0, 5); let y = bandIm ? 760 : 380;
+    list.forEach((b, k) => {
+      const big = k === 0, size = big ? 120 : 76;
+      x.fillStyle = RED; x.font = `700 ${big ? 64 : 48}px "Barlow Condensed", sans-serif`; x.fillText(String(k + 1), 80, y);
+      x.fillStyle = BONE; fitFont(x, b.name, '400 @ "Pirata One", Georgia, serif', 720, size, 44); x.fillText(b.name, 150, y);
+      x.fillStyle = SOFT; x.font = `700 ${big ? 54 : 42}px "Barlow Condensed", sans-serif`; x.textAlign = "right"; x.fillText(b.n > 1 ? `×${b.n}` : "", 1000, y); x.textAlign = "left";
+      y += big ? 150 : 108;
+    });
+    if (venues[0]) { x.fillStyle = ASH; x.font = '500 42px "Barlow", sans-serif'; wrapText(x, `Home turf: ${venues[0].name} · ${venues[0].n} show${venues[0].n > 1 ? "s" : ""}`, 80, Math.min(y + 40, 1620), 920, 54, 2); }
+    return c;
+  });
+
+  // 4. Crew and receipts
+  cards.push(async () => {
+    const { c, x } = await baseCanvas(); head(x, "The crew & the receipts");
+    let y = 200;
+    if (strip.length) { const n = strip.length, cols = n === 1 ? 1 : 2, gap = 14, tw = (920 - gap * (cols - 1)) / cols, th = n <= 2 ? 520 : 300;
+      strip.forEach((im, k) => coverDraw(x, im, 80 + (k % cols) * (tw + gap), y + Math.floor(k / cols) * (th + gap), tw, th)); y += Math.ceil(n / cols) * (th + gap) + 60; }
+    else y = 300;
+    if (people.length) {
+      x.fillStyle = ASH; x.font = '700 40px "Barlow Condensed", sans-serif'; x.fillText("YOUR PIT CREW", 80, y); y += 90;
+      people.slice(0, 3).forEach(p => { x.fillStyle = BONE; fitFont(x, p.name, '400 @ "Pirata One", Georgia, serif', 700, 80, 44); x.fillText(p.name, 80, y); x.fillStyle = RED; x.font = '700 46px "Barlow Condensed", sans-serif'; x.textAlign = "right"; x.fillText(`${p.n} show${p.n > 1 ? "s" : ""}`, 1000, y); x.textAlign = "left"; y += 96; });
+      y += 20;
+    }
+    const tiles = [songs && [songs, "songs heard live"], newBands && [newBands, "first-time bands"], spend && [money(spend), "on tickets & merch"], miles && [`${Math.round(dist(miles))}`, `${distLbl()} driven`], [venues.length, venues.length > 1 ? "venues" : "venue"]].filter(Boolean).slice(0, 4);
+    const tw = 445; tiles.forEach(([v, l], k) => { const tx = 80 + (k % 2) * (tw + 30), ty = y + Math.floor(k / 2) * 190; if (ty > 1560) return;
+      x.fillStyle = "rgba(236,228,212,.06)"; x.fillRect(tx, ty, tw, 165); x.fillStyle = BONE; x.font = '400 84px "Pirata One", Georgia, serif'; x.fillText(String(v), tx + 28, ty + 92); x.fillStyle = ASH; x.font = '600 34px "Barlow Condensed", sans-serif'; x.fillText(l.toUpperCase(), tx + 28, ty + 140); });
+    return c;
+  });
+
+  const canvases = []; for (const f of cards) { try { canvases.push(await f()); } catch (e) { console.error("wrapped card", e); } }
+  if (closed || !canvases.length) return;
+  const urls = await Promise.all(canvases.map(cv => new Promise(r => { try { cv.toBlob(b => r(b ? URL.createObjectURL(b) : cv.toDataURL("image/png")), "image/png"); } catch (_) { r(""); } })));
   let i = 0;
   const draw = () => {
-    const c = cards[i];
-    $("#modalRoot").innerHTML = `<div class="modal wrapped" role="dialog" aria-modal="true" aria-label="Your ${yr} in review"><div class="wbox">
-      <div class="wtop"><span class="lbl">Your ${yr} in review · ${i + 1}/${cards.length}</span><button class="btn ghost sm" data-wclose>Close</button></div>
-      <div class="wcard"><div class="wk">${esc(c.k)}</div><div class="wbig">${esc(String(c.big))}</div><div class="wline">${esc(c.line)}</div>${c.sub ? `<div class="wsub">${esc(c.sub)}</div>` : ""}</div>
-      <div class="wnav"><button class="lfa" data-wprev ${i === 0 ? "disabled" : ""} aria-label="Previous">‹</button><button class="btn red" data-wshare>Share this</button><button class="lfa" data-wnext ${i === cards.length - 1 ? "disabled" : ""} aria-label="Next">›</button></div>
+    root.innerHTML = `<div class="modal wrapped" role="dialog" aria-modal="true" aria-label="Your ${yr} in review"><div class="wbox">
+      <div class="wtop"><span class="lbl">Your ${yr} in review</span><button class="btn ghost sm" data-wclose>Close</button></div>
+      <div class="wimg"><img src="${urls[i]}" alt="Year in review card ${i + 1} of ${urls.length}" draggable="false"></div>
+      <div class="wdots">${urls.map((_, k) => `<button class="wdot${k === i ? " on" : ""}" data-wgo="${k}" aria-label="Card ${k + 1}"></button>`).join("")}</div>
+      <div class="wnav"><button class="lfa" data-wprev ${i === 0 ? "disabled" : ""} aria-label="Previous">‹</button><button class="btn red" data-wshare>Share this</button><button class="lfa" data-wnext ${i === urls.length - 1 ? "disabled" : ""} aria-label="Next">›</button></div>
     </div></div>`;
+    const im = root.querySelector(".wimg"); let sx = null;
+    im.addEventListener("pointerdown", e => { sx = e.clientX; });
+    im.addEventListener("pointerup", e => { if (sx === null) return; const dx = e.clientX - sx; sx = null; if (dx < -40 && i < urls.length - 1) { i++; draw(); } else if (dx > 40 && i > 0) { i--; draw(); } });
   };
   draw();
-  const root = $("#modalRoot");
   root.onclick = async e => {
     const b = e.target.closest("button"); if (!b) return;
-    if (b.hasAttribute("data-wclose")) { root.innerHTML = ""; root.onclick = null; return; }
+    if (b.hasAttribute("data-wclose")) { root.innerHTML = ""; root.onclick = null; setTimeout(() => urls.forEach(u => u.startsWith("blob:") && URL.revokeObjectURL(u)), 500); return; }
     if (b.hasAttribute("data-wprev")) { i = Math.max(0, i - 1); draw(); }
-    if (b.hasAttribute("data-wnext")) { i = Math.min(cards.length - 1, i + 1); draw(); }
-    if (b.hasAttribute("data-wshare")) { const c = cards[i]; const { c: cv, x } = await baseCanvas();
-      x.fillStyle = "#e0313a"; x.font = '700 48px "Barlow Condensed", sans-serif'; x.fillText(`MY ${yr} IN THE PIT`, 80, 260);
-      x.fillStyle = "#a2958d"; x.font = '700 44px "Barlow Condensed", sans-serif'; x.fillText(String(c.k).toUpperCase(), 80, 520);
-      x.fillStyle = "#ece4d4"; x.font = '400 150px "Pirata One", Georgia, serif'; let y = wrapText(x, String(c.big), 80, 700, 920, 150, 3);
-      x.fillStyle = "#e0313a"; x.font = '600 56px "Barlow", sans-serif'; y = wrapText(x, c.line, 80, y + 30, 920, 70, 2);
-      if (c.sub) { x.fillStyle = "#c9bfb3"; x.font = '400 44px "Barlow", sans-serif'; wrapText(x, c.sub, 80, y + 40, 920, 58, 4); }
-      await deliverImage(cv, `pit-log-${yr}-${i + 1}.png`, `My ${yr} in the pit`); }
+    if (b.hasAttribute("data-wnext")) { i = Math.min(urls.length - 1, i + 1); draw(); }
+    if (b.dataset.wgo) { i = Number(b.dataset.wgo); draw(); }
+    if (b.hasAttribute("data-wshare")) await deliverImage(canvases[i], `pit-log-${yr}-${i + 1}.png`, `My ${yr} in the pit`);
   };
-  document.addEventListener("keydown", function k(e){ if (!$("#modalRoot .wrapped")) { document.removeEventListener("keydown", k); return; } if (e.key === "ArrowRight") root.querySelector("[data-wnext]")?.click(); if (e.key === "ArrowLeft") root.querySelector("[data-wprev]")?.click(); if (e.key === "Escape") root.querySelector("[data-wclose]")?.click(); });
+  document.addEventListener("keydown", function k(e){ if (!$("#modalRoot .wrapped")) { document.removeEventListener("keydown", k); return; } if ($(".sharemodal")) return; if (e.key === "ArrowRight") root.querySelector("[data-wnext]")?.click(); if (e.key === "ArrowLeft") root.querySelector("[data-wprev]")?.click(); if (e.key === "Escape") root.querySelector("[data-wclose]")?.click(); });
 }
 
 /* ---------- Show view (read-only; Edit button for your own) ---------- */

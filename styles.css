@@ -734,3 +734,13 @@ nav.tabs .bslot:empty{display:none}
 #invMsg{width:100%;min-height:130px}
 .sect.invite .ro{margin-bottom:10px}
 .invitechip{display:inline-block;margin:0 0 12px;padding:6px 12px;background:var(--blood);color:var(--bone);font-family:var(--f-label);font-weight:700;letter-spacing:.06em;text-transform:uppercase;font-size:14px}
+/* year in review: image cards */
+.wbox{grid-template-rows:auto minmax(0,1fr) auto auto}
+.wimg{min-height:0;display:grid;place-items:center;touch-action:pan-y;user-select:none}
+.wimg img{max-width:100%;max-height:calc(100dvh - 220px);aspect-ratio:9/16;object-fit:contain;border:1px solid var(--iron);box-shadow:0 20px 50px rgba(0,0,0,.6)}
+.wdots{display:flex;gap:8px;justify-content:center}
+.wdot{width:9px;height:9px;border-radius:50%;border:0;padding:0;background:var(--iron)}
+.wdot.on{background:var(--blood-hi)}
+.wload{display:grid;place-items:center;align-content:center;gap:14px}
+.spin{width:38px;height:38px;border:3px solid var(--iron);border-top-color:var(--blood-hi);border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
