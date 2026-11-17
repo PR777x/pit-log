@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile, applyActionCode } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=57";
+import { VENUES } from "./venues.js?v=58";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -605,15 +605,19 @@ async function drawShowText({ c, x }, d, y){
 }
 // Draws the show's text block starting at y and returns where it ended (also used on a scratch canvas to measure).
 function paintShowText(x, d, y, measuring){
-  const p = parse(d.date), up = isUpcoming(d), r = Number(d.rating) || 0;
+  const p = parse(d.date), r = Number(d.rating) || 0;
+  // A show dated today (or a festival running today) that isn't rated yet is still ahead of you: "tonight".
+  const tonight = !r && !isUpcoming(d) && (d.date === todayISO || (d.endDate && d.date <= todayISO && d.endDate >= todayISO));
+  const up = isUpcoming(d) || tonight;
   // Status line: going vs. went, said as "we" when someone else came along, or by name for a crew member's show.
   const other = S.openFriend && ME && S.openFriend !== ME.uid ? FR[S.openFriend] : null;
   const who = other ? String(other.name || "@" + (other.handle || "they")).split(" ")[0] : null;
   const group = tagsOf(d).length || (d.wentWith || []).filter(Boolean).length;
   const days = Math.round((Date.parse(d.date) - Date.parse(todayISO)) / 864e5);
   const when = days <= 0 ? "TONIGHT" : days === 1 ? "TOMORROW" : `IN ${days} DAYS`;
-  const status = up ? (who ? `${who.toUpperCase()} IS GOING` : group ? "WE'RE GOING" : "I'M GOING") + " · " + when
-    : (who ? `${who.toUpperCase()} WAS THERE` : group ? "WE WERE THERE" : "I WAS THERE") + " · " + (days >= -1 ? "LAST NIGHT" : days > -7 ? `${-days} DAYS AGO` : String(p.y));
+  const status = tonight ? (who ? `${who.toUpperCase()} WILL BE THERE TONIGHT` : group ? "WE'LL BE THERE TONIGHT!" : "I'LL BE THERE TONIGHT!")
+    : up ? (who ? `${who.toUpperCase()} IS GOING` : group ? "WE'RE GOING" : "I'M GOING") + " · " + when
+    : (who ? `${who.toUpperCase()} WAS THERE` : group ? "WE WERE THERE" : "I WAS THERE") + " · " + (days >= 0 ? "TONIGHT" : days === -1 ? "LAST NIGHT" : days > -7 ? `${-days} DAYS AGO` : String(p.y));
   x.font = '700 40px "Barlow Condensed", sans-serif'; const sw = x.measureText(status).width + 48;
   x.fillStyle = up ? "#e0313a" : "#ece4d4"; x.fillRect(80, y - 44, sw, 64);
   x.fillStyle = up ? "#ece4d4" : "#0e0b0c"; x.fillText(status, 104, y + 2); y += 100;
@@ -631,8 +635,8 @@ function paintShowText(x, d, y, measuring){
     y = wrapText(x, shown.join(", ") + (more ? ` +${more} other crew member${more > 1 ? "s" : ""}` : ""), 80, y + 120, 920, 56, 2);
   }
   if (r && !up) { y += 40; drawSkulls(x, 80, y, 70, r); x.fillStyle = "#ece4d4"; x.font = '700 56px "Barlow Condensed", sans-serif'; x.fillText(`${fmtRating(r)} / 5`, 500, y + 56); y += 120; }
-  if (d.highlight && !isUpcoming(d) && (measuring || y < 1580)) { x.fillStyle = "#ece4d4"; x.font = 'italic 400 44px "Barlow", sans-serif'; y = wrapText(x, "“" + d.highlight + "”", 80, y + 10, 920, 58, 3); }
-  if (isUpcoming(d)) { x.fillStyle = "#e0313a"; x.font = '700 50px "Barlow Condensed", sans-serif'; x.fillText("SEE YOU IN THE PIT", 80, y + 60); y += 80; }
+  if (d.highlight && !up && (measuring || y < 1580)) { x.fillStyle = "#ece4d4"; x.font = 'italic 400 44px "Barlow", sans-serif'; y = wrapText(x, "“" + d.highlight + "”", 80, y + 10, 920, 58, 3); }
+  if (up) { x.fillStyle = "#e0313a"; x.font = '700 50px "Barlow Condensed", sans-serif'; x.fillText("SEE YOU IN THE PIT", 80, y + 60); y += 80; }
   return y;
 }
 
