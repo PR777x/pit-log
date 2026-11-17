@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile, applyActionCode } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=56";
+import { VENUES } from "./venues.js?v=57";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -583,10 +583,28 @@ async function shareShow(d){
   const { c, x } = await baseCanvas();
   let y = 140;
   if (d.poster) { const im = await canvasImg(src(pid(d.poster)));
-    if (im) { const h = 900, w = Math.min(860, im.width * h / im.height); try { x.save(); x.shadowColor = "rgba(0,0,0,.6)"; x.shadowBlur = 40; x.drawImage(im, (1080 - w) / 2, y, w, h); x.restore(); x.getImageData(0, 0, 1, 1); y += h + 60; } catch (_) { x.restore(); const r = await baseCanvas(); return drawShowText(r, d, 260); } } }
+    if (im) { const m = document.createElement("canvas").getContext("2d"), textH = paintShowText(m, d, 0, true);
+      const maxH = Math.max(380, Math.min(900, 1640 - 140 - 60 - textH)), sc = Math.min(860 / im.width, maxH / im.height), w = im.width * sc, h = im.height * sc; try { x.save(); x.shadowColor = "rgba(0,0,0,.6)"; x.shadowBlur = 40; x.drawImage(im, (1080 - w) / 2, y, w, h); x.restore(); x.getImageData(0, 0, 1, 1); y += h + 60; } catch (_) { x.restore(); const r = await baseCanvas(); return drawShowText(r, d, 260); } } }
   return drawShowText({ c, x }, d, d.poster && y > 140 ? y : 300);
 }
+function shareMates(d, owner){
+  const out = new Map(), fl = friendList();
+  const label = f => f.handle ? "@" + f.handle : f.name;
+  const add = (k, v) => { if (v && !out.has(k)) out.set(k, v); };
+  for (const t of tagsOf(d)) {
+    if (owner && t.uid === owner.uid) continue;
+    const f = FR[t.uid]; add("u:" + t.uid, ME && t.uid === ME.uid ? "@" + PROFILE.handle : f ? label(f) : t.name);
+  }
+  const tagNames = new Set(tagsOf(d).map(t => String(t.name).trim().toLowerCase()));
+  for (const n of crew(d)) { if (tagNames.has(n.trim().toLowerCase())) continue; const f = fl.find(x => nameMatches(x, n)); if (f) { if (!owner || f.uid !== owner.uid) add("u:" + f.uid, label(f)); } else add("n:" + n.trim().toLowerCase(), n.trim()); }
+  return [...out.values()];
+}
 async function drawShowText({ c, x }, d, y){
+  paintShowText(x, d, y);
+  await deliverImage(c, `pit-log-${slug(d)}.png`, headline(d));
+}
+// Draws the show's text block starting at y and returns where it ended (also used on a scratch canvas to measure).
+function paintShowText(x, d, y, measuring){
   const p = parse(d.date), up = isUpcoming(d), r = Number(d.rating) || 0;
   // Status line: going vs. went, said as "we" when someone else came along, or by name for a crew member's show.
   const other = S.openFriend && ME && S.openFriend !== ME.uid ? FR[S.openFriend] : null;
@@ -603,10 +621,19 @@ async function drawShowText({ c, x }, d, y){
   x.fillStyle = "#ece4d4"; x.font = '400 120px "Pirata One", Georgia, serif'; y = wrapText(x, headline(d) || "A show", 80, y, 920, 118, 2);
   if (support(d).length) { x.fillStyle = "#c9bfb3"; x.font = '500 44px "Barlow", sans-serif'; y = wrapText(x, "w/ " + support(d).join(" · "), 80, y + 6, 920, 56, 2); }
   x.fillStyle = "#a2958d"; x.font = '500 42px "Barlow", sans-serif'; y = wrapText(x, [d.venue, d.city].filter(Boolean).join(" · "), 80, y + 20, 920, 54, 2);
+  // Who came along: crew as @handles (plain names for people not on Pit Log), up to 3, then "+N other crew members".
+  const mates = shareMates(d, other);
+  if (mates.length) {
+    const shown = mates.slice(0, 3), more = mates.length - shown.length;
+    const lead = who ? `${who} ${up ? "is going" : "went"} with` : up ? "I'm going with" : "I went with";
+    x.fillStyle = "#e0313a"; x.font = '700 38px "Barlow Condensed", sans-serif'; x.fillText(lead.toUpperCase(), 80, y + 64);
+    x.fillStyle = "#ece4d4"; x.font = '600 46px "Barlow Condensed", sans-serif';
+    y = wrapText(x, shown.join(", ") + (more ? ` +${more} other crew member${more > 1 ? "s" : ""}` : ""), 80, y + 120, 920, 56, 2);
+  }
   if (r && !up) { y += 40; drawSkulls(x, 80, y, 70, r); x.fillStyle = "#ece4d4"; x.font = '700 56px "Barlow Condensed", sans-serif'; x.fillText(`${fmtRating(r)} / 5`, 500, y + 56); y += 120; }
-  if (d.highlight && !isUpcoming(d) && y < 1560) { x.fillStyle = "#ece4d4"; x.font = 'italic 400 44px "Barlow", sans-serif'; y = wrapText(x, "“" + d.highlight + "”", 80, y + 10, 920, 58, 3); }
-  if (isUpcoming(d)) { x.fillStyle = "#e0313a"; x.font = '700 50px "Barlow Condensed", sans-serif'; x.fillText("SEE YOU IN THE PIT", 80, y + 60); }
-  await deliverImage(c, `pit-log-${slug(d)}.png`, headline(d));
+  if (d.highlight && !isUpcoming(d) && (measuring || y < 1580)) { x.fillStyle = "#ece4d4"; x.font = 'italic 400 44px "Barlow", sans-serif'; y = wrapText(x, "“" + d.highlight + "”", 80, y + 10, 920, 58, 3); }
+  if (isUpcoming(d)) { x.fillStyle = "#e0313a"; x.font = '700 50px "Barlow Condensed", sans-serif'; x.fillText("SEE YOU IN THE PIT", 80, y + 60); y += 80; }
+  return y;
 }
 
 /* ---------- Year in review ---------- */
