@@ -206,6 +206,12 @@ async function runDigest(now = new Date(), { hourly = false } = {}){
       if (!when || Date.parse(it.o) < now.getTime()) continue;
       onsale.push({ k: it.k, name: it.n, url: it.u || "", when, time: `${(od.hour % 12) || 12}${od.hour < 12 ? " AM" : " PM"}` });
     }
+    // 🤘s ride along with a digest that's going out anyway; on their own they wait (up to a week).
+    if (items.length && items.every(x => x.type === "like") && !reminders.length && !onsale.length) {
+      const old = inbox.docs.filter(d => { const t = d.data().at; return t && t.toMillis && now.getTime() - t.toMillis() > 7 * 864e5; });
+      if (old.length) { const b = db.batch(); old.forEach(d => b.delete(d.ref)); await b.commit(); }
+      continue;
+    }
     if (!items.length && !reminders.length && !onsale.length) { // nothing new: no email, just tidy the queue
       if (inbox.docs.length) { const b = db.batch(); inbox.docs.forEach(d => b.delete(d.ref)); await b.commit(); }
       continue;
@@ -485,6 +491,15 @@ exports.onComment = onDocumentCreated({ document: "showComments/{key}/c/{id}", d
   const ou = await userDoc(owner); if (!ou || L.prefs(ou).emailDigest === "off") return;
   const by = await userDoc(c.uid);
   await db.collection(`users/${owner}/inbox`).add({ type: "comment", from: c.uid, owner, fromHandle: handleOf(by), show: L.showSummary(show.data(), showId), text: String(c.text || "").slice(0, 300), sent: false, at: FieldValue.serverTimestamp() });
+});
+// 🤘 on someone's show: queued for their digest (never sends an email on its own).
+exports.onLike = onDocumentCreated({ document: "showLikes/{key}/u/{uid}", database: DB_ID }, async event => {
+  const [owner, showId] = String(event.params.key).split("__"), uid = event.params.uid;
+  if (!owner || !showId || uid === owner) return;
+  const show = await db.doc(`users/${owner}/shows/${showId}`).get(); if (!show.exists) return;
+  const ou = await userDoc(owner); if (!ou || L.prefs(ou).emailDigest === "off") return;
+  const by = await userDoc(uid);
+  await db.collection(`users/${owner}/inbox`).add({ type: "like", from: uid, owner, fromHandle: handleOf(by), show: L.showSummary(show.data(), showId), sent: false, at: FieldValue.serverTimestamp() });
 });
 // Every morning: email support if the app logged errors, or if the Discover catalog didn't refresh.
 async function runOps(now = new Date()){

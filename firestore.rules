@@ -70,6 +70,16 @@ service cloud.firestore {
       allow delete: if signedIn() && (resource.data.uid == me() || me() == owner());
     }
 
+    // 🤘 likes on a show: one doc per person at showLikes/{owner__showId}/u/{uid}. Same audience as comments.
+    match /showLikes/{key}/u/{uid} {
+      function owner() { return key.split('__')[0]; }
+      allow read: if signedIn() && (me() == owner() || friends(me(), owner()));
+      allow create: if signedIn() && verifiedOk() && uid == me() && (me() == owner() || friends(me(), owner()))
+        && request.resource.data.uid == me()
+        && request.resource.data.keys().hasOnly(['uid', 'name', 'handle', 'at']);
+      allow delete: if signedIn() && uid == me();
+    }
+
     // Reports go to support (a function emails them); nobody can read them back.
     match /reports/{id} {
       allow create: if signedIn() && request.resource.data.by == me()

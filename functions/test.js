@@ -408,5 +408,12 @@ const sentTo = who => emails.filter(e => e.to[0] === who + "@example.com");
   assert.deepStrictEqual(night.bands, ["Knocked Loose", "Varials"], "longest set first"); assert.strictEqual(night.tour, "Spring Tour"); assert.deepStrictEqual(night.songs.Varials, ["A", "B"]);
   await assert.rejects(SL.pastNight("k", { venueId: "x/../", date: "2019-03-12" }, fake20));
 
+  // 21. 🤘 likes in the digest: grouped per show, never the headline
+  const dl = L.buildDigest({ items: [
+    { type: "like", fromHandle: "carly", show: { id: "s1", date: "2026-11-20", lineup: ["Whitechapel"], venue: "Starland Ballroom", city: "Sayreville, NJ" } },
+    { type: "like", fromHandle: "ken", show: { id: "s1", date: "2026-11-20", lineup: ["Whitechapel"], venue: "Starland Ballroom", city: "Sayreville, NJ" } },
+    { type: "comment", fromHandle: "corey", text: "insane pit", show: { id: "s1", date: "2026-11-20", lineup: ["Whitechapel"], venue: "Starland Ballroom" } } ], reminders: [], today: "2026-11-22" });
+  assert.match(dl.body, /Horns up/); assert.match(dl.body, /@carly, @ken threw 🤘/); assert.match(dl.summary, /2 🤘/); assert.match(dl.subject, /corey/);
+
   console.log("All email function tests passed.");
 })().catch(e => { console.error(e); process.exit(1); });

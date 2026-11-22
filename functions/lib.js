@@ -97,6 +97,12 @@ function buildDigest({ items, reminders, today, onsale = [] }){
         `<div style="font-size:13px;color:#c9762f;margin-top:2px">${o.when === "today" ? "On sale today" : "On sale tomorrow"}${o.time ? " at " + esc(o.time) : ""}</div>` +
         (o.url ? `<div style="margin-top:6px"><a href="${esc(o.url)}" style="font-size:13px;color:#e0313a;text-decoration:none;font-weight:bold">Tickets ›</a></div>` : "") + `</div>`).join(""));
   }
+  const likes = items.filter(i => i.type === "like");
+  if (likes.length) {
+    const byShow = new Map(); for (const i of likes) { const k = (i.show && i.show.id) || showLine(i.show); const g = byShow.get(k) || { show: i.show, who: [] }; if (!g.who.includes(i.fromHandle)) g.who.push(i.fromHandle); byShow.set(k, g); }
+    sections.push(`<h2 style="font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:#e0313a;margin:${sections.length ? "18px" : "0"} 0 8px">🤘 Horns up</h2>` +
+      [...byShow.values()].slice(0, 6).map(g => showCard(g.show, `${g.who.slice(0, 3).map(h => "@" + h).join(", ")}${g.who.length > 3 ? ` +${g.who.length - 3}` : ""} threw 🤘`)).join(""));
+  }
   const comments = items.filter(i => i.type === "comment");
   if (comments.length) {
     sections.push(`<h2 style="font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:#7f9a5a;margin:${sections.length ? "18px" : "0"} 0 8px">New comments</h2>` +
@@ -135,6 +141,7 @@ function buildDigest({ items, reminders, today, onsale = [] }){
   if (reminders.length) bits.push(`${reminders.length} show${reminders.length > 1 ? "s" : ""} coming up`);
   if (onsale.length) bits.push(`${onsale.length} going on sale`);
   if (comments.length) bits.push(`${comments.length} comment${comments.length > 1 ? "s" : ""}`);
+  if (likes.length) bits.push(`${likes.length} 🤘`);
   if (together.length) bits.push(`${together.length} you share with your crew`);
   if (tagged.length) bits.push(`${tagged.length} tag${tagged.length > 1 ? "s" : ""}`);
   if (added.length) bits.push(`${added.length} new from your crew`);

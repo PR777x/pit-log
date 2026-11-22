@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile, applyActionCode } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=61";
+import { VENUES } from "./venues.js?v=62";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -871,33 +871,70 @@ function renderShowView(fresh){
     ${money.length ? `<div class="sect"><h3>The damage</h3><div class="ro vmoney">${money.map(esc).join(" · ")}</div></div>` : ""}
     ${!d.poster && !ro ? `<div class="sect"><h3>Tour poster</h3><label class="btn">Upload poster<input class="vh" type="file" data-upkind="poster" accept="image/*,.heic,.heif" aria-label="Upload poster"></label></div>` : ""}
     ${media}
-    <div class="sect"><h3>Comments</h3><div id="cmts"><div class="ro">Loading…</div></div>
+    <div class="sect"><h3>Comments</h3>${d.id !== "__new" ? `<div class="socrow" data-soc="${esc(owner + "__" + d.id)}">${hornsBtn(owner + "__" + d.id, SOC.get(owner + "__" + d.id))}<span class="likers ro"></span></div>` : ""}<div id="cmts"><div class="ro">Loading…</div></div>
       <div class="cform"><input id="cin" maxlength="500" placeholder="${owner === (ME && ME.uid) ? "Add a note for your crew…" : "Say something…"}" aria-label="Write a comment"><button class="btn red" data-cpost>Post</button></div></div>
   </div></div>`;
   const sh = $("#sheetRoot .sheet"); if (sh && !fresh) sh.scrollTop = scroll;
   loadComments(); resolveSpotify(lu);
 }
+/* ---------- 🤘 likes + comments (show view and Crew feed) ----------
+   Likes: showLikes/{owner__showId}/u/{uid}. Comments: showComments/{owner__showId}/c. Cached per show here. */
+const SOC = new Map();
+async function loadSocial(key, force){
+  const c = SOC.get(key); if (c && c.loaded && !force) return c;
+  const out = { loaded: true, likes: [], comments: [] };
+  try { const [l, cm] = await Promise.all([getDocs(collection(fdb, "showLikes", key, "u")), getDocs(query(collection(fdb, "showComments", key, "c"), orderBy("at", "asc"), limit(100)))]);
+    out.likes = l.docs.map(x => x.data()); out.comments = cm.docs.map(x => ({ id: x.id, ...x.data() })); } catch (_) { out.err = true; }
+  SOC.set(key, out); return out;
+}
+const likedByMe = c => !!(c && ME && c.likes.some(l => l.uid === ME.uid));
+function hornsBtn(key, c){
+  const n = c ? c.likes.length : 0, on = likedByMe(c);
+  return `<button class="horns${on ? " on" : ""}" data-like="${esc(key)}" aria-pressed="${on}" aria-label="${on ? "Take back your horns" : "Horns up"}"><span class="hi">🤘</span><b>${n || ""}</b></button>`;
+}
+const likeNames = c => { if (!c || !c.likes.length) return ""; const n = c.likes.map(l => ME && l.uid === ME.uid ? "you" : personLabel(l.uid, l.handle ? "@" + l.handle : l.name)); return n.length > 3 ? `${n.slice(0, 3).join(", ")} +${n.length - 3}` : n.join(", "); };
+async function toggleLike(key){
+  const c = await loadSocial(key), on = likedByMe(c), ref = doc(fdb, "showLikes", key, "u", ME.uid);
+  if (on) c.likes = c.likes.filter(l => l.uid !== ME.uid); else c.likes.push({ uid: ME.uid, name: PROFILE.name || "", handle: PROFILE.handle || "" });
+  paintSocial(key);
+  try { if (on) await deleteDoc(ref); else await setDoc(ref, { uid: ME.uid, name: PROFILE.name || "", handle: PROFILE.handle || "", at: serverTimestamp() }); }
+  catch (e) { await loadSocial(key, true); paintSocial(key); handleWriteErr(e); }
+}
+function commentHTML(key, c, mine){
+  const owner = key.split("__")[0];
+  return c.comments.length ? c.comments.map(x => `<div class="cmt"><b>${esc(personLabel(x.uid, "@" + (x.handle || x.name || "someone")))}</b> ${esc(x.text)}${x.uid === ME.uid || owner === ME.uid ? ` <button class="linkbtn" data-cdel2="${esc(key)}|${esc(x.id)}" aria-label="Delete comment">×</button>` : ""}</div>`).join("")
+    : `<div class="ro">No comments yet. Start the conversation.</div>`;
+}
+// Redraw every like button / comment count / open thread for this show that's on screen.
+function paintSocial(key){
+  const c = SOC.get(key); if (!c) return;
+  document.querySelectorAll(`[data-soc="${CSS.escape(key)}"]`).forEach(row => {
+    const hb = row.querySelector("[data-like]"); if (hb) hb.outerHTML = hornsBtn(key, c);
+    const cc = row.querySelector("[data-fcmt] b"); if (cc) cc.textContent = c.comments.length || "";
+    const nm = row.querySelector(".likers"); if (nm) nm.textContent = c.likes.length ? "🤘 " + likeNames(c) : "";
+  });
+  document.querySelectorAll(`[data-thread="${CSS.escape(key)}"] .cmlist`).forEach(el => { el.innerHTML = commentHTML(key, c); });
+  if (draft && cKey && $("#cmts") && cKey() === key) $("#cmts").innerHTML = commentHTML(key, c);
+}
+async function postComment2(key, inp){
+  const text = (inp && inp.value || "").trim(); if (!text) return;
+  inp.value = "";
+  try { await addDoc(collection(fdb, "showComments", key, "c"), { uid: ME.uid, name: PROFILE.name || "", handle: PROFILE.handle || "", text: text.slice(0, 500), at: serverTimestamp() });
+    await loadSocial(key, true); paintSocial(key); }
+  catch (e) { handleWriteErr(e); inp.value = text; }
+}
+async function deleteComment2(key, id){ try { await deleteDoc(doc(fdb, "showComments", key, "c", id)); await loadSocial(key, true); paintSocial(key); } catch (e) { handleWriteErr(e); } }
 // Comments live at showComments/{ownerUid}__{showId}/c. The owner's crew can read and write.
 const cKey = () => `${S.openFriend || ME.uid}__${draft.id}`;
 async function loadComments(){
-  const box = $("#cmts"); if (!box || !draft) return;
-  const key = cKey();
-  try {
-    const snap = await getDocs(query(collection(fdb, "showComments", key, "c"), orderBy("at", "asc"), limit(100)));
-    if (!$("#cmts") || cKey() !== key) return;
-    const list = snap.docs.map(x => ({ id: x.id, ...x.data() }));
-    const mine = !S.openFriend;
-    $("#cmts").innerHTML = list.length ? list.map(c => `<div class="cmt"><b>@${esc(c.handle || c.name || "someone")}</b> ${esc(c.text)}${c.uid === ME.uid || mine ? ` <button class="linkbtn" data-cdel="${esc(c.id)}" aria-label="Delete comment">×</button>` : ""}</div>`).join("")
-      : `<div class="ro">No comments yet. Your crew can leave them here too.</div>`;
-  } catch (e) { if ($("#cmts")) $("#cmts").innerHTML = `<div class="ro">Comments are only for you and your crew.</div>`; }
+  if (!$("#cmts") || !draft || draft.id === "__new") return;
+  const key = cKey(), c = await loadSocial(key, true);
+  if (!$("#cmts") || cKey() !== key) return;
+  if (c.err) { $("#cmts").innerHTML = `<div class="ro">Comments are only for you and your crew.</div>`; return; }
+  $("#cmts").innerHTML = commentHTML(key, c); paintSocial(key);
 }
-async function postComment(){
-  const inp = $("#cin"), text = (inp?.value || "").trim(); if (!text) return;
-  inp.value = "";
-  try { await addDoc(collection(fdb, "showComments", cKey(), "c"), { uid: ME.uid, name: PROFILE.name || "", handle: PROFILE.handle || "", text: text.slice(0, 500), at: serverTimestamp() }); loadComments(); }
-  catch (e) { handleWriteErr(e); inp.value = text; }
-}
-async function deleteComment(id){ try { await deleteDoc(doc(fdb, "showComments", cKey(), "c", id)); loadComments(); } catch (e) { handleWriteErr(e); } }
+const postComment = () => postComment2(cKey(), $("#cin"));
+const deleteComment = id => deleteComment2(cKey(), id);
 // setlist.fm: fetch the real setlist for each band on a past show (needs the server's setlist.fm key).
 async function fetchSetlists(d){
   const msg = $("#slmsg"); if (msg) msg.textContent = "Looking it up…";
@@ -1245,6 +1282,10 @@ document.addEventListener("click", e => {
   else if (t.dataset.gotab) { S.tab = t.dataset.gotab; renderTab(); scrollToContent(); }
   else if (t.hasAttribute("data-recap")) { S.recapOpen = !S.recapOpen; try { localStorage.setItem("pitlog.recapOpen", S.recapOpen ? "1" : ""); } catch (_) {} renderHome(); }
   else if (t.dataset.feedsort) { S.feedSort = t.dataset.feedsort; S.feedN = 15; try { localStorage.setItem("pitlog.feedSort", S.feedSort); } catch (_) {} renderHome(); }
+  else if (t.dataset.like) toggleLike(t.dataset.like);
+  else if (t.dataset.fcmt) { const k = t.dataset.fcmt; FEED_OPEN.has(k) ? FEED_OPEN.delete(k) : FEED_OPEN.add(k); renderHome(); loadSocial(k, true).then(() => paintSocial(k)); setTimeout(() => { const i = document.querySelector(`[data-fin="${CSS.escape(k)}"]`); if (i && FEED_OPEN.has(k)) i.focus(); }, 60); }
+  else if (t.dataset.fpost) postComment2(t.dataset.fpost, document.querySelector(`[data-fin="${CSS.escape(t.dataset.fpost)}"]`));
+  else if (t.dataset.cdel2) { const i = t.dataset.cdel2.lastIndexOf("|"); deleteComment2(t.dataset.cdel2.slice(0, i), t.dataset.cdel2.slice(i + 1)); }
   else if (t.hasAttribute("data-feedmore")) { S.feedN = (S.feedN || 15) + 15; renderHome(); }
   else if (t.dataset.feedadd) { const [u, id] = splitKey(t.dataset.feedadd); const f = FR[u], sh = f && (f.shows || []).find(x => x.id === id); if (sh) openSheetFrom(sh); }
   else if (t.dataset.sview) { S.showView = t.dataset.sview; try { localStorage.setItem("pitlog.showView", S.showView); } catch (_) {} renderShows(); window.scrollTo(0, 0); }
@@ -1960,6 +2001,7 @@ function renderHome(){
     ${open ? `<div class="hgrid">${shows}${disc}${stats}${vault}${crewCard}</div>` : ""}
     ${feedBlock()}</div>`;
   if (open) fillHomeDiscover();
+  document.querySelectorAll(".fsoc[data-soc]").forEach(el => { const k = el.dataset.soc; if (!SOC.get(k)) loadSocial(k).then(() => paintSocial(k)); });
   return;
   $("#view").innerHTML = `<div class="home"><h2 class="hh2">Your recap</h2>
     <div class="hgrid">${shows}${disc}${stats}${vault}${crewCard}</div></div>`;
@@ -1981,6 +2023,7 @@ function feedItems(){
   const bySort = S.feedSort === "date" ? (a, b) => (b.s.date || "").localeCompare(a.s.date || "") : (a, b) => (b.at - a.at) || (b.s.date || "").localeCompare(a.s.date || "");
   return out.sort(bySort);
 }
+const FEED_OPEN = new Set();
 function feedBlock(){
   const fl = friendList();
   if (!fl.length) return `<section class="feed"><h2 class="hh2 fh">Crew feed</h2><div class="empty"><h3>No crew yet</h3><div>Add friends on the Crew tab and the shows they log show up here.</div></div></section>`;
@@ -2006,6 +2049,9 @@ function feedBlock(){
       </button>
       ${thumb ? `<img class="fthumb" src="${esc(src(thumb))}" alt="" loading="lazy" onerror="this.remove()">` : ""}
       ${chips.length || (up && !mine) ? `<div class="tagrow fact">${chips.join("")}${up && !mine ? `<button class="chip catadd" data-feedadd="${esc(f.uid)}|${esc(s.id)}">+ Add to my shows</button>` : ""}</div>` : ""}
+      ${(() => { const key = f.uid + "__" + s.id, c = SOC.get(key), open = FEED_OPEN.has(key);
+        return `<div class="fsoc" data-soc="${esc(key)}">${hornsBtn(key, c)}<button class="fcm${open ? " on" : ""}" data-fcmt="${esc(key)}" aria-expanded="${open}"><span>💬</span><b>${c && c.comments.length || ""}</b></button><span class="likers ro">${c && c.likes.length ? "🤘 " + esc(likeNames(c)) : ""}</span></div>
+        ${open ? `<div class="fthread" data-thread="${esc(key)}"><div class="cmlist">${c ? commentHTML(key, c) : `<div class="ro">Loading…</div>`}</div><div class="cform"><input class="fin" data-fin="${esc(key)}" maxlength="500" placeholder="Say something…" aria-label="Write a comment"><button class="btn red" data-fpost="${esc(key)}">Post</button></div></div>` : ""}`; })()}
     </article>`;
   }).join("");
   return `<section class="feed"><div class="fhead"><h2 class="hh2 fh">Crew feed</h2>
@@ -2907,6 +2953,7 @@ document.addEventListener("click", e => {
   const c = e.target.closest && e.target.closest("[data-bkcat]"); if (c) { const sh = BK.list[Number(c.dataset.bkcat)]; if (sh) openSheetFrom(sh); return; }
   const d = e.target.closest && e.target.closest("[data-bkdel]"); if (d) { const l = bucketOf(PROFILE).slice(); l.splice(Number(d.dataset.bkdel), 1); saveBucket(l); }
 });
+document.addEventListener("keydown", e => { if (e.key !== "Enter") return; if (e.target.dataset && e.target.dataset.fin) { e.preventDefault(); postComment2(e.target.dataset.fin, e.target); } else if (e.target.id === "cin") { e.preventDefault(); postComment(); } });
 document.addEventListener("keydown", e => { if (e.key === "Enter" && e.target.id === "bk-in") { const box = e.target.parentElement.querySelector(".acbox"); if (box) box.hidden = true; e.preventDefault(); addBucket(); } });
 const selectRow = (key, label, help, opts, val) => `<label class="setrow"><span class="st"><b>${esc(label)}</b>${help ? `<span class="ro">${esc(help)}</span>` : ""}</span>
   <select data-setting="${key}" aria-label="${esc(label)}">${opts.map(([v, l]) => `<option value="${v}" ${val === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`;

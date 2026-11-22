@@ -773,3 +773,16 @@ nav.tabs .bslot:empty{display:none}
 .fshow{font-family:var(--f-display);font-size:26px;line-height:1.05;color:var(--bone)}
 .fthumb{width:64px;height:84px;object-fit:cover;border:1px solid var(--iron)}
 .fact{grid-column:2/-1}
+/* 🤘 likes + comments */
+.horns{display:inline-flex;align-items:center;gap:6px;background:none;border:1px solid var(--iron);color:var(--ash);padding:5px 12px;font:inherit;cursor:pointer;border-radius:999px}
+.horns .hi{font-size:18px;line-height:1;filter:grayscale(1);opacity:.7;transition:transform .15s}
+.horns b{font-family:var(--f-label);font-size:14px;min-width:0}
+.horns.on{border-color:var(--blood-hi);color:var(--bone);background:rgba(181,18,27,.18)}
+.horns.on .hi{filter:none;opacity:1;transform:scale(1.15)}
+.fcm{display:inline-flex;align-items:center;gap:6px;background:none;border:1px solid var(--iron);color:var(--ash);padding:5px 12px;font:inherit;cursor:pointer;border-radius:999px}
+.fcm.on{border-color:var(--bone);color:var(--bone)}.fcm b{font-family:var(--f-label);font-size:14px}
+.socrow,.fsoc{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:4px 0 10px}
+.fsoc{grid-column:1/-1;margin:2px 0 0}
+.likers{font-size:13px}
+.fthread{grid-column:1/-1;display:grid;gap:8px;border-top:1px solid var(--iron);padding-top:10px}
+.fthread .cmlist{display:grid;gap:6px}
