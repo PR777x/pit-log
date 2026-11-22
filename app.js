@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile, applyActionCode } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=59";
+import { VENUES } from "./venues.js?v=60";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -97,9 +97,10 @@ function familyReview(){
 function companions(s){
   const out = new Map(), fl = friendList();
   const add = (key, label) => { if (!out.has(key)) out.set(key, label); };
-  const asFriend = f => add("u:" + f.uid, f.name || "@" + f.handle);
-  for (const n of crew(s)) { const f = fl.find(x => nameMatches(x, n)); if (f) asFriend(f); else add("n:" + n.trim().toLowerCase(), n.trim()); }
-  for (const t of tagsOf(s)) { const f = fl.find(x => x.uid === t.uid); if (f) asFriend(f); else add("n:" + String(t.name).trim().toLowerCase(), t.name); }
+  const asFriend = f => add("u:" + f.uid, personLabel(f.uid, f.name || "@" + f.handle));
+  const no = tagsOf(s).filter(t => tagDeclined(s, t.uid, ME.uid)), noNames = new Set(no.map(t => String(t.name).trim().toLowerCase())), noUids = new Set(no.map(t => t.uid));
+  for (const n of crew(s)) { if (noNames.has(n.trim().toLowerCase())) continue; const f = fl.find(x => nameMatches(x, n)); if (f) { if (!noUids.has(f.uid)) asFriend(f); } else add("n:" + n.trim().toLowerCase(), n.trim()); }
+  for (const t of tagsOf(s)) { if (noUids.has(t.uid)) continue; const f = fl.find(x => x.uid === t.uid); if (f) asFriend(f); else add("n:" + String(t.name).trim().toLowerCase(), t.name); }
   // Crew Family: they added it to your log, or their copy is in their log and they've said they went.
   if (s.linkId) for (const f of fl) if (f.family) {
     if (s.addedBy === f.uid) { asFriend(f); continue; }
@@ -113,6 +114,16 @@ function companions(s){
 const tagsOf = s => Array.isArray(s && s.tagged) ? s.tagged.filter(t => t && t.uid && t.name) : [];
 const tagFor = (s, name) => tagsOf(s).find(t => String(t.name).toLowerCase() === String(name).toLowerCase());
 const firstName = f => String((f && (f.name || f.handle)) || "").trim().split(/\s+/)[0];
+// How someone appears in tags: their choice on their profile, "First L." (default) or "@username".
+const initialName = n => { const p = String(n || "").trim().split(/\s+/).filter(Boolean); return p.length > 1 ? `${p[0]} ${p[p.length - 1][0].toUpperCase()}.` : (p[0] || ""); };
+function personLabel(uid, fallback){
+  const pr = ME && uid === ME.uid ? PROFILE : FR[uid];
+  if (!pr) return fallback || "";
+  const h = pr.handle ? "@" + pr.handle : "";
+  return pr.tagShow === "handle" ? (h || initialName(pr.name) || fallback) : (initialName(pr.name) || h || fallback);
+}
+// Someone said "Not me" to a tag on this show (owner = whose log the show is in).
+const tagDeclined = (s, uid, owner) => { const pr = ME && uid === ME.uid ? PROFILE : FR[uid]; return !!(pr && Array.isArray(pr.tagNo) && pr.tagNo.includes(owner + "|" + s.id)); };
 function nameMatches(f, name){
   const n = String(name || "").trim().toLowerCase().replace(/^@/, ""); if (!n || !f) return false;
   const full = String(f.name || "").trim().toLowerCase();
@@ -589,13 +600,16 @@ async function shareShow(d){
 }
 function shareMates(d, owner){
   const out = new Map(), fl = friendList();
-  const label = f => f.handle ? "@" + f.handle : f.name;
+  const owner0 = owner ? owner.uid : ME && ME.uid;
+  const label = f => personLabel(f.uid, f.handle ? "@" + f.handle : f.name);
   const add = (k, v) => { if (v && !out.has(k)) out.set(k, v); };
+  const tagNames0 = new Set();
   for (const t of tagsOf(d)) {
     if (owner && t.uid === owner.uid) continue;
-    const f = FR[t.uid]; add("u:" + t.uid, ME && t.uid === ME.uid ? "@" + PROFILE.handle : f ? label(f) : t.name);
+    if (tagDeclined(d, t.uid, owner0)) { tagNames0.add(String(t.name).trim().toLowerCase()); continue; }
+    add("u:" + t.uid, ME && t.uid === ME.uid ? personLabel(ME.uid, "@" + PROFILE.handle) : personLabel(t.uid, t.name));
   }
-  const tagNames = new Set(tagsOf(d).map(t => String(t.name).trim().toLowerCase()));
+  const tagNames = new Set([...tagsOf(d).map(t => String(t.name).trim().toLowerCase()), ...tagNames0]);
   for (const n of crew(d)) { if (tagNames.has(n.trim().toLowerCase())) continue; const f = fl.find(x => nameMatches(x, n)); if (f) { if (!owner || f.uid !== owner.uid) add("u:" + f.uid, label(f)); } else add("n:" + n.trim().toLowerCase(), n.trim()); }
   return [...out.values()];
 }
@@ -821,7 +835,8 @@ function renderShowView(fresh){
   const r = Number(d.rating) || 0, pv = Number(d.pit) || 0, br = d.bandRatings || {}, lu = lineup(d), songs = d.songs || {};
   const skulls = v => `<span class="skulls">${[1,2,3,4,5].map(i => SKULLV(v, i)).join("")}</span>`;
   const bars = v => `<span class="vbars">${[1,2,3,4,5].map(i => `<i class="${v >= i ? "on" : v >= i - 0.5 ? "half" : ""}"></i>`).join("")}</span>`;
-  const people = [...new Set([...crew(d), ...tagsOf(d).map(t => "@" + ((FR[t.uid] && FR[t.uid].handle) || t.name))])];
+  const tg = tagsOf(d), tgNames = new Set(tg.map(t => String(t.name).trim().toLowerCase()));
+  const people = [...crew(d).filter(n => !tgNames.has(n.trim().toLowerCase())).map(n => ({ n })), ...tg.map(t => ({ n: personLabel(t.uid, t.name), no: tagDeclined(d, t.uid, owner) }))];
   const money = [perTicket(d) != null ? `${money2(perTicket(d))} a ticket${Number(d.ticketQty) > 1 ? ` (${d.ticketQty} tickets, ${money2(Number(d.ticketTotal))})` : ""}` : "", Number(d.merchSpend) ? `${money2(Number(d.merchSpend))} on merch` : "", Number(d.miles) ? `${Math.round(dist(Number(d.miles)))} ${distLbl()} round trip` : ""].filter(Boolean);
   const pending = !ro && familyPending(d);
   const allSongs = Object.values(songs).reduce((n, a) => n + (Array.isArray(a) ? a.length : 0), 0);
@@ -852,7 +867,7 @@ function renderShowView(fresh){
       : d.setlist ? `<div class="sect"><h3>Setlist notes</h3><div class="vtext">${esc(d.setlist)}</div></div>` : ""}
     ${!ro && !up && d.date && !allSongs ? `<div class="sect"><button class="btn" data-getsetlist>Get the setlist from setlist.fm</button><div class="ro" id="slmsg"></div></div>` : ""}
     ${d.notes ? `<div class="sect"><h3>Notes</h3><div class="vtext">${esc(d.notes)}</div></div>` : ""}
-    ${people.length ? `<div class="sect"><h3>Went with</h3><div class="tagrow">${people.map(n => `<span class="chip">${esc(n)}</span>`).join("")}</div></div>` : ""}
+    ${people.length ? `<div class="sect"><h3>Went with</h3><div class="tagrow">${people.map(p => `<span class="chip${p.no ? " tagno" : ""}"${p.no ? ` title="Said they weren't there"` : ""}>${esc(p.n)}${p.no ? " · not there" : ""}</span>`).join("")}</div></div>` : ""}
     ${money.length ? `<div class="sect"><h3>The damage</h3><div class="ro vmoney">${money.map(esc).join(" · ")}</div></div>` : ""}
     ${!d.poster && !ro ? `<div class="sect"><h3>Tour poster</h3><label class="btn">Upload poster<input class="vh" type="file" data-upkind="poster" accept="image/*,.heic,.heif" aria-label="Upload poster"></label></div>` : ""}
     ${media}
@@ -1291,6 +1306,7 @@ document.addEventListener("input", e => {
   }
 });
 document.addEventListener("change", e => {
+  if (e.target.id === "pf-tagshow" && PEDIT) { PEDIT.tagShow = e.target.value; return; }
   if (e.target.dataset && e.target.dataset.setting) { saveSetting(e.target.dataset.setting, e.target.value).then(() => { if (S.tab === "me") renderMe(); }); return; }
   if (e.target.id === "sort") { S.sort = e.target.value; try { localStorage.setItem("pitlog.sort", S.sort); } catch(_){} renderShows(); return; }
   const up = e.target.dataset && e.target.dataset.upkind;
@@ -1462,7 +1478,7 @@ function watchFriend(uid, info){
     if (f.family) { applyPrivacy(f); scheduleFamilySync(); }
     rerenderSoft();
   }, err => { f.err = err.code === "permission-denied" ? "Their log isn't shared with you yet." : "Couldn't load their log."; f.loaded = true; rerenderSoft(); });
-  f.unsubP = onSnapshot(doc(fdb, "users", uid), p => { if (p.exists()) { const d = p.data(); f.live = true; Object.assign(f, { name: d.name || f.name, handle: d.handle || f.handle, photo: d.photoURL || f.photo, bio: d.bio || "", favBand: d.favBand || "", favBands: d.favBands || [], favVenue: d.favVenue || "", settings: d.settings || {}, interested: Array.isArray(d.interested) ? d.interested : [], bucket: Array.isArray(d.bucket) ? d.bucket : [], cover: d.coverURL || "" }); applyPrivacy(f); rerenderSoft(); } }, () => {});
+  f.unsubP = onSnapshot(doc(fdb, "users", uid), p => { if (p.exists()) { const d = p.data(); f.live = true; Object.assign(f, { name: d.name || f.name, handle: d.handle || f.handle, photo: d.photoURL || f.photo, bio: d.bio || "", favBand: d.favBand || "", favBands: d.favBands || [], favVenue: d.favVenue || "", settings: d.settings || {}, interested: Array.isArray(d.interested) ? d.interested : [], bucket: Array.isArray(d.bucket) ? d.bucket : [], cover: d.coverURL || "", tagShow: d.tagShow || "", tagNo: Array.isArray(d.tagNo) ? d.tagNo : [] }); applyPrivacy(f); rerenderSoft(); } }, () => {});
 }
 // Friends' privacy settings decide what this app shows of their log. f.raw keeps the full
 // docs for Crew Family syncing; everything you see goes through f.shows.
@@ -2483,7 +2499,7 @@ const splitKey = k => { const i = k.indexOf("|"); return [k.slice(0, i), k.slice
 function tagPicker(d, ro){
   const on = new Set(tagsOf(d).map(t => t.uid));
   const fl = friendList().filter(f => on.has(f.uid) || canSee(settingsOf(f), "tagMe", f)); if (!fl.length) return "";
-  if (ro) { const tg = tagsOf(d); return tg.length ? `<div class="tagrow">${tg.map(t => `<span class="chip crew tg">${esc(t.name)}${FR[t.uid] ? ` · @${esc(FR[t.uid].handle)}` : ""}</span>`).join("")}</div>` : ""; }
+  if (ro) { const tg = tagsOf(d); return tg.length ? `<div class="tagrow">${tg.map(t => `<span class="chip crew tg">${esc(personLabel(t.uid, t.name))}</span>`).join("")}</div>` : ""; }
   return `<div class="field"><span class="lbl">Tag crew with an account</span><div class="tagrow">${fl.map(f =>
     `<button type="button" class="tagbtn tagf" data-tagf="${esc(f.uid)}" aria-pressed="${on.has(f.uid)}">${avatar(f.photo, f.name, "sm")}@${esc(f.handle)}</button>`).join("")}</div></div>`;
 }
@@ -2561,22 +2577,37 @@ function pastTagSuggestBlock(){
     <button class="btn red" data-taglink="${esc(f.uid + "|" + e.name)}">Link</button></div>`).join("")}</div></section>`;
 }
 
-// Friends' shows that tag you and aren't in your log yet.
+// Tags on friends' shows. Each one waits for you: "I was there" (then optionally add it to your log) or "Not me".
+// Shows already in your log count as a yes. tagYes / tagNo / tagSeen live on your profile, so friends see a "Not me".
 function tagInbox(){
-  const seen = new Set((PROFILE && PROFILE.tagSeen) || []), out = [];
+  const L = k => new Set((PROFILE && PROFILE[k]) || []), yes = L("tagYes"), no = L("tagNo"), seen = L("tagSeen"), out = [];
   for (const f of friendList()) for (const s of (f.shows || [])) {
     if (!(Array.isArray(s.taggedUids) && s.taggedUids.includes(ME.uid))) continue;
     if (!canSee(MY(), "tagMe", f)) continue;
-    if (seen.has(f.uid + "|" + s.id) || S.shows.some(o => sameShow(o, s))) continue;
-    out.push({ f, s });
+    const key = f.uid + "|" + s.id;
+    if (no.has(key) || seen.has(key) || S.shows.some(o => sameShow(o, s))) continue;
+    out.push({ f, s, key, stage: yes.has(key) ? "add" : "ask" });
   }
-  return out.sort((a, b) => (b.s.date || "").localeCompare(a.s.date || ""));
+  return out.sort((a, b) => (a.stage === "ask" ? 0 : 1) - (b.stage === "ask" ? 0 : 1) || (b.s.date || "").localeCompare(a.s.date || ""));
+}
+const acctBadge = () => { const n = ME && S.loaded ? tagInbox().filter(x => x.stage === "ask").length : 0; return n ? `<span class="badge-n acctb" aria-label="${n} tag${n > 1 ? "s" : ""} to review">${n}</span>` : ""; };
+function updateAcctBadge(){ const a = $("#acct"); if (!a || a.hidden) return; a.querySelectorAll(".acctb").forEach(x => x.remove()); a.insertAdjacentHTML("beforeend", acctBadge()); }
+async function answerTag(key, yes){
+  const field = yes ? "tagYes" : "tagNo";
+  PROFILE[field] = [...new Set([...(PROFILE[field] || []), key])];
+  rerenderSoft(); updateAcctBadge(); updateCrewBadge();
+  try { await updateDoc(doc(fdb, "users", ME.uid), { [field]: arrayUnion(key) }); toast(yes ? "Confirmed. Add it to your log below if you want." : "Got it. They'll see you weren't there.", 3000); } catch (e) { handleWriteErr(e); }
 }
 function tagInboxBlock(){
   const list = tagInbox(); if (!list.length) return "";
-  return `<section class="sect"><h3>You were tagged <span class="lbl">${list.length}</span></h3><div class="plist">${list.map(({ f, s }) => {
-    const k = esc(f.uid + "|" + s.id);
-    return `<div class="tagin">${showRow(s, f.uid, "@" + f.handle + " tagged you")}<div class="tagact"><button class="btn red" data-tagadd="${k}">Add show only</button><button class="btn" data-tagfull="${k}">Add with their details</button><button class="btn ghost" data-tagdis="${k}">Dismiss</button></div></div>`; }).join("")}</div>
+  const asks = list.filter(x => x.stage === "ask").length;
+  return `<section class="sect taginbox" id="tagInbox"><h3>Tagged by your crew <span class="lbl">${list.length}</span></h3>
+    <div class="ro" style="margin-bottom:8px">${asks ? "Did you go with them? Confirm the ones you were at. Nothing shows up in your stats or on their show as you until you say yes." : "You confirmed these. Add them to your log, or skip."}</div>
+    <div class="plist">${list.map(({ f, s, key, stage }) => {
+    const k = esc(key);
+    return `<div class="tagin${stage === "ask" ? " ask" : ""}">${showRow(s, f.uid, "@" + f.handle + " tagged you")}<div class="tagact">${stage === "ask"
+      ? `<button class="btn red" data-tagyes="${k}">${isUpcoming(s) ? "I'm going too" : "I was there"}</button><button class="btn ghost" data-tagno="${k}">${isUpcoming(s) ? "Not going" : "Not me"}</button>`
+      : `<button class="btn red" data-tagadd="${k}">Add show only</button><button class="btn" data-tagfull="${k}">Add with their details</button><button class="btn ghost" data-tagdis="${k}">Skip</button>`}</div></div>`; }).join("")}</div>
     <div class="ro" style="margin-top:8px"><b>Show only</b> adds the date, bands and venue. Your rating, notes, spend and photos start blank. <b>With their details</b> also copies their rating, notes, spend and photos, which you can edit after.</div></section>`;
 }
 // Accept a tag. "Show only" copies the date, bands and venue and leaves your own night blank.
@@ -2663,7 +2694,9 @@ function renderCrew(){
       <div class="prow">${avatar(f.photo, f.name)}<div class="pt"><div class="nm">${esc(f.name || f.handle)}</div><div class="hd">@${esc(f.handle)} wants to link logs</div>
       <div class="ro">Every show either of you adds lands in both logs.</div></div>
       <button class="btn red" data-famok="${esc(f.uid)}">Approve</button><button class="btn ghost" data-famno="${esc(f.uid)}">Not now</button></div>`).join("")}</div></section>`;
-  html += tagInboxBlock() + pastTagSuggestBlock();
+  const tq = ME && S.loaded ? tagInbox().length : 0;
+  if (tq) html += `<button class="fambanner" data-tagsgo><b>${tq} tag${tq > 1 ? "s" : ""} from your crew.</b> Review ${tq > 1 ? "them" : "it"} on your profile.</button>`;
+  html += pastTagSuggestBlock();
   html += `<section class="sect"><h3>The crew <span class="lbl">${fl.length}</span></h3>`;
   if (!fl.length) html += `<div class="empty"><h3>No crew yet</h3><div>Send a friend your username, or add theirs above. Once they accept, you can see each other's shows and the ones you hit together.</div></div>`;
   else html += `<div class="plist">${fl.map(f => { const tog = S.shows.filter(s => (f.shows||[]).some(o => sameShow(s,o))).length;
@@ -2735,7 +2768,7 @@ function renderMe(){
   if (!PROFILE) return;
   const openNow = [...document.querySelectorAll("[data-setgrp]")];
   if (openNow.length) S.setOpen = new Set(openNow.filter(d => d.open).map(d => d.dataset.setgrp));
-  $("#view").innerHTML = `<div class="crew">${profileBlock({ uid: ME.uid, name: PROFILE.name, handle: PROFILE.handle, photo: PROFILE.photoURL, cover: PROFILE.coverURL || "", bio: PROFILE.bio, favBands: favList(PROFILE), favVenue: PROFILE.favVenue || "", shows: S.shows }, true, null, {})}${bucketBlock()}${settingsBlock()}</div>`;
+  $("#view").innerHTML = `<div class="crew">${tagInboxBlock()}${profileBlock({ uid: ME.uid, name: PROFILE.name, handle: PROFILE.handle, photo: PROFILE.photoURL, cover: PROFILE.coverURL || "", bio: PROFILE.bio, favBands: favList(PROFILE), favVenue: PROFILE.favVenue || "", shows: S.shows }, true, null, {})}${bucketBlock()}${settingsBlock()}</div>`;
   drawBucketShows();
 }
 /* ---------- Bucket list: bands you want to see. New dates for them show up in Just announced and the Sunday recap. ---------- */
@@ -2894,7 +2927,7 @@ function downloadBackup(){
 
 let PEDIT = null;
 function editProfile(){
-  PEDIT = { name: PROFILE.name || "", handle: PROFILE.handle || "", bio: PROFILE.bio || "", favBands: [...favList(PROFILE), "", "", "", "", ""].slice(0, 5), favVenue: PROFILE.favVenue || "", photoURL: PROFILE.photoURL || "", photoPath: PROFILE.photoPath || "", coverURL: PROFILE.coverURL || "", coverPath: PROFILE.coverPath || "", busy: false };
+  PEDIT = { tagShow: PROFILE.tagShow || "name", name: PROFILE.name || "", handle: PROFILE.handle || "", bio: PROFILE.bio || "", favBands: [...favList(PROFILE), "", "", "", "", ""].slice(0, 5), favVenue: PROFILE.favVenue || "", photoURL: PROFILE.photoURL || "", photoPath: PROFILE.photoPath || "", coverURL: PROFILE.coverURL || "", coverPath: PROFILE.coverPath || "", busy: false };
   drawEdit();
 }
 function drawEdit(){
@@ -2914,6 +2947,7 @@ function drawEdit(){
     <label class="field"><span class="lbl">Name</span><input id="pf-name" maxlength="40" value="${esc(e.name)}" placeholder="Ex: Sam Rivera"></label>
     <label class="field"><span class="lbl">Bio <span id="pf-count">${(e.bio||"").length}/140</span></span><textarea id="pf-bio" maxlength="140" placeholder="Ex: Doom, deathcore and barricade spots.">${esc(e.bio)}</textarea></label>
     <div class="field"><span class="lbl">Top 5 bands</span><div class="top5edit">${e.favBands.map((b, i) => `<label><span class="num">${i + 1}</span><input id="pf-fav${i}" maxlength="40" list="dl-bands" value="${esc(b)}" placeholder="${i ? "" : "Ex: Katatonia"}" aria-label="Favorite band ${i + 1}"></label>`).join("")}</div></div>
+    <label class="field"><span class="lbl">Show me in tags as</span><select id="pf-tagshow">${[["name", `First name + last initial (${esc(initialName(e.name) || "Sam R.")})`], ["handle", `Username (@${esc(e.handle || "username")})`]].map(([v, l]) => `<option value="${v}" ${(e.tagShow || "name") === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>
     <label class="field"><span class="lbl">Favorite venue</span><input id="pf-venue" maxlength="60" list="dl-venues" value="${esc(e.favVenue)}" placeholder="Ex: Union Transfer"></label>
     <datalist id="dl-bands">${counts(S.shows.flatMap(lineup)).slice(0, 200).map(b => `<option value="${esc(b.name)}">`).join("")}</datalist>
     <datalist id="dl-venues">${[...new Set([...counts(S.shows.map(x => x.venue || "")).filter(v => v.name).map(v => v.name), ...VENUES.map(v => v.name)])].map(v => `<option value="${esc(v)}">`).join("")}</datalist>
@@ -3040,7 +3074,7 @@ function handleLock(){
 async function saveProfileEdit(){
   const e = PEDIT, name = (e.name || "").trim();
   if (!name) { toast("Add your name"); return; }
-  const patch = { name, bio: (e.bio || "").trim().slice(0, 140), favBands: ((seen) => e.favBands.map(b => String(b || "").trim().slice(0, 40)).filter(b => b && !seen.has(b.toLowerCase()) && seen.add(b.toLowerCase())))(new Set()).slice(0, 5), favVenue: (e.favVenue || "").trim().slice(0, 60), photoURL: e.photoURL || "", photoPath: e.photoPath || "", coverURL: e.coverURL || "", coverPath: e.coverPath || "" };
+  const patch = { tagShow: e.tagShow === "handle" ? "handle" : "name", name, bio: (e.bio || "").trim().slice(0, 140), favBands: ((seen) => e.favBands.map(b => String(b || "").trim().slice(0, 40)).filter(b => b && !seen.has(b.toLowerCase()) && seen.add(b.toLowerCase())))(new Set()).slice(0, 5), favVenue: (e.favVenue || "").trim().slice(0, 60), photoURL: e.photoURL || "", photoPath: e.photoPath || "", coverURL: e.coverURL || "", coverPath: e.coverPath || "" };
   const h = String(e.handle || "").trim().replace(/^@/, "").toLowerCase(), oldH = PROFILE.handle;
   const changing = h && h !== oldH;
   if (changing && handleLock()) { toast(`You can change your username again on ${handleLock()}`, 4000); return; }
@@ -3063,7 +3097,7 @@ async function saveProfileEdit(){
     if (old && old !== patch.photoPath) removeFile(old);
     if (oldCover && oldCover !== patch.coverPath) removeFile(oldCover);
     PEDIT = null; $("#modalRoot").innerHTML = "";
-    $("#acct").innerHTML = avatar(PROFILE.photoURL, PROFILE.name);
+    $("#acct").innerHTML = avatar(PROFILE.photoURL, PROFILE.name) + acctBadge();
     toast(changing ? `You're now @${patch.handle}` : "Profile saved"); renderTab(); syncSearchFields(); schedulePublish(true); cacheProfile();
   } catch (err) { handleWriteErr(err); }
 }
@@ -3119,6 +3153,9 @@ function openInvite(){
 }
 function crewClick(t){
   if (t.hasAttribute("data-invite")) { openInvite(); return true; }
+  if (t.hasAttribute("data-tagsgo")) { S.tab = "me"; renderTab(); setTimeout(() => { const b = $("#tagInbox"); if (b) b.scrollIntoView({ block: "start", behavior: "smooth" }); }, 50); return true; }
+  if (t.dataset.tagyes) { answerTag(t.dataset.tagyes, true); return true; }
+  if (t.dataset.tagno) { answerTag(t.dataset.tagno, false); return true; }
   if (t.hasAttribute("data-copyhandle")) { const h = "@" + PROFILE.handle; (navigator.clipboard ? navigator.clipboard.writeText(h) : Promise.reject()).then(() => toast("Copied " + h), () => toast("Your username is " + h, 4000)); return true; }
   if (t.dataset.accept) { const r = REQ.in.find(x => x.id === t.dataset.accept); if (r) acceptRequest(r); return true; }
   if (t.dataset.decline) { removeRequest(t.dataset.decline); return true; }
@@ -3156,7 +3193,7 @@ function accountMenu(){
   const root = $("#modalRoot");
   root.innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-label="Account"><div class="mbox">
     <div class="me-card" style="border:0;padding:0">${avatar(PROFILE.photoURL, PROFILE.name, "lg")}<div style="min-width:0"><div class="nm">${esc(PROFILE.name||"")}</div><div class="hd">@${esc(PROFILE.handle)}</div><div class="ro">${esc(ME.email||"")}</div></div></div>
-    <button class="btn red" data-myprofile style="text-align:center">View my profile</button>
+    <button class="btn red" data-myprofile style="text-align:center">View my profile${tagInbox().filter(x => x.stage === "ask").length ? ` · ${tagInbox().filter(x => x.stage === "ask").length} tag${tagInbox().filter(x => x.stage === "ask").length > 1 ? "s" : ""} to review` : ""}</button>
     <div class="ro">Import a Pit Log export file, or a ticket-cost file. A cost file only fills in ticket totals on shows you've already logged.</div>
     <label class="btn" style="text-align:center">Import Pit Log file<input class="vh" type="file" id="importFile" accept=".json,application/json"></label>
     <div class="mbtns"><button class="btn warn" data-signout>Sign out</button><button class="btn ghost" data-mclose>Close</button></div>
@@ -3344,7 +3381,7 @@ function startApp(){
   if (ps.defaultSort && SORTS[ps.defaultSort]) S.sort = ps.defaultSort;
   if (ps.crewDefault) S.crewOn = ps.crewDefault === "on";
   showOnly("appRoot");
-  const a = $("#acct"); a.hidden = false; a.innerHTML = avatar(PROFILE.photoURL, PROFILE.name);
+  const a = $("#acct"); a.hidden = false; a.innerHTML = avatar(PROFILE.photoURL, PROFILE.name) + acctBadge();
   $("#searchBtn").hidden = false;
   $("#addBtn").hidden = false;
   syncSearchFields();
@@ -3365,7 +3402,7 @@ function startApp(){
         readForm(); for (const k of ["poster","photos","merch"]) draft[k] = fresh[k]; redraw = true;
       }
     }
-    renderNext();
+    renderNext(); updateAcctBadge();
     schedulePublish();
     if (!S.open) renderTab(); else if (redraw || busy) renderSheet();
   }, err => { clearTimeout(timer); S.loaded = true; S.error = err.code === "permission-denied" ? "Your log is blocked — the Firestore rules aren't published yet." : "The log couldn't load. Reload to try again."; render(); }));
@@ -3375,7 +3412,7 @@ function startApp(){
   UNSUBS.push(reqs("to", "in"), reqs("from", "out"));
   setTimeout(claimInvite, 3000);
 }
-function updateCrewBadge(){ const n = REQ.in.filter(r => r.status === "pending").length + (ME && S.loaded ? tagInbox().length : 0)
+function updateCrewBadge(){ updateAcctBadge(); const n = REQ.in.filter(r => r.status === "pending").length
   + (ME ? friendList().filter(f => f.famState === "pending" && f.famBy && f.famBy !== ME.uid).length : 0); $("#tab-crew .bslot").innerHTML = n ? `<span class="badge-n">${n}</span>` : ""; $("#tab-crew").setAttribute("aria-selected", S.tab === "crew"); navArrows(); }
 
 $("#signinBtn").addEventListener("click", doSignIn);
@@ -3455,7 +3492,7 @@ onAuthStateChanged(auth, async user => {
   if (cached) {
     // Open straight away from the saved profile, then quietly swap in the server copy.
     PROFILE = cached; enterApp();
-    getDoc(doc(fdb, "users", user.uid)).then(p => { if (p.exists() && p.data().handle && ME && ME.uid === user.uid) { PROFILE = { ...p.data() }; cacheProfile(); const a = $("#acct"); if (a) a.innerHTML = avatar(PROFILE.photoURL, PROFILE.name); } }).catch(() => {});
+    getDoc(doc(fdb, "users", user.uid)).then(p => { if (p.exists() && p.data().handle && ME && ME.uid === user.uid) { PROFILE = { ...p.data() }; cacheProfile(); const a = $("#acct"); if (a) a.innerHTML = avatar(PROFILE.photoURL, PROFILE.name) + acctBadge(); } }).catch(() => {});
     return;
   }
   if ($("#boot").hidden) showOnly("gate");

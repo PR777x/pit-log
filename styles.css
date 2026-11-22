@@ -752,3 +752,8 @@ nav.tabs .bslot:empty{display:none}
 .pasthead{display:flex;justify-content:space-between;align-items:end;margin:6px 0 8px}
 .pasthead .nm{font-family:var(--f-display);font-size:30px;color:var(--bone)}
 #pf,#pq{width:100%}
+/* tag review */
+#acct{position:relative;overflow:visible}
+#acct .acctb{position:absolute;top:-4px;right:-4px;min-width:18px;height:18px;font-size:11px}
+.tagin.ask{border-left:3px solid var(--blood-hi);padding-left:8px}
+.chip.tagno{text-decoration:line-through;opacity:.6}
