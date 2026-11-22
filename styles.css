@@ -744,3 +744,11 @@ nav.tabs .bslot:empty{display:none}
 .wload{display:grid;place-items:center;align-content:center;gap:14px}
 .spin{width:38px;height:38px;border:3px solid var(--iron);border-top-color:var(--blood-hi);border-radius:50%;animation:spin .8s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
+/* discover: past shows */
+.dview{margin-bottom:10px}.dview button{flex:1}
+.pastform{display:grid;grid-template-columns:1fr auto auto;gap:8px;margin:10px 0}
+.pastform select{max-width:120px}
+@media(max-width:420px){.pastform{grid-template-columns:1fr 1fr}.pastform .search{grid-column:1/-1}}
+.pasthead{display:flex;justify-content:space-between;align-items:end;margin:6px 0 8px}
+.pasthead .nm{font-family:var(--f-display);font-size:30px;color:var(--bone)}
+#pf,#pq{width:100%}

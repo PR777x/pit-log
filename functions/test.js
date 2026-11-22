@@ -390,5 +390,23 @@ const sentTo = who => emails.filter(e => e.to[0] === who + "@example.com");
   const l1 = await F.artistLinks(["Gojira", "Unknown Band"], nopause); assert.strictEqual(l1.Gojira, "https://open.spotify.com/artist/0GDGKpJFhVpcjIGF8N6Ewt");
   const cc19 = calls19; await F.artistLinks(["Gojira", "Unknown Band"], nopause); assert.strictEqual(calls19, cc19, "second time comes from the cache");
 
+  // 20. Past shows finder: exact artist match, paging, full bill per night
+  const urls20 = [];
+  const fake20 = async url => { urls20.push(url); return { ok: true, status: 200, json: async () => {
+    if (url.includes("/search/artists")) return { artist: [{ mbid: "t-1", name: "Varials Tribute" }, { mbid: "aaaaaaaa-1111-2222-3333-444444444444", name: "Varials" }] };
+    if (url.includes("/artist/")) { const p = Number(url.split("p=")[1]); return { itemsPerPage: 20, total: 45, setlist: Array.from({ length: p === 3 ? 5 : 20 }, (_, i) => ({ id: p + "-" + i, eventDate: "1" + (i % 9) + "-0" + ((p % 9) + 1) + "-2019", artist: { name: "Varials" }, venue: { id: "3bd6bc5c", name: "The Foundry", city: { name: "Philadelphia", stateCode: "PA", country: { code: "US" } } }, tour: i % 2 ? { name: "Pain Tour" } : undefined, sets: { set: [{ song: [{ name: "A" }] }] } })) }; }
+    if (url.includes("venueId=")) return { setlist: [
+      { id: "o", eventDate: "12-03-2019", artist: { name: "Varials" }, venue: { name: "The Foundry", city: { name: "Philadelphia", stateCode: "PA" } }, sets: { set: [{ song: [{ name: "A" }, { name: "B" }] }] } },
+      { id: "h", eventDate: "12-03-2019", artist: { name: "Knocked Loose" }, venue: { name: "The Foundry", city: { name: "Philadelphia", stateCode: "PA" } }, tour: { name: "Spring Tour" }, sets: { set: [{ song: [{ name: "X" }, { name: "Y" }, { name: "Z" }] }] } } ] };
+    return null; } }; };
+  const past = await SL.pastShows("k", { artist: "varials" }, fake20, async () => {});
+  assert.strictEqual(past.artist, "Varials", "picks the exact name, not the tribute act"); assert.strictEqual(past.shows.length, 45); assert.strictEqual(past.more, false);
+  assert.strictEqual(past.shows[1].tour, "Pain Tour"); assert.strictEqual(past.shows[0].venueId, "3bd6bc5c"); assert.strictEqual(past.shows[0].city, "Philadelphia, PA");
+  const yr20 = await SL.pastShows("k", { mbid: "aaaaaaaa-1111-2222-3333-444444444444", artist: "Varials", year: "2019" }, fake20, async () => {});
+  assert.ok(urls20.some(u => u.includes("artistMbid=aaaaaaaa-1111-2222-3333-444444444444&year=2019")), "year search uses the setlist search");
+  const night = await SL.pastNight("k", { venueId: "3bd6bc5c", date: "2019-03-12" }, fake20);
+  assert.deepStrictEqual(night.bands, ["Knocked Loose", "Varials"], "longest set first"); assert.strictEqual(night.tour, "Spring Tour"); assert.deepStrictEqual(night.songs.Varials, ["A", "B"]);
+  await assert.rejects(SL.pastNight("k", { venueId: "x/../", date: "2019-03-12" }, fake20));
+
   console.log("All email function tests passed.");
 })().catch(e => { console.error(e); process.exit(1); });

@@ -409,6 +409,23 @@ async function deleteAccount(uid){
   await getAuth().deleteUser(uid).catch(e => logger.warn("auth delete", e.message));
   logger.info(`deleted account ${uid}`);
 }
+// Past-show searches are cached for 3 days (setlist.fm allows ~2 requests a second and a daily cap).
+async function cachedPast(key, body){
+  const year = /^\d{4}$/.test(String(body.year || "")) ? String(body.year) : "all", page = Math.max(1, Math.min(50, Number(body.page) || 1));
+  let mbid = /^[0-9a-f-]{36}$/.test(String(body.mbid || "")) ? body.mbid : "";
+  let artist = String(body.artist || "").slice(0, 80);
+  if (!mbid) {
+    const k = "a_" + artist.toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 60);
+    const c = k.length > 2 ? await db.doc(`pastCache/${k}`).get() : null;
+    if (c && c.exists && Date.now() - c.data().at < 30 * 864e5) { mbid = c.data().mbid; artist = c.data().name || artist; }
+    else if (k.length > 2) { const a = await S.findArtist(key, artist); if (!a) return { artist, mbid: "", shows: [], more: false, total: 0 }; mbid = a.mbid; artist = a.name; await db.doc(`pastCache/${k}`).set({ mbid, name: a.name, at: Date.now() }); }
+  }
+  const ref = db.doc(`pastCache/${mbid}_${year}_${page}`), c = await ref.get();
+  if (c.exists && Date.now() - c.data().at < 3 * 864e5) return JSON.parse(c.data().data);
+  const out = await S.pastShows(key, { artist, mbid, year, page });
+  await ref.set({ at: Date.now(), data: JSON.stringify(out) });
+  return out;
+}
 exports.account = onRequest({ cors: [/thepitlog\.com$/, /localhost/, /pr777x\.github\.io$/], secrets: [RESEND_API_KEY, SETLISTFM_API_KEY], timeoutSeconds: 120 }, async (req, res) => {
   if (req.method !== "POST") return res.status(405).json({ error: "POST only" });
   const m = String(req.headers.authorization || "").match(/^Bearer (.+)$/); if (!m) return res.status(401).json({ error: "sign in first" });
@@ -430,10 +447,12 @@ exports.account = onRequest({ cors: [/thepitlog\.com$/, /localhost/, /pr777x\.gi
     const bands = (Array.isArray(req.body && req.body.bands) ? req.body.bands : []).map(String).filter(Boolean).slice(0, 8);
     return res.json({ links: await artistLinks(bands) });
   }
-  if (action === "setlist" || action === "setlistImport") {
+  if (action === "setlist" || action === "setlistImport" || action === "pastShows" || action === "pastNight") {
     const key = SETLISTFM_API_KEY.value();
     if (!key || key === "none") return res.status(503).json({ error: "setlist.fm isn't connected yet" });
     try {
+      if (action === "pastShows") return res.json(await cachedPast(key, req.body || {}));
+      if (action === "pastNight") return res.json(await S.pastNight(key, req.body || {}));
       if (action === "setlist") return res.json(await S.findSetlist(key, String(req.body.artist || ""), String(req.body.date || "")));
       return res.json(await S.attended(key, String(req.body.username || "")));
     } catch (e) { logger.warn("setlist.fm", e.message); return res.status(e.status || 502).json({ error: e.message }); }

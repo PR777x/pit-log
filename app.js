@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile, applyActionCode } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=58";
+import { VENUES } from "./venues.js?v=59";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -1957,6 +1957,7 @@ S.disc = { mode: "foryou", q: "", st: "", g: "", sort: "listed", minDates: 1, sa
 const DMODES = [["all", "All bands"], ["foryou", "For you"], ["mine", "My bands"], ["seen", "Seen"], ["bucket", "Bucket list"]];
 try {
   const m = localStorage.getItem("pitlog.discMode"); if (DMODES.some(x => x[0] === m)) S.disc.mode = m;
+  if (localStorage.getItem("pitlog.discView") === "past") S.disc.view = "past";
   const md = Number(localStorage.getItem("pitlog.discMin")); if (md > 1) S.disc.minDates = md;
   const so = localStorage.getItem("pitlog.discSort"); if (so) S.disc.sort = so;
   S.disc.sameTour = localStorage.getItem("pitlog.discTour") === "1";
@@ -2048,9 +2049,11 @@ function buildGroups(){
   return out;
 }
 function mostCommon(map){ let best = "", n = 0; for (const [k, v] of map) if (v > n) { best = k; n = v; } return best; }
+const dviewSeg = () => `<div class="seg big dview" role="group" aria-label="Upcoming or past"><button data-dview="up" aria-pressed="${S.disc.view !== "past"}">Upcoming tours</button><button data-dview="past" aria-pressed="${S.disc.view === "past"}">Past shows</button></div>`;
 function renderDiscover(){
   const d = S.disc;
-  $("#view").innerHTML = `<div class="disc">
+  if (d.view === "past") return renderPast();
+  $("#view").innerHTML = `<div class="disc">${dviewSeg()}
     <div class="tagrow dmodes" role="group" aria-label="Which bands">${DMODES.map(([v, l]) => `<button class="tagbtn${d.mode === v ? " on" : ""}" data-dmode="${v}" aria-pressed="${d.mode === v}">${l}</button>`).join("")}</div>
     <input class="search" id="dq" value="${esc(d.q)}" placeholder="Band, tour, venue or city" autocapitalize="none" spellcheck="false" aria-label="Filter tours">
     <div class="tagrow" role="group" aria-label="State">${["", "PA", "NJ", "DE", "NY"].map(x => `<button class="tagbtn${d.st === x ? " on" : ""}" data-dst="${x}" aria-pressed="${d.st === x}">${x || "All states"}</button>`).join("")}</div>
@@ -2154,6 +2157,112 @@ document.addEventListener("change", e => {
   if (e.target.id === "dtour") { S.disc.sameTour = e.target.checked; try { localStorage.setItem("pitlog.discTour", S.disc.sameTour ? "1" : ""); } catch (_) {} drawDiscover(); }
   if (e.target.id === "dshowhid") { S.disc.showHidden = e.target.checked; drawDiscover(); }
 });
+
+/* ---------- Discover: past shows finder ----------
+   Search a band's past concerts on setlist.fm, grouped by tour, venue or year, then add the night you were there
+   (with the full bill and setlists filled in). */
+const PAST = { q: "", year: "", by: "tour", filter: "", res: null, loading: false, err: "", open: new Set(), groups: [] };
+const vkey = v => String(v || "").toLowerCase().replace(/^the\s+/, "").replace(/[^a-z0-9]+/g, "");
+function pastQuickBands(){
+  const seen = counts(S.shows.filter(x => !isUpcoming(x)).flatMap(lineup)).map(b => b.name);
+  return [...new Set([...(Array.isArray(PROFILE && PROFILE.bucket) ? PROFILE.bucket : []), ...seen])].filter(Boolean).slice(0, 14);
+}
+function renderPast(){
+  const yrs = []; for (let y = parse(todayISO).y; y >= 1990; y--) yrs.push(y);
+  const quick = pastQuickBands();
+  $("#view").innerHTML = `<div class="disc">${dviewSeg()}
+    <div class="ro">Find a show you went to: search a band, open the tour or venue, and add your night with the full bill and setlists.</div>
+    <form id="pastForm" class="pastform" autocomplete="off">
+      <input class="search" id="pq" value="${esc(PAST.q)}" placeholder="Band, ex: Varials" list="dl-pbands" autocapitalize="none" spellcheck="false" aria-label="Band">
+      <select id="pyear" aria-label="Year"><option value="">Any year</option>${yrs.map(y => `<option ${String(y) === PAST.year ? "selected" : ""}>${y}</option>`).join("")}</select>
+      <button class="btn red" type="submit">Search</button></form>
+    <datalist id="dl-pbands">${counts(S.shows.flatMap(lineup)).slice(0, 300).map(b => `<option value="${esc(b.name)}">`).join("")}</datalist>
+    ${!PAST.res && quick.length ? `<div class="lbl" style="margin-top:6px">Your bands</div><div class="tagrow">${quick.map(b => `<button class="tagbtn" data-pquick="${esc(b)}">${esc(b)}</button>`).join("")}</div>` : ""}
+    <div id="pres"></div></div>`;
+  drawPast();
+}
+function pastGroups(){
+  const r = PAST.res; if (!r) return [];
+  const f = PAST.filter.trim().toLowerCase();
+  const myV = new Map(); for (const x of S.shows) { const k = vkey(x.venue); if (k) myV.set(k, (myV.get(k) || 0) + 1); }
+  const shows = r.shows.filter(x => !f || [x.venue, x.city, x.tour, x.date.slice(0, 4)].join(" ").toLowerCase().includes(f)).map(x => ({ ...x,
+    pv: myV.get(vkey(x.venue)) || 0, mine: S.shows.some(o => sameShow(o, { date: x.date, venue: x.venue, lineup: [x.artist] })) }));
+  const by = new Map();
+  for (const x of shows) {
+    const y = x.date.slice(0, 4);
+    const k = PAST.by === "venue" ? vkey(x.venue) + "|" + x.city : PAST.by === "year" ? y : (x.tour ? "t:" + x.tour.toLowerCase() : "n:" + y);
+    const g = by.get(k) || { key: k, name: PAST.by === "venue" ? x.venue : PAST.by === "year" ? y : (x.tour || `Shows in ${y}`), notour: PAST.by === "tour" && !x.tour, city: x.city, dates: [] };
+    g.dates.push(x); by.set(k, g);
+  }
+  const out = [...by.values()].map(g => { const ds = g.dates.map(x => x.date).sort(); const states = [...new Set(g.dates.map(x => (x.city.split(", ")[1] || "")).filter(Boolean))];
+    return { ...g, first: ds[0], last: ds[ds.length - 1], pv: g.dates.some(x => x.pv), mine: g.dates.some(x => x.mine), states,
+      dates: g.dates.sort((a, b) => (b.mine - a.mine) || ((b.pv > 0) - (a.pv > 0)) || b.date.localeCompare(a.date)) }; });
+  return out.sort((a, b) => PAST.by === "venue" ? (b.pv - a.pv) || b.dates.length - a.dates.length || b.last.localeCompare(a.last) : b.last.localeCompare(a.last));
+}
+function pastRow(x, gi, di){
+  const p = parse(x.date);
+  return `<div class="ddate${x.pv ? " pv" : ""}"><span class="pdate"><b class="num">${p.d}</b>${MONTHS[p.m - 1]} ${p.y}</span>
+    <div class="pt"><div class="dv">${esc(x.venue)}</div>${x.pv ? `<div class="pvline">★ You've been here${x.pv > 1 ? ` (${x.pv} shows)` : ""}</div>` : ""}<div class="ro">${esc(x.city)}${PAST.by !== "tour" && x.tour ? " · " + esc(x.tour) : ""}</div>
+      <div class="tagrow">${x.mine ? `<span class="chip tog">In your log</span>` : `<button class="chip catadd" data-padd="${gi}:${di}">+ Add to my shows</button>`}${x.url ? `<a class="chip" href="${esc(x.url)}" target="_blank" rel="noopener">setlist.fm ›</a>` : ""}</div></div></div>`;
+}
+function drawPast(){
+  const box = $("#pres"); if (!box || S.tab !== "disc" || S.disc.view !== "past") return;
+  if (PAST.loading && !PAST.res) { box.innerHTML = `<div class="wload" style="padding:30px 0"><div class="spin"></div><div class="ro">Digging through setlist.fm…</div></div>`; return; }
+  if (PAST.err) { box.innerHTML = `<div class="empty"><h3>Couldn't search past shows</h3><div>${esc(PAST.err)}${/connected/.test(PAST.err) ? ". Past show search runs on setlist.fm, which needs to be switched on for Pit Log." : ""}</div></div>`; return; }
+  const r = PAST.res; if (!r) { box.innerHTML = ""; return; }
+  if (!r.shows.length) { box.innerHTML = `<div class="empty"><h3>No past shows found</h3><div>setlist.fm has nothing for "${esc(PAST.q)}"${PAST.year ? ` in ${esc(PAST.year)}` : ""}. Check the spelling${PAST.year ? " or try Any year" : ""}.</div></div>`; return; }
+  const list = pastGroups(); PAST.groups = list;
+  const cards = list.map((g, gi) => {
+    const open = PAST.open.has(g.key) || g.dates.length === 1;
+    const tags = []; if (g.mine) tags.push(`<span class="chip tog">In your log</span>`); if (g.pv) tags.push(`<span class="chip pvc">At venues you've been to</span>`);
+    return `<article class="tourcard${g.pv ? " haspv" : ""}${open ? " open" : ""}">
+      <button class="tourhead" ${g.dates.length > 1 ? `data-ptoggle="${gi}" aria-expanded="${open}"` : `tabindex="-1"`}>
+        <div class="th1"><div class="nm">${esc(g.name)}</div>${PAST.by === "venue" ? `<div class="ro">${esc(g.city)}</div>` : ""}${g.notour ? `<div class="ro">No tour name on setlist.fm</div>` : ""}
+          <div class="ro">${esc(g.first === g.last ? fmtDate(g.first) : `${fmtDate(g.first)} – ${fmtDate(g.last)}`)} · ${g.dates.length} show${g.dates.length > 1 ? "s" : ""}${PAST.by !== "venue" && g.states.length ? " · " + esc(g.states.slice(0, 8).join(", ")) + (g.states.length > 8 ? "…" : "") : ""}</div></div>
+        ${g.dates.length > 1 ? `<span class="chev" aria-hidden="true">${open ? "−" : "+"}</span>` : ""}</button>
+      ${tags.length ? `<div class="tagrow">${tags.join("")}</div>` : ""}
+      ${open ? `<div class="tdates">${g.dates.map((x, di) => pastRow(x, gi, di)).join("")}</div>` : ""}
+    </article>`;
+  }).join("");
+  box.innerHTML = `<div class="pasthead"><div><div class="nm">${esc(r.artist)}</div><div class="ro">${r.total} show${r.total === 1 ? "" : "s"} on setlist.fm${PAST.year ? ` in ${esc(PAST.year)}` : ""} · showing ${r.shows.length}</div></div></div>
+    <input class="search" id="pf" value="${esc(PAST.filter)}" placeholder="Narrow by venue, city, state or year" aria-label="Narrow results">
+    <div class="seg" role="group" aria-label="Group by" style="margin-top:8px"><button data-pby="tour" aria-pressed="${PAST.by === "tour"}">By tour</button><button data-pby="venue" aria-pressed="${PAST.by === "venue"}">By venue</button><button data-pby="year" aria-pressed="${PAST.by === "year"}">By year</button></div>
+    <div class="ro dcount">${list.length} group${list.length === 1 ? "" : "s"} · ${list.reduce((n, g) => n + g.dates.length, 0)} shows</div>${cards}
+    ${r.more ? `<button class="btn ghost dmore" data-pmore ${PAST.loading ? "disabled" : ""}>${PAST.loading ? "Loading…" : "Load older shows"}</button>` : ""}
+    <div class="ro" style="margin-top:14px">Past shows come from <a href="https://www.setlist.fm" target="_blank" rel="noopener">setlist.fm</a>, built by fans. If your night is missing, add it by hand with + Add show.</div>`;
+}
+async function searchPast(more){
+  if (!more) { PAST.q = ($("#pq") || {}).value || PAST.q; PAST.year = ($("#pyear") || {}).value || ""; }
+  const q = PAST.q.trim(); if (!q) { toast("Type a band name"); return; }
+  PAST.loading = true; PAST.err = ""; if (!more) { PAST.res = null; PAST.open = new Set(); PAST.filter = ""; }
+  drawPast();
+  try {
+    const prev = PAST.res;
+    const j = await callAccount("pastShows", more && prev ? { mbid: prev.mbid, artist: prev.artist, year: PAST.year, page: prev.page + 1 } : { artist: q, year: PAST.year, page: 1 });
+    PAST.res = more && prev ? { ...j, shows: [...prev.shows, ...j.shows] } : j;
+  } catch (e) { if (!more) PAST.err = e.message || "Something went wrong"; else toast(e.message || "Couldn't load more"); }
+  PAST.loading = false; drawPast();
+}
+async function addPast(x){
+  toast("Getting the full bill…", 2500);
+  let night = null; try { if (x.venueId) night = await callAccount("pastNight", { venueId: x.venueId, date: x.date }); } catch (_) {}
+  let bands = night && night.bands && night.bands.length ? night.bands.slice() : [x.artist];
+  if (!bands.some(b => normBand(b) === normBand(x.artist))) bands.push(x.artist);
+  openSheetFrom({ date: x.date, lineup: bands, venue: x.venue, city: x.city, tour: (night && night.tour) || x.tour || "" });
+  if (draft && night && night.songs && Object.keys(night.songs).length) { draft.songs = night.songs; if (night.url) draft.setlistUrl = night.url; renderSheet(); }
+}
+document.addEventListener("click", e => {
+  if (S.tab !== "disc") return;
+  const t = e.target.closest && e.target.closest("[data-dview],[data-pquick],[data-pby],[data-ptoggle],[data-padd],[data-pmore]"); if (!t) return;
+  if (t.dataset.dview) { S.disc.view = t.dataset.dview; try { localStorage.setItem("pitlog.discView", S.disc.view); } catch (_) {} renderDiscover(); }
+  else if (t.dataset.pquick) { PAST.q = t.dataset.pquick; const i = $("#pq"); if (i) i.value = PAST.q; searchPast(false); }
+  else if (t.dataset.pby) { PAST.by = t.dataset.pby; PAST.open = new Set(); drawPast(); }
+  else if (t.dataset.ptoggle !== undefined) { const g = PAST.groups[Number(t.dataset.ptoggle)]; if (!g) return; PAST.open.has(g.key) ? PAST.open.delete(g.key) : PAST.open.add(g.key); drawPast(); }
+  else if (t.dataset.padd) { const [gi, di] = t.dataset.padd.split(":").map(Number); const x = PAST.groups[gi] && PAST.groups[gi].dates[di]; if (x) addPast(x); }
+  else if (t.hasAttribute("data-pmore")) searchPast(true);
+});
+document.addEventListener("submit", e => { if (e.target.id === "pastForm") { e.preventDefault(); searchPast(false); } });
+document.addEventListener("input", e => { if (e.target.id === "pf") { PAST.filter = e.target.value; clearTimeout(PAST.t); PAST.t = setTimeout(() => { drawPast(); const i = $("#pf"); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }, 200); } });
 
 /* ---------- Logged-show matches for a new show ----------
    As you type a band or tour name, look through shows already logged (yours, your crew's, public ones)
