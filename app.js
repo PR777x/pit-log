@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile, applyActionCode } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=60";
+import { VENUES } from "./venues.js?v=61";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -1034,7 +1034,7 @@ async function save(){
   busy = true; renderSheet();
   const body = {...draft}; delete body.id;
   try {
-    if (draft.id === "__new") { const ref = await addDoc(myShows(), body); draft.id = ref.id; S.open = ref.id; toast("Show added"); }
+    if (draft.id === "__new") { body.addedAt = Date.now(); const ref = await addDoc(myShows(), body); draft.id = ref.id; S.open = ref.id; toast("Show added"); }
     else { await setDoc(myShow(draft.id), body); toast("Saved"); pushShared(body); }
     S.editing = false;
   } catch(e){ handleWriteErr(e); }
@@ -1243,6 +1243,10 @@ document.addEventListener("click", e => {
   else if (t.id === "tab-disc") { S.tab = "disc"; renderTab(); }
   else if (t.id === "homeBtn" || t.id === "navHome") { S.tab = "home"; S.search.profile = null; renderTab(); window.scrollTo({ top: 0, behavior: "smooth" }); }
   else if (t.dataset.gotab) { S.tab = t.dataset.gotab; renderTab(); scrollToContent(); }
+  else if (t.hasAttribute("data-recap")) { S.recapOpen = !S.recapOpen; try { localStorage.setItem("pitlog.recapOpen", S.recapOpen ? "1" : ""); } catch (_) {} renderHome(); }
+  else if (t.dataset.feedsort) { S.feedSort = t.dataset.feedsort; S.feedN = 15; try { localStorage.setItem("pitlog.feedSort", S.feedSort); } catch (_) {} renderHome(); }
+  else if (t.hasAttribute("data-feedmore")) { S.feedN = (S.feedN || 15) + 15; renderHome(); }
+  else if (t.dataset.feedadd) { const [u, id] = splitKey(t.dataset.feedadd); const f = FR[u], sh = f && (f.shows || []).find(x => x.id === id); if (sh) openSheetFrom(sh); }
   else if (t.dataset.sview) { S.showView = t.dataset.sview; try { localStorage.setItem("pitlog.showView", S.showView); } catch (_) {} renderShows(); window.scrollTo(0, 0); }
   else if (t.dataset.year) { S.year = t.dataset.year; renderTab(); }
   else if (t.dataset.lyear) { S.listYear = t.dataset.lyear; renderShows(); }
@@ -1426,7 +1430,7 @@ async function familySync(){
         const lid = s.linkId || (p && p.linkId) || ("L" + rid());
         if (p) { if (p.linkId !== lid) await updateDoc(doc(fdb, "users", f.uid, "shows", p.id), { linkId: lid }); }
         else {
-          const copy = { linkId: lid, addedBy: ME.uid, wentWith: [], rating: 0, pit: 0, spot: "", best: "", highlight: "", setlist: "", notes: "", ticket: null, ticketQty: null, ticketTotal: null, merchSpend: null, miles: s.miles ?? null, poster: s.poster || null, photos: [], merch: [] };
+          const copy = { addedAt: Date.now(), linkId: lid, addedBy: ME.uid, wentWith: [], rating: 0, pit: 0, spot: "", best: "", highlight: "", setlist: "", notes: "", ticket: null, ticketQty: null, ticketTotal: null, merchSpend: null, miles: s.miles ?? null, poster: s.poster || null, photos: [], merch: [] };
           for (const k of SHARED) copy[k] = s[k] ?? (k === "lineup" ? [] : k === "unsure" || k === "coHead" ? false : "");
           await setDoc(doc(fdb, "users", f.uid, "shows", lid), copy); made++;
         }
@@ -1947,9 +1951,67 @@ function renderHome(){
     (recent.length ? `<div class="lbl" style="margin-top:6px">Lately</div>` + recent.map(x => `<div class="ro">@${esc(x.f.handle)} saw <b class="bone">${esc(headline(x.sh))}</b></div>`).join("") : (crew.length ? "" : `<div class="ro">Add friends by username to see their shows.</div>`)), "Open crew");
   const hi = new Date().getHours();
   const hello = hi < 12 ? "Morning" : hi < 18 ? "Afternoon" : "Evening";
-  $("#view").innerHTML = `<div class="home"><p class="kick">${hello}, ${esc((PROFILE.name || PROFILE.handle || "").split(" ")[0])}</p><h2 class="hh2">Your recap</h2>
+  const kpi = (n, l, tab) => `<button type="button" class="kpi" data-gotab="${tab}"><b class="num">${n}</b><span>${l}</span></button>`;
+  const kpis = `<div class="kpis">${kpi(up.length, "coming up", "shows")}${kpi(thisYear.length, "seen in " + yr, "shows")}${kpi(counts(thisYear.flatMap(lineup)).length, "bands in " + yr, "stats")}${pending ? kpi(pending, "waiting on you", "crew") : kpi(crew.length, "in your crew", "crew")}</div>`;
+  const open = !!S.recapOpen;
+  $("#view").innerHTML = `<div class="home"><p class="kick">${hello}, ${esc((PROFILE.name || PROFILE.handle || "").split(" ")[0])}</p>
+    <div class="rechead"><h2 class="hh2">Your recap</h2><button class="btn ghost sm" data-recap aria-expanded="${open}">${open ? "Hide details ▴" : "Details ▾"}</button></div>
+    ${kpis}
+    ${open ? `<div class="hgrid">${shows}${disc}${stats}${vault}${crewCard}</div>` : ""}
+    ${feedBlock()}</div>`;
+  if (open) fillHomeDiscover();
+  return;
+  $("#view").innerHTML = `<div class="home"><h2 class="hh2">Your recap</h2>
     <div class="hgrid">${shows}${disc}${stats}${vault}${crewCard}</div></div>`;
   fillHomeDiscover();
+}
+/* ---------- Crew feed: what your crew added lately ---------- */
+const relTime = ms => { const m = Math.round((Date.now() - ms) / 60000); if (m < 1) return "just now"; if (m < 60) return m + "m ago"; const h = Math.round(m / 60); if (h < 24) return h + "h ago"; const d = Math.round(h / 24); return d < 7 ? d + "d ago" : fmtDate(new Date(ms).toISOString().slice(0, 10)); };
+function feedItems(){
+  const out = [];
+  for (const f of friendList()) for (const s of (f.shows || [])) {
+    if (ME && s.addedBy === ME.uid) continue; // shows you put in their log (Crew Family)
+    const at = Number(s.addedAt) || 0;
+    const near = Math.abs((parse(s.date).dt - parse(todayISO).dt) / 864e5) <= 60;
+    if (!at && !near) continue;
+    const same = out.find(x => sameShow(x.s, s));
+    if (same) { if (!same.who.some(w => w.uid === f.uid)) same.who.push(f); same.at = Math.max(same.at, at); continue; }
+    out.push({ s, f, who: [f], at });
+  }
+  const bySort = S.feedSort === "date" ? (a, b) => (b.s.date || "").localeCompare(a.s.date || "") : (a, b) => (b.at - a.at) || (b.s.date || "").localeCompare(a.s.date || "");
+  return out.sort(bySort);
+}
+function feedBlock(){
+  const fl = friendList();
+  if (!fl.length) return `<section class="feed"><h2 class="hh2 fh">Crew feed</h2><div class="empty"><h3>No crew yet</h3><div>Add friends on the Crew tab and the shows they log show up here.</div></div></section>`;
+  const all = feedItems(), n = S.feedN || 15, list = all.slice(0, n);
+  const skull = r => r ? `<span class="skulls">${[1,2,3,4,5].map(i => SKULLV(r, i)).join("")}</span>` : "";
+  const rows = list.map(({ s, f, who, at }) => {
+    const up = isUpcoming(s) || s.date === todayISO, mine = S.shows.some(o => sameShow(o, s));
+    const tagged = Array.isArray(s.taggedUids) && ME && s.taggedUids.includes(ME.uid);
+    const names = who.map(w => esc(personLabel(w.uid, "@" + w.handle)));
+    const whoTxt = names.length > 2 ? `${names[0]}, ${names[1]} +${names.length - 2}` : names.join(" and ");
+    const verb = at ? (up ? (names.length > 1 ? "are going to" : "is going to") : "logged") : (up ? "going to" : "saw");
+    const thumb = s.poster ? pid(s.poster) : (items(s, "photos").find(m => m.type !== "video") || {}).url;
+    const chips = [];
+    if (mine) chips.push(`<span class="chip tog">${up ? "You're going too" : "You were there too"}</span>`);
+    else if (tagged) chips.push(`<span class="chip up">You're tagged</span>`);
+    if (up && !mine) chips.push(`<span class="chip up">${s.date === todayISO ? "Tonight" : "Upcoming"}</span>`);
+    return `<article class="fitem">${avatar(f.photo, f.name, "sm")}
+      <button class="fmain" data-fopen="${esc(f.uid)}|${esc(s.id)}" aria-label="Open ${esc(headline(s))}">
+        <div class="fwho"><b>${whoTxt}</b> ${verb}${at ? ` <span class="ro">· ${esc(relTime(at))}</span>` : ""}</div>
+        <div class="fshow">${esc(headline(s) || "A show")}</div>
+        <div class="ro">${esc([support(s).length ? "w/ " + support(s).slice(0, 3).join(", ") : "", s.venue, fmtDate(s.date)].filter(Boolean).join(" · "))}</div>
+        ${!up && Number(s.rating) ? `<div>${skull(Number(s.rating))}</div>` : ""}
+      </button>
+      ${thumb ? `<img class="fthumb" src="${esc(src(thumb))}" alt="" loading="lazy" onerror="this.remove()">` : ""}
+      ${chips.length || (up && !mine) ? `<div class="tagrow fact">${chips.join("")}${up && !mine ? `<button class="chip catadd" data-feedadd="${esc(f.uid)}|${esc(s.id)}">+ Add to my shows</button>` : ""}</div>` : ""}
+    </article>`;
+  }).join("");
+  return `<section class="feed"><div class="fhead"><h2 class="hh2 fh">Crew feed</h2>
+      <div class="seg" role="group" aria-label="Sort feed"><button data-feedsort="added" aria-pressed="${S.feedSort !== "date"}">Newest</button><button data-feedsort="date" aria-pressed="${S.feedSort === "date"}">Show date</button></div></div>
+    ${list.length ? `<div class="flist">${rows}</div>` : `<div class="ro">Nothing new from your crew yet. Shows they add will land here.</div>`}
+    ${all.length > n ? `<button class="btn ghost dmore" data-feedmore>Show more</button>` : ""}</section>`;
 }
 async function fillHomeDiscover(){
   await loadDiscover();
@@ -1974,6 +2036,7 @@ const DMODES = [["all", "All bands"], ["foryou", "For you"], ["mine", "My bands"
 try {
   const m = localStorage.getItem("pitlog.discMode"); if (DMODES.some(x => x[0] === m)) S.disc.mode = m;
   if (localStorage.getItem("pitlog.discView") === "past") S.disc.view = "past";
+  S.recapOpen = localStorage.getItem("pitlog.recapOpen") === "1"; S.feedSort = localStorage.getItem("pitlog.feedSort") === "date" ? "date" : "added";
   const md = Number(localStorage.getItem("pitlog.discMin")); if (md > 1) S.disc.minDates = md;
   const so = localStorage.getItem("pitlog.discSort"); if (so) S.disc.sort = so;
   S.disc.sameTour = localStorage.getItem("pitlog.discTour") === "1";
@@ -2649,7 +2712,7 @@ async function addTaggedShow(uid, id, full){
         else body[kind].push(c);
       }
     }
-    await setDoc(myShow(newId), body);
+    body.addedAt = Date.now(); await setDoc(myShow(newId), body);
     toast(`Added ${lineup(s)[0] || "the show"} to your log${full ? " with their details" : ""}`, 3500);
   } catch (e) { handleWriteErr(e); }
   busy = false;
@@ -2896,7 +2959,7 @@ async function importSetlistFm(){
   msg.textContent = `Adding ${fresh.length} shows…`;
   for (let i = 0; i < fresh.length; i += 400) {
     const bt = writeBatch(fdb);
-    for (const sh of fresh.slice(i, i + 400)) bt.set(doc(myShows()), { date: sh.date, lineup: sh.bands, venue: sh.venue, city: sh.city, tour: sh.tour || "", songs: sh.songs || {}, wentWith: [], photos: [], merch: [], rating: 0, pit: 0, source: "setlist.fm" });
+    for (const sh of fresh.slice(i, i + 400)) bt.set(doc(myShows()), { addedAt: Date.now(), date: sh.date, lineup: sh.bands, venue: sh.venue, city: sh.city, tour: sh.tour || "", songs: sh.songs || {}, wentWith: [], photos: [], merch: [], rating: 0, pit: 0, source: "setlist.fm" });
     try { await bt.commit(); } catch (e) { handleWriteErr(e); return; }
   }
   msg.textContent = `Added ${fresh.length} show${fresh.length > 1 ? "s" : ""} from setlist.fm. ${res.shows.length - fresh.length} were already in your log.`;
@@ -3215,7 +3278,7 @@ async function importFile(file){
   for (const raw of list) {
     n++; toast(`Importing ${n} of ${list.length}…`, 60000);
     const id = String(raw.id || rid()).replace(/[^\w-]/g, "");
-    const body = { ...raw }; delete body.id;
+    const body = { ...raw }; delete body.id; if (!body.addedAt) body.addedAt = Date.now();
     try {
       for (const k of ["photos", "merch"]) { const out = []; for (const m of (raw[k] || [])) { const r = await fromData(m, id, k); if (r) { out.push(r); pics++; } } body[k] = out; }
       const p = await fromData(raw.poster, id, "poster"); body.poster = p ? { url: p.url, path: p.path } : null; if (p) pics++;
