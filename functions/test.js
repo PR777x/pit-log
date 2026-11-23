@@ -433,5 +433,20 @@ const sentTo = who => emails.filter(e => e.to[0] === who + "@example.com");
   assert.ok(PUSHES.some(m => /Tonight/.test(m.data.title) && /Whitechapel/.test(m.data.body)), "noon reminder for tonight's show");
   PUSHES.length = 0; await F.runPushHourly(noonET); assert.ok(!PUSHES.some(m => /Tonight/.test(m.data.title)), "only once a day");
 
+  // 23. Band profile: MusicBrainz basics + Wikipedia summary/photo
+  const A23 = require("./artists");
+  const fake23 = async url => ({ ok: true, status: 200, json: async () => {
+    if (url.includes("/ws/2/artist?")) return { artists: [{ id: "mb-1", name: "Varials", score: 100 }, { id: "x", name: "Varials Tribute", score: 90 }] };
+    if (url.includes("/ws/2/artist/mb-1")) return { name: "Varials", type: "Group", area: { name: "United States" }, "begin-area": { name: "Philadelphia" }, "life-span": { begin: "2014-01" },
+      genres: [{ name: "metalcore", count: 5 }], tags: [{ name: "nu metal", count: 2 }],
+      relations: [{ type: "official homepage", url: { resource: "https://varials.com" } }, { type: "social network", url: { resource: "https://www.instagram.com/varials/?hl=en" } }, { type: "wikidata", url: { resource: "https://www.wikidata.org/wiki/Q123" } }] };
+    if (url.includes("wikidata")) return { entities: { Q123: { sitelinks: { enwiki: { title: "Varials" } }, claims: { P1902: [{ mainsnak: { datavalue: { value: "sp1" } } }] } } } };
+    if (url.includes("wikipedia.org/api")) return { type: "standard", extract: "Varials is an American metalcore band from Philadelphia.", originalimage: { source: "https://upload.wikimedia.org/v.jpg", width: 1200 }, content_urls: { desktop: { page: "https://en.wikipedia.org/wiki/Varials" } } };
+    return {}; } });
+  const bi = await A23.bandInfo("varials", { fetchImpl: fake23, pause: async () => {} });
+  assert.strictEqual(bi.name, "Varials"); assert.strictEqual(bi.origin, "Philadelphia, United States"); assert.strictEqual(bi.formed, "2014");
+  assert.deepStrictEqual(bi.genres, ["metalcore", "nu metal"]); assert.strictEqual(bi.links.instagram, "https://www.instagram.com/varials/"); assert.strictEqual(bi.links.spotify, "https://open.spotify.com/artist/sp1");
+  assert.match(bi.about, /metalcore band/); assert.strictEqual(bi.image, "https://upload.wikimedia.org/v.jpg"); assert.strictEqual(bi.wiki, "https://en.wikipedia.org/wiki/Varials");
+
   console.log("All email function tests passed.");
 })().catch(e => { console.error(e); process.exit(1); });

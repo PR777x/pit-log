@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile, applyActionCode } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=64";
+import { VENUES } from "./venues.js?v=65";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -40,7 +40,7 @@ const fmtRating = r => (Math.round(r * 2) / 2).toString();
 // Tap a step: full, tap it again for a half, again to clear.
 const stepRating = (cur, i) => cur === i ? i - 0.5 : cur === i - 0.5 ? 0 : i;
 
-let S = { shows: [], loaded: false, slow: false, error: "", tab: "shows", filter: "all", q: "",
+let S = { shows: [], loaded: false, slow: false, error: "", tab: "home", filter: "all", q: "",
   open: null, canWrite: true, year: "all", listYear: String(new Date().getFullYear()), sort: (()=>{ try { const v = localStorage.getItem("pitlog.sort"); return ["newest","oldest","rating","venue","band"].includes(v) ? v : "newest"; } catch(_) { return "newest"; } })(), vault: { by: "band", sel: null, type: "all", q: "" },
   cal: { y: new Date().getFullYear(), m: new Date().getMonth() } };
 let db = null, assets = null;
@@ -432,7 +432,7 @@ function renderStats(){
     {t:"Twenty Strong", d:"20 shows in a year", on:counts(done.map(s=>String(parse(s.date).y))).some(c=>c.n>=20)},
     {t:"Barricade Bound", d:"Logged a show on the rail", on:done.some(s=>s.spot==="Barricade")},
   ];
-  const rank = (rows, max) => rows.length ? `<div class="rank">${rows.slice(0,8).map(r=>`<div class="row"><span class="n">${esc(r.name)}</span><span class="num lbl" style="color:var(--bone)">${r.n}×</span><div class="track"><i style="width:${(r.n/max*100).toFixed(1)}%"></i></div></div>`).join("")}</div>` : `<div class="ro">Nothing logged yet.</div>`;
+  const rank = (rows, max, band) => rows.length ? `<div class="rank">${rows.slice(0,8).map(r=>`<div class="row">${band ? `<button class="n bandlink" data-bandp="${esc(r.name)}">${esc(r.name)}</button>` : `<span class="n">${esc(r.name)}</span>`}<span class="num lbl" style="color:var(--bone)">${r.n}×</span><div class="track"><i style="width:${(r.n/max*100).toFixed(1)}%"></i></div></div>`).join("")}</div>` : `<div class="ro">Nothing logged yet.</div>`;
   $("#view").innerHTML = `<div class="filters">${yearSeg()}${crewToggle()}</div>
     <button class="wrapbtn" data-wrapped><span class="lbl">Your ${S.year === "all" ? parse(todayISO).y : S.year}</span><b>Year in review</b><span>Your shows, top bands and pit crew as shareable cards ›</span></button>
     <div class="stats" style="margin-top:0">
@@ -458,11 +458,11 @@ function renderStats(){
     </section>
     <div class="two">
       <section><h2>Venues</h2>${rank(venues.filter(v=>v.name), venues[0]?.n||1)}</section>
-      <section><h2>Repeat offenders</h2>${rank(repeats, repeats[0]?.n||1)}</section>
+      <section><h2>Repeat offenders</h2>${rank(repeats, repeats[0]?.n||1, true)}</section>
     </div>
     ${(() => { const br = new Map(); for (const s of done) for (const [b, v] of Object.entries(s.bandRatings || {})) { const e = br.get(b.toLowerCase()) || { name: b, sum: 0, n: 0 }; e.sum += Number(v) || 0; e.n++; br.set(b.toLowerCase(), e); }
       const top = [...br.values()].filter(e => e.sum).map(e => ({ name: e.name, n: Math.round(e.sum / e.n * 2) / 2 })).sort((a, b) => b.n - a.n || a.name.localeCompare(b.name)).slice(0, 8);
-      return top.length ? `<section><h2>Top-rated bands</h2><div class="rank">${top.map(r => `<div class="row"><span class="n">${esc(r.name)}</span><span class="skulls">${[1,2,3,4,5].map(i => SKULLV(r.n, i)).join("")}</span></div>`).join("")}</div></section>` : ""; })()}
+      return top.length ? `<section><h2>Top-rated bands</h2><div class="rank">${top.map(r => `<div class="row"><button class="n bandlink" data-bandp="${esc(r.name)}">${esc(r.name)}</button><span class="skulls">${[1,2,3,4,5].map(i => SKULLV(r.n, i)).join("")}</span></div>`).join("")}</div></section>` : ""; })()}
     <section><h2>The crew</h2>${people.length ? rank(people, people[0].n) + `<div class="ro" style="margin-top:6px">Counts names in Went with, crew you tagged, and Crew Family shows that are in both your logs.</div>` : `<div class="ro">Add who you went with on each show and the crew leaderboard fills in.</div>`}</section>
     <section><h2>Patches earned</h2><div class="badges">${badges.map(b=>`<div class="badge ${b.on?'on':'off'}"><div class="t">${esc(b.t)}</div><div class="d">${esc(b.d)}</div></div>`).join("")}</div></section>
   </div>`;
@@ -517,7 +517,8 @@ function renderTab(){
   const cur = $("#tab-" + S.tab), sc = $("#tabScroll");
   if (cur && sc) { const l = cur.offsetLeft - sc.offsetLeft, r = l + cur.offsetWidth; if (l < sc.scrollLeft || r > sc.scrollLeft + sc.clientWidth) sc.scrollTo({ left: l - 12, behavior: "smooth" }); }
   navArrows();
-  if (S.tab === "home") renderHome();
+  if (S.tab === "band") renderBand();
+  else if (S.tab === "home") renderHome();
   else if (S.tab === "disc") renderDiscover();
   else if (S.tab === "search") renderSearch(); else if (S.tab === "me") renderMe(); else if (S.tab === "crew") renderCrew(); else if (S.tab === "shows") renderShows(); else if (S.tab === "cal") renderCal(); else if (S.tab === "vault") renderVault(); else renderStats();
 }
@@ -860,7 +861,7 @@ function renderShowView(fresh){
       <div class="vstat">${r ? `<div><span class="lbl">The show</span>${skulls(r)} <b>${fmtRating(r)}</b></div>` : ""}${pv ? `<div><span class="lbl">The pit</span>${bars(pv)} <b>${fmtRating(pv)}</b></div>` : ""}</div>
       ${d.highlight ? `<blockquote class="vquote">${esc(d.highlight)}</blockquote>` : ""}
     </div>` : ""}
-    <div class="sect"><h3>The bill</h3><div class="vbands">${lu.map(b => `<div class="vband"><span class="bn">${esc(b)}${d.best === b ? `<span class="bestn">★ Best of the night</span>` : ""}</span>
+    <div class="sect"><h3>The bill</h3><div class="vbands">${lu.map(b => `<div class="vband"><span class="bn"><button class="bandlink" data-bandp="${esc(b)}">${esc(b)}</button>${d.best === b ? `<span class="bestn">★ Best of the night</span>` : ""}</span>
       <span class="tagrow vright">${Number(br[b]) ? skulls(Number(br[b])) : ""}<a class="chip spot" data-band="${esc(b)}" href="${spotifyUrl(b)}" target="_blank" rel="noopener" aria-label="Listen to ${esc(b)} on Spotify">▶ Listen</a></span></div>`).join("")}</div>
       ${up && d.date ? `<div class="tagrow" style="margin-top:10px"><a class="btn" href="${esc(googleCalUrl(d))}" target="_blank" rel="noopener">Google Calendar</a><button class="btn" data-ics1>Apple / other (.ics)</button></div>` : ""}
     </div>
@@ -1324,6 +1325,7 @@ document.addEventListener("click", e => {
   else if (t.hasAttribute("data-myprofile2")) { S.tab = "me"; renderTab(); window.scrollTo(0, 0); }
   else if (t.hasAttribute("data-crewtoggle")) { S.crewOn = !S.crewOn; try { localStorage.setItem("pitlog.crewOn", S.crewOn ? "1" : "0"); } catch (_) {} renderTab(); }
   else if (t.dataset.tagf) { readForm(); toggleTag(t.dataset.tagf); }
+  else if (bandClick(t)) {}
   else if (crewClick(t)) {}
   else if (pushClick(t)) {}
   else if (t.hasAttribute("data-close")) closeSheet();
@@ -2009,6 +2011,77 @@ function renderHome(){
     <div class="hgrid">${shows}${disc}${stats}${vault}${crewCard}</div></div>`;
   fillHomeDiscover();
 }
+/* ---------- Band profile: photo + bio (MusicBrainz / Wikipedia), your history, crew, upcoming dates ---------- */
+const BANDINFO = new Map();
+function openBand(name){
+  if (!name) return;
+  if (S.open) { try { closeSheet(); } catch (_) {} }
+  if (S.tab !== "band") S.bandBack = S.tab;
+  S.band = name; S.tab = "band"; renderTab(); window.scrollTo(0, 0);
+}
+async function bandInfoFor(name){
+  const k = normBand(name); if (BANDINFO.has(k)) return BANDINFO.get(k);
+  const p = callAccount("bandInfo", { band: name }).catch(() => ({ found: false, name, err: true }));
+  BANDINFO.set(k, p); const v = await p; BANDINFO.set(k, v); return v;
+}
+function renderBand(){
+  const name = S.band || "", k = normBand(name);
+  const has = s => lineup(s).some(b => normBand(b) === k);
+  const mine = S.shows.filter(has).sort((a, b) => (b.date || "").localeCompare(a.date || "")), seen = mine.filter(s => !isUpcoming(s)), coming = mine.filter(isUpcoming);
+  const brs = seen.map(s => Number((s.bandRatings || {})[lineup(s).find(b => normBand(b) === k)]) || 0).filter(Boolean);
+  const avgB = brs.length ? brs.reduce((a, b) => a + b, 0) / brs.length : 0;
+  const head = seen.filter(s => normBand(lineup(s)[0]) === k || (s.coHead && normBand(lineup(s)[1]) === k)).length;
+  const crewSeen = friendList().map(f => ({ f, n: (f.shows || []).filter(s => !isUpcoming(s) && has(s)).length })).filter(x => x.n).sort((a, b) => b.n - a.n);
+  const crewGoing = friendList().filter(f => (f.shows || []).some(s => isUpcoming(s) && has(s)));
+  const inBucket = (PROFILE.bucket || []).some(b => normBand(b) === k);
+  // Upcoming dates from the Discover catalog (Ticketmaster, PA/NJ/DE/NY).
+  const dates = []; for (const m of DISC.months || []) for (const r of (DISC.data && DISC.data.get(m.m)) || []) if (r.d >= todayISO && (r.l || []).some(b => normBand(b) === k)) dates.push(r);
+  dates.sort((a, b) => a.d.localeCompare(b.d));
+  const tours = [...new Set(dates.map(r => r.t).filter(Boolean))];
+  const myV = new Set(S.shows.map(x => vkey(x.venue)).filter(Boolean));
+  const info = BANDINFO.get(k), ready = info && !(info instanceof Promise);
+  const I = ready ? info : null;
+  const tile = (l, v) => `<div class="tile"><div class="lbl">${l}</div><div class="v num">${v}</div></div>`;
+  const link = (u, l) => u ? `<a class="chip blink" href="${esc(u)}" target="_blank" rel="noopener">${l}</a>` : "";
+  $("#view").innerHTML = `<div class="bandp">
+    <button class="btn ghost" data-bandback style="justify-self:start">← Back</button>
+    <section class="bhero${I && I.image ? " hasimg" : ""}">${I && I.image ? `<div class="bimg" style="background-image:url('${esc(I.image)}')" role="img" aria-label="${esc(name)}"></div>` : ""}
+      <div class="bhead"><h2 class="bname">${esc((I && I.name) || name)}</h2>
+        <div class="bmeta">${I ? esc([I.origin, I.formed ? (I.ended ? `${I.formed}–${I.ended === "yes" ? "" : I.ended}` : `since ${I.formed}`) : ""].filter(Boolean).join(" · ")) : `<span class="ro">Looking them up…</span>`}</div>
+        ${I && I.genres && I.genres.length ? `<div class="tagrow">${I.genres.map(g => `<span class="chip dim">${esc(g)}</span>`).join("")}</div>` : ""}</div></section>
+    <div class="tagrow">${link(spotifyUrl(name) && (I && I.links && I.links.spotify || spotifyUrl(name)), "▶ Spotify")}${I && I.links ? link(I.links.site, "Website") + link(I.links.instagram, "Instagram") + link(I.links.bandcamp, "Bandcamp") + link(I.links.youtube, "YouTube") : ""}
+      <button class="chip${inBucket ? " bkc" : ""}" data-bandbucket>${inBucket ? "✓ On your bucket list" : "+ Bucket list"}</button></div>
+    ${I && I.about ? `<section class="sect"><h3>About</h3><p class="babout">${esc(I.about)}</p>${I.wiki ? `<div class="ro">From <a href="${esc(I.wiki)}" target="_blank" rel="noopener">Wikipedia</a>${I.image ? ", photo via Wikimedia Commons" : ""}.</div>` : ""}</section>` : ready && !I.found ? `<div class="ro" style="margin-top:8px">No profile found for this band yet.</div>` : ""}
+    <section class="sect"><h3>You and ${esc((I && I.name) || name)}</h3>
+      ${seen.length || coming.length ? `<div class="tiles">${tile("Times seen", seen.length)}${tile("As headliner", head)}${tile("First seen", seen.length ? parse(seen[seen.length - 1].date).y : "–")}${tile("Your rating", avgB ? fmtRating(avgB) : "–")}</div>
+        <div class="plist">${coming.map(s => showRow(s, null, "Coming up")).join("")}${seen.slice(0, 6).map(s => showRow(s, null, "")).join("")}</div>${seen.length > 6 ? `<div class="ro">+${seen.length - 6} more in your log</div>` : ""}`
+        : `<div class="ro">Not in your log yet.${inBucket ? " They're on your bucket list." : ""}</div>`}</section>
+    ${crewSeen.length || crewGoing.length ? `<section class="sect"><h3>Your crew</h3>${crewGoing.length ? `<div class="ro">Going: <b class="bone">${crewGoing.map(f => esc(personLabel(f.uid, "@" + f.handle))).join(", ")}</b></div>` : ""}
+      ${crewSeen.length ? `<div class="ro">Seen them: ${crewSeen.slice(0, 6).map(x => `<b class="bone">${esc(personLabel(x.f.uid, "@" + x.f.handle))}</b> ${x.n}×`).join(" · ")}</div>` : ""}</section>` : ""}
+    <section class="sect"><h3>Upcoming dates <span class="lbl">${dates.length}</span></h3>
+      ${tours.length ? `<div class="ro" style="margin-bottom:6px">${esc(tours.slice(0, 2).join(" · "))}</div>` : ""}
+      ${dates.length ? `<div class="tdates">${dates.slice(0, 8).map((r, i) => { const p = parse(r.d), inLog = S.shows.some(o => sameShow(o, { date: r.d, venue: r.v, lineup: r.l }));
+        return `<div class="ddate${myV.has(vkey(r.v)) ? " pv" : ""}"><span class="pdate"><b class="num">${p.d}</b>${MONTHS[p.m - 1]} · ${DAYS[p.dt.getDay()]}</span><div class="pt"><div class="dv">${esc(r.v)}</div><div class="ro">${esc(r.y)}${normBand(r.l[0]) !== k ? ` · with ${esc(r.l[0])}` : ""}</div>
+          <div class="tagrow">${inLog ? `<span class="chip tog">In your log</span>` : `${ticketLink(r.u)}<button class="chip catadd" data-bandadd="${i}">+ Add to my shows</button>`}</div></div></div>`; }).join("")}</div>${dates.length > 8 ? `<button class="btn ghost dmore" data-bandmore>See all ${dates.length} in Discover</button>` : ""}`
+        : `<div class="ro">${DISC.months ? "No dates announced in PA, NJ, DE or NY right now." : "Loading tour dates…"}</div>`}</section>
+    <section class="sect"><h3>Past tours</h3><div class="ro" style="margin-bottom:8px">Find a night you were at, with the full bill and setlists.</div><button class="btn" data-bandpast>Search past shows</button></section>
+  </div>`;
+  S.bandDates = dates.slice(0, 8);
+  if (!info) bandInfoFor(name).then(() => { if (S.tab === "band" && normBand(S.band) === k) renderBand(); });
+  if (!DISC.months) loadDiscover().then(() => { if (S.tab === "band" && normBand(S.band) === k) renderBand(); });
+}
+function bandClick(t){
+  if (t.dataset.bandp) { openBand(t.dataset.bandp); return true; }
+  if (S.tab !== "band") return false;
+  if (t.hasAttribute("data-bandback")) { S.tab = S.bandBack && S.bandBack !== "band" ? S.bandBack : "home"; renderTab(); return true; }
+  if (t.hasAttribute("data-bandbucket")) { const k = normBand(S.band), list = PROFILE.bucket || []; const on = list.some(b => normBand(b) === k);
+    saveBucket(on ? list.filter(b => normBand(b) !== k) : [...list, S.band]).then(() => {}); setTimeout(renderBand, 30); toast(on ? "Off your bucket list" : "On your bucket list"); return true; }
+  if (t.dataset.bandadd !== undefined) { const r = (S.bandDates || [])[Number(t.dataset.bandadd)]; if (r) openSheetFrom({ date: r.d, lineup: r.l, coHead: !!r.c, venue: r.v, city: r.y, tour: r.t || "" }); return true; }
+  if (t.hasAttribute("data-bandmore")) { S.disc.view = "up"; S.disc.q = S.band; S.disc.mode = "all"; S.tab = "disc"; renderTab(); return true; }
+  if (t.hasAttribute("data-bandpast")) { S.disc.view = "past"; PAST.q = S.band; S.tab = "disc"; renderTab(); searchPast(false); return true; }
+  return false;
+}
+
 /* ---------- Crew feed: what your crew added lately ---------- */
 const relTime = ms => { const m = Math.round((Date.now() - ms) / 60000); if (m < 1) return "just now"; if (m < 60) return m + "m ago"; const h = Math.round(m / 60); if (h < 24) return h + "h ago"; const d = Math.round(h / 24); return d < 7 ? d + "d ago" : fmtDate(new Date(ms).toISOString().slice(0, 10)); };
 function feedItems(){
@@ -2870,7 +2943,7 @@ function profileBlock(p, isMe, f, extra){
       ${isMe ? tile("Crew", friendList().length) + tile("Avg rating", avg) : tile("Together", extra.together) + tile("Shared bands", extra.shared)}
       ${tile("Since", yrs.length ? Math.min(...yrs) : "–")}
     </div>
-    ${bands.filter(b => b.n > 1).length ? `<section class="sect" style="margin-top:0"><h3>Most seen</h3><div class="tagrow">${bands.filter(b => b.n > 1).slice(0, 8).map(b => `<span class="tagbtn" aria-pressed="true">${esc(b.name)} <span class="num" style="opacity:.75">×${b.n}</span></span>`).join("")}</div></section>` : ""}
+    ${bands.filter(b => b.n > 1).length ? `<section class="sect" style="margin-top:0"><h3>Most seen</h3><div class="tagrow">${bands.filter(b => b.n > 1).slice(0, 8).map(b => `<button class="tagbtn" aria-pressed="true" data-bandp="${esc(b.name)}">${esc(b.name)} <span class="num" style="opacity:.75">×${b.n}</span></button>`).join("")}</div></section>` : ""}
     ${venues[0] ? `<div class="ro">Home venue: <b style="color:var(--bone)">${esc(venues[0].name)}</b> · ${venues[0].n} show${venues[0].n > 1 ? "s" : ""}</div>` : ""}
     <div class="plist">${showRow(next, owner, "Next show")}${showRow(done[0], owner, "Last show")}${best && best !== done[0] ? showRow(best, owner, "A 5-skull night") : ""}</div>`;
 }
@@ -2939,7 +3012,7 @@ async function drawBucketShows(){
       : `<div class="ro">No dates on sale near you yet for these bands. You'll see them here (and in your Sunday recap) as soon as they're announced.</div>`);
 }
 async function saveBucket(list){
-  PROFILE.bucket = list; cacheProfile(); renderMe();
+  PROFILE.bucket = list; cacheProfile(); if (S.tab === "me") renderMe();
   try { await updateDoc(doc(fdb, "users", ME.uid), { bucket: list }); } catch (e) { console.warn(e); toast("Couldn't save your bucket list. Check your connection."); }
 }
 function addBucket(){
@@ -3411,7 +3484,7 @@ async function saveProfile(){
 function resetState(){
   UNSUBS.forEach(u => { try { u(); } catch(_){} }); UNSUBS = [];
   for (const uid of Object.keys(FR)) dropFriend(uid);
-  REQ = { in: [], out: [] }; S.shows = []; S.loaded = false; S.tab = "shows"; S.crewSel = null;
+  REQ = { in: [], out: [] }; S.shows = []; S.loaded = false; S.tab = "home"; S.crewSel = null;
   closeLightbox(); if (S.open) closeSheet(); $("#modalRoot").innerHTML = "";
   ME = null; PROFILE = null; db = null; assets = null;
 }

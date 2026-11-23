@@ -793,3 +793,16 @@ nav.tabs .bslot:empty{display:none}
 .ptr.spin .ptr-i{animation:spin .6s linear infinite}
 .updbar{position:fixed;left:12px;right:12px;top:calc(env(safe-area-inset-top,0px) + 8px);z-index:96;background:var(--blood);color:var(--bone);border:0;padding:12px 14px;font-family:var(--f-label);font-weight:700;letter-spacing:.04em;text-transform:uppercase;font-size:13px;box-shadow:0 8px 24px rgba(0,0,0,.5)}
 .pushon{font-size:14px;color:var(--bone)}
+/* band profile */
+.bandlink{all:unset;cursor:pointer;color:inherit;font:inherit}
+.bandlink:hover,.bandlink:focus-visible{text-decoration:underline;text-decoration-color:var(--blood-hi);text-underline-offset:3px}
+.bandp{display:grid;gap:12px}
+.bhero{position:relative;border:1px solid var(--iron);background:var(--crypt);overflow:hidden;min-height:120px;display:grid;align-content:end}
+.bhero.hasimg{min-height:280px}
+.bimg{position:absolute;inset:0;background:#000 center 25%/cover no-repeat}
+.bimg::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(14,11,12,.05) 30%,rgba(14,11,12,.95))}
+.bhead{position:relative;padding:16px;display:grid;gap:6px}
+.bname{font-family:var(--f-display);font-weight:400;font-size:clamp(40px,11vw,64px);line-height:.95;margin:0;color:var(--bone);text-shadow:0 2px 12px rgba(0,0,0,.6)}
+.bmeta{font-family:var(--f-label);letter-spacing:.06em;text-transform:uppercase;font-size:13px;color:var(--bone);opacity:.85}
+.babout{margin:0 0 6px;line-height:1.55;color:var(--bone)}
+.chip.blink{text-decoration:none}
