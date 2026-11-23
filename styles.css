@@ -849,3 +849,23 @@ button.wnitem{cursor:pointer}button.wnitem:hover{border-color:var(--blood-hi)}
 .wnitem .ro{display:block;font-size:13px;margin-top:2px}.wnitem .wnd{display:block;font-size:11px;color:var(--dim);margin-top:3px}
 .wnitem .chev{color:var(--ash);font-size:20px}
 .wnhist{justify-self:center;font-size:14px;color:var(--ash);text-decoration:underline;text-underline-offset:3px}
+.hdline{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px}.hdline .chip{white-space:nowrap;flex:none}
+/* media tags + rotation */
+.tagbtn.ptag{border-style:dashed}
+.tagmodal .tmall{border:1px solid var(--blood);padding:8px;display:grid;gap:6px;margin:6px 0}
+.tagmodal .tmlist{display:grid;gap:8px;max-height:52vh;overflow-y:auto}
+.tmrow{display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:start;border-top:1px solid var(--iron);padding-top:8px}
+.tmthumb{width:64px;height:64px;background:#000;display:grid;place-items:center;color:var(--bone);border:1px solid var(--iron)}
+.tmthumb img{width:100%;height:100%;object-fit:cover}
+.tmtags{display:grid;gap:6px;min-width:0}
+.lightbox video.rot90,.lightbox video.rot270{max-width:80vh;max-height:92vw}
+/* nudges + rating comparison */
+.nudges{display:grid;gap:6px;margin:8px 0}
+.nudges.home{margin:0 0 6px}
+.nudge{display:flex;justify-content:space-between;align-items:center;gap:10px;background:rgba(181,18,27,.1);border:1px solid var(--iron);border-left:3px solid var(--blood);padding:8px 10px;font-size:14px}
+.nudge b{color:var(--bone)}
+.rcmp .rrow{display:grid;grid-template-columns:1fr auto 36px;gap:10px;align-items:center;padding:6px 0;border-bottom:1px solid var(--iron)}
+.rcmp .rrow.you span:first-child{color:var(--blood-hi);font-weight:700}
+.rcmp .rrow b{text-align:right;font-family:var(--f-label)}
+.tagthumbs{display:flex;gap:4px;margin:6px 0}.tagthumbs img{width:52px;height:52px;object-fit:cover;border:1px solid var(--iron)}
+.pgal{grid-template-columns:repeat(auto-fill,minmax(96px,1fr))}

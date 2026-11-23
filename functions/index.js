@@ -167,6 +167,16 @@ exports.onShowWrite = onDocumentWritten({ document: "users/{uid}/shows/{showId}"
     await queue(t, "tags", { type: "tagged", from: uid, fromHandle: handleOf(owner), show });
     await pushTo(t, "tags", { title: `@${handleOf(owner)} tagged you`, body: `${L.showLine(show)} · ${L.placeLine(show)}. Were you there?`, url: "./?go=tags", tag: "tag-" + showId }, tagged);
   }
+  // Photo/video tags: a phone alert for anyone newly tagged in this show's photos (they confirm in the app).
+  const ppl = x => new Set(((x && x.photos) || []).flatMap(m => (m && Array.isArray(m.people) ? m.people : []).map(p => p && p.uid)).filter(Boolean));
+  const hadP = ppl(before);
+  for (const t of ppl(after)) {
+    if (t === uid || hadP.has(t)) continue;
+    const rel = await relation(uid, t); if (!rel.friends) continue;
+    const tu = await userDoc(t); if (!tu || !L.canSee(L.prefs(tu), "tagMe", rel.family)) continue;
+    await pushTo(t, "tags", { title: `@${handleOf(owner)} tagged you in a photo`, body: `${L.showLine(show)} · ${L.placeLine(show)}. Add it to your log of the show?`, url: "./?go=tags", tag: "ptag-" + showId }, tu);
+  }
+
 
   // New shows only (not edits). Skip copies made by Crew Family syncing or by accepting a tag.
   if (before || after.addedBy || after.copiedFrom) return;

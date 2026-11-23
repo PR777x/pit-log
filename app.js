@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile, applyActionCode } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=71";
+import { VENUES } from "./venues.js?v=72";
 import { getStorage, ref as sref, uploadBytes, uploadBytesResumable, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -122,6 +122,8 @@ function personLabel(uid, fallback){
   const h = pr.handle ? "@" + pr.handle : "";
   return pr.tagShow === "handle" ? (h || initialName(pr.name) || fallback) : (initialName(pr.name) || h || fallback);
 }
+// Someone said "Not me" to being tagged in photos/videos on this show (owner = whose show).
+const mediaDeclined = (uid, owner, showId) => { const pr = ME && uid === ME.uid ? PROFILE : FR[uid]; return !!(pr && Array.isArray(pr.mediaNo) && pr.mediaNo.includes(owner + "|" + showId)); };
 // Someone said "Not me" to a tag on this show (owner = whose log the show is in).
 const tagDeclined = (s, uid, owner) => { const pr = ME && uid === ME.uid ? PROFILE : FR[uid]; return !!(pr && Array.isArray(pr.tagNo) && pr.tagNo.includes(owner + "|" + s.id)); };
 function nameMatches(f, name){
@@ -156,7 +158,7 @@ function firstSightings(){
 function tile(it, opts){
   const tag = opts.tag ? `<span class="tag">${esc(opts.tag)}</span>` : "";
   const kind = opts.kind ? `<span class="kind">${esc(opts.kind)}</span>` : "";
-  if (it.type === "video") return `<button class="mt vid" data-lbi="${opts.i}" aria-label="Play video">${it.thumb ? `<img src="${esc(src(it.thumb))}" alt="" loading="lazy">` : `<video src="${src(it.id)}#t=0.5" preload="metadata" muted playsinline></video>`}${it.dur ? `<span class="vdur">${Math.floor(it.dur / 60)}:${String(it.dur % 60).padStart(2, "0")}</span>` : ""}${kind}${tag}</button>`;
+  if (it.type === "video") return `<button class="mt vid" data-lbi="${opts.i}" aria-label="Play video">${it.thumb ? `<img src="${esc(src(it.thumb))}" alt="" loading="lazy"${it.rot ? ` style="transform:rotate(${Number(it.rot)}deg)"` : ""}>` : `<video src="${src(it.id)}#t=0.5" preload="metadata" muted playsinline${it.rot ? ` style="transform:rotate(${Number(it.rot)}deg)"` : ""}></video>`}${it.dur ? `<span class="vdur">${Math.floor(it.dur / 60)}:${String(it.dur % 60).padStart(2, "0")}</span>` : ""}${kind}${tag}</button>`;
   return `<button class="mt" data-lbi="${opts.i}" aria-label="View image"><img src="${src(it.id)}" alt="" loading="lazy">${kind}${tag}</button>`;
 }
 
@@ -586,12 +588,50 @@ function renderTab(){
   const cur = $("#tab-" + S.tab), sc = $("#tabScroll");
   if (cur && sc) { const l = cur.offsetLeft - sc.offsetLeft, r = l + cur.offsetWidth; if (l < sc.scrollLeft || r > sc.scrollLeft + sc.clientWidth) sc.scrollTo({ left: l - 12, behavior: "smooth" }); }
   navArrows();
+  navScreen();
   if (S.tab === "band") renderBand();
   else if (S.tab === "home") renderHome();
   else if (S.tab === "disc") renderDiscover();
   else if (S.tab === "search") renderSearch(); else if (S.tab === "me") renderMe(); else if (S.tab === "crew") renderCrew(); else if (S.tab === "shows") renderShows(); else if (S.tab === "cal") renderCal(); else if (S.tab === "vault") renderVault(); else renderStats();
 }
 function render(){ renderNext(); renderTab(); if (S.open) renderSheet(); }
+
+/* ---------- Phone back button ----------
+   Every screen change and every overlay (show, photo viewer, pop-up) gets a history entry, so Android's back
+   button (and swipe-back) steps back one layer at a time instead of leaving the app. */
+const NAV = { ov: 0, skip: 0, pend: [], stack: [], cur: null, popping: false };
+const overlayCount = () => ["#lbRoot", "#sheetRoot", "#modalRoot"].filter(sel => { const el = $(sel); return el && el.innerHTML.trim(); }).length + document.querySelectorAll("body > .sharemodal, body > .cropmodal").length;
+function navPush(kind){ if (NAV.skip) { NAV.pend.push(kind); return; } try { history.pushState({ pl: kind }, ""); } catch (_) {} }
+function navSync(){
+  const n = overlayCount();
+  if (n > NAV.ov) { for (let i = NAV.ov; i < n; i++) navPush("ov"); }
+  else if (n < NAV.ov && !NAV.popping) { NAV.skip++; try { history.go(-(NAV.ov - n)); } catch (_) { NAV.skip--; } }
+  NAV.ov = n;
+}
+function navScreen(){
+  navSync();
+  const key = JSON.stringify([S.tab, S.tab === "band" ? S.band || "" : "", S.tab === "crew" ? S.crewSel || "" : ""]);
+  if (NAV.cur && key !== NAV.cur && !NAV.popping) { NAV.stack.push(NAV.cur); if (NAV.stack.length > 40) NAV.stack.shift(); navPush("scr"); }
+  NAV.cur = key;
+}
+function closeTopOverlay(){
+  const crop = document.querySelector("body > .cropmodal"); if (crop) { crop.querySelector("[data-cc]")?.click(); return; }
+  const sh = document.querySelector("body > .sharemodal"); if (sh) { sh.querySelector("[data-shx]")?.click(); return; }
+  if (LB) { closeLightbox(); return; }
+  const m = $("#modalRoot"); if (m && m.innerHTML.trim()) { m.innerHTML = ""; m.onclick = null; return; }
+  if (S.open) closeSheet();
+}
+window.addEventListener("popstate", () => {
+  if (NAV.skip) { NAV.skip--; NAV.pend.splice(0).forEach(k => navPush(k)); return; }
+  NAV.popping = true;
+  try {
+    if (overlayCount()) { closeTopOverlay(); NAV.ov = overlayCount(); }
+    else if (NAV.stack.length) { const prev = JSON.parse(NAV.stack.pop()); S.tab = prev[0]; if (prev[1]) S.band = prev[1]; S.crewSel = prev[2] || null; NAV.cur = JSON.stringify(prev); renderTab(); window.scrollTo(0, 0); }
+  } catch (e) { console.error("back", e); }
+  NAV.popping = false;
+});
+new MutationObserver(() => navSync()).observe(document.body, { childList: true });
+for (const id of ["lbRoot", "sheetRoot", "modalRoot"]) { const el = document.getElementById(id); if (el) new MutationObserver(() => navSync()).observe(el, { childList: true }); }
 
 /* ---------- Share images (Instagram story size) ---------- */
 const loadImg = (url, cors) => new Promise(res => { const im = new Image(); if (cors) im.crossOrigin = "anonymous"; im.onload = () => res(im); im.onerror = () => res(null); im.src = url; });
@@ -902,7 +942,7 @@ function renderShowView(fresh){
   const scroll = $("#sheetRoot .sheet")?.scrollTop || 0;
   SHEET_LIST = [];
   if (d.poster) SHEET_LIST.push({ it: { id: pid(d.poster), url: pid(d.poster), path: d.poster.path, type: "image", bands: [] }, show: d, kind: "poster" });
-  const media = gallery("photos", "Show photos") + gallery("merch", "Merch haul");
+  const media = gallery("photos", "Show photos") + gallery("merch", "Merch haul") + (ro ? "" : crewGallery(d));
   const r = Number(d.rating) || 0, pv = Number(d.pit) || 0, br = d.bandRatings || {}, lu = lineup(d), songs = d.songs || {};
   const skulls = v => `<span class="skulls">${[1,2,3,4,5].map(i => SKULLV(v, i)).join("")}</span>`;
   const bars = v => `<span class="vbars">${[1,2,3,4,5].map(i => `<i class="${v >= i ? "on" : v >= i - 0.5 ? "half" : ""}"></i>`).join("")}</span>`;
@@ -926,6 +966,7 @@ function renderShowView(fresh){
         <div class="tagrow">${up ? `<span class="chip up">Upcoming</span>` : ""}${d.unsure ? `<span class="chip">Maybe</span>` : ""}${d.endDate ? `<span class="chip">Festival</span>` : ""}${d.spot ? `<span class="chip">${esc(d.spot)}</span>` : ""}</div>
       </div>
     </div>
+    ${ro || d.id === "__new" ? "" : showNudges(d)}
     ${!up && (r || pv || d.highlight) ? `<div class="sect vnight">
       <div class="vstat">${r ? `<div><span class="lbl">The show</span>${skulls(r)} <b>${fmtRating(r)}</b></div>` : ""}${pv ? `<div><span class="lbl">The pit</span>${bars(pv)} <b>${fmtRating(pv)}</b></div>` : ""}</div>
       ${d.highlight ? `<blockquote class="vquote">${esc(d.highlight)}</blockquote>` : ""}
@@ -939,6 +980,7 @@ function renderShowView(fresh){
     ${!ro && !up && d.date && !allSongs ? `<div class="sect"><button class="btn" data-getsetlist>Get the setlist from setlist.fm</button><div class="ro" id="slmsg"></div></div>` : ""}
     ${d.notes ? `<div class="sect"><h3>Notes</h3><div class="vtext">${esc(d.notes)}</div></div>` : ""}
     ${people.length ? `<div class="sect"><h3>Went with</h3><div class="tagrow">${people.map(p => `<span class="chip${p.no ? " tagno" : ""}"${p.no ? ` title="Said they weren't there"` : ""}>${esc(p.n)}${p.no ? " · not there" : ""}</span>`).join("")}</div></div>` : ""}
+    ${!up && d.id !== "__new" ? `<div id="rcmp"></div>` : ""}
     ${money.length ? `<div class="sect"><h3>The damage</h3><div class="ro vmoney">${money.map(esc).join(" · ")}</div></div>` : ""}
     ${!d.poster && !ro && !d.posterSkip ? `<div id="poOffer"></div>` : ""}
     ${!d.poster && !ro ? `<div class="sect"><h3>Tour poster</h3><label class="btn">Upload poster<input class="vh" type="file" data-upkind="poster" accept="image/*,.heic,.heif" aria-label="Upload poster"></label></div>` : ""}
@@ -948,6 +990,7 @@ function renderShowView(fresh){
   </div></div>`;
   const sh = $("#sheetRoot .sheet"); if (sh && !fresh) sh.scrollTop = scroll;
   loadComments(); resolveSpotify(lu);
+  if (!up && d.id !== "__new") fillRatingCompare(d, owner);
   if (!d.poster && !ro && !d.posterSkip && d.id !== "__new") posterCandidates(d).then(list => { const box = $("#poOffer"); if (!box || !list.length || draft !== d) return;
     box.innerHTML = `<button class="pobanner" data-poopen><img src="${esc(src(list[0].url))}" alt=""><span><b>Tour poster available</b><br><span class="ro">From @${esc(list[0].who.handle || "someone")}${list.length > 1 ? ` +${list.length - 1} more` : ""}. Tap to preview.</span></span></button>`; });
 }
@@ -1036,6 +1079,47 @@ function openSheet(id){
 }
 function closeSheet(){ S.open = null; S.openFriend = null; draft = null; $("#sheetRoot").innerHTML = ""; document.body.style.overflow = ""; renderTab(); }
 
+// Photos/videos your crew tagged you in and you accepted, shown on your own copy of the show.
+function crewGallery(d){
+  const list = crewMediaFor(d); if (!list.length) return "";
+  const base = SHEET_LIST.length; SHEET_LIST.push(...list);
+  return `<div class="sect"><h3>Crew photos of you <span class="lbl">${list.length}</span></h3><div class="gal">${list.map((e, i) => tile(e.it, { i: base + i, tag: FR[e.owner] ? "@" + FR[e.owner].handle : "" })).join("")}</div></div>`;
+}
+// Gentle prompts on your own shows: share it when it's close (or just happened), rate it for a week after.
+function showNudges(d){
+  if (!d.date) return "";
+  const days = Math.round((parse(d.date).dt - parse(todayISO).dt) / 864e5), r = Number(d.rating) || 0, out = [];
+  if (days < 0 && days >= -7 && !r) out.push(`<div class="nudge"><span><b>How was it?</b> Rate the night while it's fresh.</span><button class="btn red sm" data-editmode>Rate it</button></div>`);
+  if ((days >= 0 && days <= 14) || (days < 0 && days >= -3)) out.push(`<div class="nudge"><span><b>${days > 0 ? `${days === 1 ? "Tomorrow" : `${days} days out`}.` : days === 0 ? "It's tonight." : "Just happened."}</b> ${days >= 0 ? "Let your crew know you're going." : "Show off the night."}</span><button class="btn sm" data-share>Share it</button></div>`);
+  return out.length ? `<div class="nudges">${out.join("")}</div>` : "";
+}
+// Your rating next to everyone else who logged the same show: crew one by one, plus the overall average.
+async function fillRatingCompare(d, owner){
+  const box = $("#rcmp"); if (!box) return;
+  const mineShow = owner === ME.uid ? d : S.shows.find(o => sameShow(o, d));
+  const me = mineShow ? Number(mineShow.rating) || 0 : 0;
+  const rows = new Map();
+  if (owner !== ME.uid && Number(d.rating) > 0) rows.set(owner, { uid: owner, n: Number(d.rating), crew: true });
+  for (const f of friendList()) { if (f.uid === owner) continue; const o = (f.shows || []).find(x => sameShow(x, d)); if (o && Number(o.rating) > 0) rows.set(f.uid, { uid: f.uid, n: Number(o.rating), crew: true }); }
+  const draw = () => {
+    if (!$("#rcmp") || draft !== d) return;
+    const all = [...rows.values()], crewR = all.filter(x => x.crew);
+    if (!all.length || (!me && all.length < 2)) { $("#rcmp").innerHTML = ""; return; }
+    const avg = all.reduce((a, x) => a + x.n, 0) / all.length;
+    const sk = v => `<span class="skulls">${[1,2,3,4,5].map(i => SKULLV(v, i)).join("")}</span>`;
+    const diff = me ? me - avg : 0;
+    $("#rcmp").innerHTML = `<div class="sect rcmp"><h3>How it rates</h3>
+      ${me ? `<div class="rrow you"><span>You</span>${sk(me)}<b>${fmtRating(me)}</b></div>` : ""}
+      <div class="rrow"><span>Everyone else <span class="ro">(${all.length})</span></span>${sk(avg)}<b>${(Math.round(avg * 10) / 10).toFixed(1)}</b></div>
+      ${crewR.map(x => `<div class="rrow crew"><span>${esc(personLabel(x.uid, FR[x.uid] ? "@" + FR[x.uid].handle : "Crew"))}</span>${sk(x.n)}<b>${fmtRating(x.n)}</b></div>`).join("")}
+      ${me && all.length ? `<div class="ro" style="margin-top:6px">${Math.abs(diff) < 0.25 ? "You're right in line with everyone else." : diff > 0 ? `You liked it more than most (+${(Math.round(diff * 10) / 10).toFixed(1)}).` : `Tougher crowd than most (${(Math.round(diff * 10) / 10).toFixed(1)}).`}</div>` : ""}</div>`;
+  };
+  draw();
+  // Public ratings from people outside your crew.
+  const head = normBand(lineup(d)[0] || ""); if (!head) return;
+  try { await fetchPublicBand(head); for (const o of (MATCH.pub.get("bandKeys:" + head) || [])) if (o.ownerUid !== ME.uid && o.ownerUid !== owner && !rows.has(o.ownerUid) && Number(o.rating) > 0 && sameShow(o, d)) rows.set(o.ownerUid, { uid: o.ownerUid, n: Number(o.rating) }); } catch (_) {}
+  draw();
+}
 function gallery(kind, label, hint){
   const its = items(draft, kind);
   const base = SHEET_LIST.length;
@@ -1242,35 +1326,59 @@ function handleFiles(kind, files){
   if (!files.length) { toast(vids ? "Videos go in Show photos" : "Nothing selected", 3500); return; }
   const nv = files.filter(isVideo).length, ni = files.length - nv;
   toast([ni ? `${ni} photo${ni > 1 ? "s" : ""}` : "", nv ? `${nv} video${nv > 1 ? "s" : ""}` : ""].filter(Boolean).join(" and ") + " ready", 2500);
-  const lu = lineup(draft);
-  if (kind === "poster" || !lu.length) return doUpload(kind, files, []);
-  tagModal(files, lu, (bands) => doUpload(kind, files, bands));
+  const lu = lineup(draft), crew = mediaCrew(draft);
+  if (kind === "poster" || (!lu.length && !crew.length)) return doUpload(kind, files, files.map(() => ({ bands: [], people: [] })));
+  tagModal(files, lu, crew, tags => doUpload(kind, files, tags));
+}
+// Crew you can tag in a photo: people already tagged on the show first, then the rest of your crew.
+function mediaCrew(d){
+  const on = new Set(tagsOf(d || {}).map(t => t.uid));
+  return friendList().filter(f => on.has(f.uid) || canSee(settingsOf(f), "tagMe", f)).sort((a, b) => on.has(b.uid) - on.has(a.uid) || String(a.name).localeCompare(String(b.name))).slice(0, 16);
 }
 
-function tagModal(files, lu, onGo){
-  const sel = new Set(lu.length === 1 ? [lu[0]] : []);
-  const vids = files.filter(isVideo).length, imgs = files.length - vids;
+// Tag bands and crew in new photos/videos. With several files, each one can be tagged on its own;
+// the "All" row tags every file at once. Any number of tags per file.
+function tagModal(files, lu, crew, onGo){
+  const one = lu.length === 1 ? [lu[0]] : [];
+  const T = files.map(() => ({ bands: new Set(one), people: new Set() }));
+  const urls = files.map(f => isVideo(f) ? "" : URL.createObjectURL(f));
+  const multi = files.length > 1;
+  const chips = (i, set, list, attr, label) => list.map(x => { const v = typeof x === "string" ? x : x.uid, l = typeof x === "string" ? x : personLabel(x.uid, "@" + x.handle);
+    const on = i === "all" ? T.every(t => t[set].has(v)) : T[i][set].has(v);
+    return `<button class="tagbtn${set === "people" ? " ptag" : ""}" data-${attr}="${i}|${esc(v)}" aria-pressed="${on}">${set === "people" ? "@ " : ""}${esc(l)}</button>`; }).join("");
+  const row = i => `${lu.length ? `<div class="tagrow">${chips(i, "bands", lu, "mtb", "")}</div>` : ""}${crew.length ? `<div class="tagrow">${chips(i, "people", crew, "mtp", "")}</div>` : ""}`;
   const draw = () => {
-    $("#modalRoot").innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-label="Tag bands"><div class="mbox">
-      <h3>Who's in ${files.length>1?"these":"this"}?</h3>
-      <div class="ro">${[imgs ? `${imgs} photo${imgs > 1 ? "s" : ""}` : "", vids ? `${vids} video${vids > 1 ? "s" : ""}` : ""].filter(Boolean).join(" and ")}. Tag every band that appears. Leave all off for crowd or venue shots.</div>
-      <div class="tagrow">${lu.map(b=>`<button class="tagbtn" data-mtag="${esc(b)}" aria-pressed="${sel.has(b)}">${esc(b)}</button>`).join("")}</div>
+    const vids = files.filter(isVideo).length, imgs = files.length - vids;
+    $("#modalRoot").innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-label="Tag bands and crew"><div class="mbox tagmodal">
+      <h3>Who's in ${multi ? "these" : "this"}?</h3>
+      <div class="ro">${[imgs ? `${imgs} photo${imgs > 1 ? "s" : ""}` : "", vids ? `${vids} video${vids > 1 ? "s" : ""}` : ""].filter(Boolean).join(" and ")}. Tag the bands and crew in ${multi ? "each one" : "it"}. Crew you tag can add it to their own log of this show.</div>
+      ${multi ? `<div class="tmall"><div class="lbl">All ${files.length}</div>${row("all")}</div>` : ""}
+      <div class="tmlist">${files.map((f, i) => `<div class="tmrow">${multi ? `<div class="tmthumb">${urls[i] ? `<img src="${urls[i]}" alt="">` : `<span>▶</span>`}</div>` : ""}<div class="tmtags">${multi ? `<div class="lbl">${isVideo(f) ? "Video" : "Photo"} ${i + 1}</div>` : ""}${row(i)}</div></div>`).join("")}</div>
       <div class="mbtns"><button class="btn ghost" data-mcancel>Cancel</button><button class="btn red" data-mgo>Upload</button></div>
     </div></div>`;
     const root = $("#modalRoot");
-    root.querySelectorAll("[data-mtag]").forEach(b => b.onclick = () => { const v = b.dataset.mtag; sel.has(v) ? sel.delete(v) : sel.add(v); draw(); });
-    root.querySelector("[data-mcancel]").onclick = () => root.innerHTML = "";
-    root.querySelector("[data-mgo]").onclick = () => { root.innerHTML = ""; onGo([...sel]); };
+    const toggle = (attr, set) => root.querySelectorAll(`[data-${attr}]`).forEach(btn => btn.onclick = () => {
+      const [i, v] = [btn.dataset[attr].slice(0, btn.dataset[attr].indexOf("|")), btn.dataset[attr].slice(btn.dataset[attr].indexOf("|") + 1)];
+      if (i === "all") { const all = T.every(t => t[set].has(v)); T.forEach(t => all ? t[set].delete(v) : t[set].add(v)); }
+      else { const t = T[Number(i)][set]; t.has(v) ? t.delete(v) : t.add(v); }
+      const st = root.querySelector(".tmlist").scrollTop; draw(); root.querySelector(".tmlist").scrollTop = st; });
+    toggle("mtb", "bands"); toggle("mtp", "people");
+    const done = () => urls.forEach(u => u && URL.revokeObjectURL(u));
+    root.querySelector("[data-mcancel]").onclick = () => { done(); root.innerHTML = ""; };
+    root.querySelector("[data-mgo]").onclick = () => { done(); root.innerHTML = "";
+      onGo(T.map(t => ({ bands: [...t.bands], people: [...t.people].map(uid => ({ uid, name: (FR[uid] && (FR[uid].name || FR[uid].handle)) || "" })) }))); };
   };
   draw();
 }
 
-async function doUpload(kind, files, bands){
+async function doUpload(kind, files, tags){
+  const tagFor = i => (Array.isArray(tags) ? tags[i] : null) || { bands: Array.isArray(tags) && typeof tags[0] === "string" ? tags : [], people: [] };
   const showId = draft && draft.id; if (!showId || showId === "__new") return;
   const out = []; let skipped = 0, n = 0, before = 0, after = 0;
   let tooLong = 0, tooBig = 0;
   for (const f of files) {
     n++;
+    const { bands, people } = tagFor(n - 1), ppl = people && people.length ? { people } : {};
     if (isVideo(f)) {
       try {
         if (f.size > MAX_VIDEO_BYTES) { tooBig++; skipped++; continue; }
@@ -1279,7 +1387,7 @@ async function doUpload(kind, files, bands){
         if (meta.dur > MAX_VIDEO_SECS + 1) { tooLong++; skipped++; continue; }
         const v = await putVideo(f, showId, pct => toast(`Uploading video ${n} of ${files.length}… ${pct}%`, 60000));
         let thumb = null; if (meta.thumb) try { thumb = await putImage(meta.thumb, showId, "thumb"); } catch (_) {}
-        out.push({ url: v.url, path: v.path, type: "video", bands, dur: Math.round(meta.dur || 0), ...(thumb ? { thumb: thumb.url, thumbPath: thumb.path } : {}) });
+        out.push({ url: v.url, path: v.path, type: "video", bands, ...ppl, dur: Math.round(meta.dur || 0), ...(thumb ? { thumb: thumb.url, thumbPath: thumb.path } : {}) });
         before += f.size; after += f.size;
       } catch (e) { skipped++; console.error(e); if (e?.code === "storage/unauthorized") { toast("Video upload blocked. Storage rules may still be updating; try again in a minute.", 5000); break; } }
       continue;
@@ -1290,7 +1398,7 @@ async function doUpload(kind, files, bands){
       before += f.size; after += b.size;
       if (b.size > MAX_BYTES) { skipped++; continue; }
       const r = await putImage(b, showId, kind);
-      out.push({ url: r.url, path: r.path, type: "image", bands });
+      out.push({ url: r.url, path: r.path, type: "image", bands, ...ppl });
     } catch(e){
       skipped++;
       console.error(e);
@@ -1320,24 +1428,29 @@ function drawLB(){
   if (!LB) return;
   const e = LB.list[LB.i]; if (!e) { closeLightbox(); return; }
   const s = (S.openFriend ? null : S.shows.find(x=>x.id===e.show.id)) || e.show;
-  const canEdit = !!assets && S.canWrite && !S.openFriend;
+  const canEdit = !!assets && S.canWrite && !S.openFriend && !e.owner;
   const tagEditable = canEdit && e.kind !== "poster";
-  const lu = lineup(s), bands = e.it.bands || [];
+  const lu = lineup(s), bands = e.it.bands || [], ppl = (e.it.people || []), owner = e.owner || (ME && ME.uid);
+  const rot = Number(e.it.rot) || 0, rs = rot ? ` style="transform:rotate(${rot}deg)" class="rot${rot}"` : "";
   const media = e.it.type === "video"
-    ? `<video src="${src(e.it.id)}" controls playsinline preload="metadata"${e.it.thumb ? ` poster="${esc(src(e.it.thumb))}"` : ""}></video>`
+    ? `<video src="${src(e.it.id)}" controls playsinline preload="metadata"${e.it.thumb ? ` poster="${esc(src(e.it.thumb))}"` : ""}${rs}></video>`
     : `<img src="${src(e.it.id)}" alt="">`;
+  const pplShown = ppl.filter(p => !mediaDeclined(p.uid, owner, s.id));
+  const crewRow = tagEditable ? mediaCrew(s) : [];
   $("#lbRoot").innerHTML = `<div class="lightbox" role="dialog" aria-modal="true" aria-label="Media viewer">
     <div class="lt"><button class="btn ghost" data-lbclose>Close</button>
       <span class="lbl num">${LB.i+1} / ${LB.list.length}</span>
-      <span style="display:flex;gap:8px">${!S.open && !S.crewSel ? `<button class="btn" data-lbshow>Open show</button>` : ""}
-      ${canEdit ? `<button class="btn warn" data-lbdel>${LB.confirm?"Tap again to remove":"Remove"}</button>` : ""}</span></div>
+      <span style="display:flex;gap:8px">${!S.open && (!e.owner || FR[e.owner]) ? `<button class="btn" data-lbshow>Open show</button>` : ""}
+      ${canEdit ? `<button class="btn" data-lbrot aria-label="Rotate 90 degrees">⟳ Rotate</button><button class="btn warn" data-lbdel>${LB.confirm?"Tap again to remove":"Remove"}</button>` : ""}</span></div>
     <div class="lbimg">${media}
       ${LB.i>0?`<button class="lbnav p" data-lbprev aria-label="Previous">‹</button>`:""}
       ${LB.i<LB.list.length-1?`<button class="lbnav n" data-lbnext aria-label="Next">›</button>`:""}</div>
     <div class="lbcap">
       <div class="c1">${esc(e.kind==="poster" ? "Tour poster · " + (lu[0]||"") : bands.length ? bands.join(" · ") : (lu[0] || "Show"))}</div>
-      <div class="c2">${esc([kindLabel(e), fmtDate(s.date), s.venue].filter(Boolean).join(" · "))}</div>
+      <div class="c2">${esc([kindLabel(e), fmtDate(s.date), s.venue, e.owner && FR[e.owner] ? "from " + personLabel(e.owner, "@" + FR[e.owner].handle) : ""].filter(Boolean).join(" · "))}</div>
+      ${pplShown.length && !tagEditable ? `<div class="c2">With ${pplShown.map(p => esc(personLabel(p.uid, p.name))).join(", ")}</div>` : ""}
       ${tagEditable && lu.length ? `<div class="tagrow"><span class="lbl">Tag:</span>${lu.map(b=>`<button class="tagbtn" data-lbtag="${esc(b)}" aria-pressed="${bands.some(x=>ieq(x,b))}">${esc(b)}</button>`).join("")}</div>` : ""}
+      ${tagEditable && crewRow.length ? `<div class="tagrow"><span class="lbl">Crew:</span>${crewRow.map(f => `<button class="tagbtn ptag${mediaDeclined(f.uid, owner, s.id) && ppl.some(p => p.uid === f.uid) ? " tagno" : ""}" data-lbppl="${esc(f.uid)}" aria-pressed="${ppl.some(p => p.uid === f.uid)}">@ ${esc(personLabel(f.uid, "@" + f.handle))}</button>`).join("")}</div>` : ""}
     </div></div>`;
 }
 
@@ -1350,6 +1463,37 @@ async function retag(band){
   catch(err){ handleWriteErr(err); }
 }
 
+async function retagPerson(uid){
+  const e = LB.list[LB.i]; const s = S.shows.find(x => x.id === e.show.id); if (!s) return;
+  const cur = e.it.people || [], f = FR[uid];
+  const next = cur.some(p => p.uid === uid) ? cur.filter(p => p.uid !== uid) : [...cur, { uid, name: (f && (f.name || f.handle)) || "" }];
+  const arr = items(s, e.kind).map(m => m.id === e.it.id ? { ...m, people: next } : m);
+  try { await updateDoc(myShow(s.id), { [e.kind]: arr }); e.it = { ...e.it, people: next }; if (draft && draft.id === s.id) draft[e.kind] = arr; drawLB(); }
+  catch (err) { handleWriteErr(err); }
+}
+// Rotate 90° clockwise. Photos are redrawn and re-saved; videos keep a rotation setting applied when they play.
+async function rotateMedia(){
+  const e = LB.list[LB.i]; const s = S.shows.find(x => x.id === e.show.id); if (!s || LB.busy) return;
+  const field = e.kind === "poster" ? "poster" : e.kind;
+  const save = async upd => { const patch = field === "poster" ? { poster: { ...s.poster, ...upd } } : { [field]: items(s, field).map(m => m.id === e.it.id ? { ...m, ...upd } : m) };
+    await updateDoc(myShow(s.id), patch); if (draft && draft.id === s.id) Object.assign(draft, patch); };
+  LB.busy = true;
+  try {
+    if (e.it.type === "video") { const rot = ((Number(e.it.rot) || 0) + 90) % 360; await save({ rot }); e.it = { ...e.it, rot }; }
+    else {
+      toast("Rotating…", 8000);
+      const im = await canvasImg(src(e.it.id)); if (!im) throw new Error("couldn't load the photo");
+      const c = document.createElement("canvas"); c.width = im.height; c.height = im.width;
+      const x = c.getContext("2d"); x.translate(c.width, 0); x.rotate(Math.PI / 2); x.drawImage(im, 0, 0);
+      const blob = await new Promise(r => c.toBlob(r, "image/jpeg", 0.9));
+      const put = await putImage(blob, s.id, e.kind === "poster" ? "poster" : e.kind);
+      const oldPath = e.it.path; await save({ url: put.url, path: put.path });
+      e.it = { ...e.it, url: put.url, id: put.url, path: put.path }; if (oldPath) removeFile(oldPath);
+      toast("Rotated");
+    }
+  } catch (err) { console.error(err); toast("Couldn't rotate that one. Try again.", 3500); }
+  LB.busy = false; drawLB();
+}
 async function lbRemove(){
   if (!LB.confirm) { LB.confirm = true; drawLB(); return; }
   const e = LB.list[LB.i]; const s = S.shows.find(x=>x.id===e.show.id); if (!s) return;
@@ -1375,8 +1519,10 @@ document.addEventListener("click", e => {
     else if (t.hasAttribute("data-lbprev")) { LB.i--; LB.confirm=false; drawLB(); }
     else if (t.hasAttribute("data-lbnext")) { LB.i++; LB.confirm=false; drawLB(); }
     else if (t.hasAttribute("data-lbdel")) lbRemove();
-    else if (t.hasAttribute("data-lbshow")) { const id = LB.list[LB.i].show.id; openSheet(id); }
+    else if (t.hasAttribute("data-lbshow")) { const e = LB.list[LB.i], id = e.show.id; if (e.owner) { if (FR[e.owner]) { closeLightbox(); openFriendSheet(e.owner, id); } } else openSheet(id); }
     else if (t.dataset.lbtag) retag(t.dataset.lbtag);
+    else if (t.dataset.lbppl) retagPerson(t.dataset.lbppl);
+    else if (t.hasAttribute("data-lbrot")) rotateMedia();
     return;
   }
   if (t.id === "tab-shows") { S.tab = "shows"; renderTab(); }
@@ -1384,6 +1530,7 @@ document.addEventListener("click", e => {
   else if (t.id === "tab-disc") { S.tab = "disc"; renderTab(); }
   else if (t.id === "homeBtn" || t.id === "navHome") { S.tab = "home"; S.search.profile = null; renderTab(); window.scrollTo({ top: 0, behavior: "smooth" }); }
   else if (t.dataset.gotab) { S.tab = t.dataset.gotab; renderTab(); scrollToContent(); }
+  else if (t.dataset.rateopen) { openSheet(t.dataset.rateopen); S.editing = true; renderSheet(true); }
   else if (t.hasAttribute("data-recap")) { S.recapOpen = !S.recapOpen; try { localStorage.setItem("pitlog.recapOpen", S.recapOpen ? "1" : ""); } catch (_) {} renderHome(); }
   else if (t.dataset.feedsort) { S.feedSort = t.dataset.feedsort; S.feedN = 15; try { localStorage.setItem("pitlog.feedSort", S.feedSort); } catch (_) {} renderHome(); }
   else if (t.dataset.like) toggleLike(t.dataset.like);
@@ -1637,7 +1784,7 @@ function watchFriend(uid, info){
     if (f.family) { applyPrivacy(f); scheduleFamilySync(); }
     rerenderSoft();
   }, err => { f.err = err.code === "permission-denied" ? "Their log isn't shared with you yet." : "Couldn't load their log."; f.loaded = true; rerenderSoft(); });
-  f.unsubP = onSnapshot(doc(fdb, "users", uid), p => { if (p.exists()) { const d = p.data(); f.live = true; Object.assign(f, { name: d.name || f.name, handle: d.handle || f.handle, photo: d.photoURL || f.photo, bio: d.bio || "", favBand: d.favBand || "", favBands: d.favBands || [], favVenue: d.favVenue || "", settings: d.settings || {}, interested: Array.isArray(d.interested) ? d.interested : [], bucket: Array.isArray(d.bucket) ? d.bucket : [], cover: d.coverURL || "", tagShow: d.tagShow || "", tagNo: Array.isArray(d.tagNo) ? d.tagNo : [] }); applyPrivacy(f); rerenderSoft(); } }, () => {});
+  f.unsubP = onSnapshot(doc(fdb, "users", uid), p => { if (p.exists()) { const d = p.data(); f.live = true; Object.assign(f, { name: d.name || f.name, handle: d.handle || f.handle, photo: d.photoURL || f.photo, bio: d.bio || "", favBand: d.favBand || "", favBands: d.favBands || [], favVenue: d.favVenue || "", settings: d.settings || {}, interested: Array.isArray(d.interested) ? d.interested : [], bucket: Array.isArray(d.bucket) ? d.bucket : [], cover: d.coverURL || "", tagShow: d.tagShow || "", tagNo: Array.isArray(d.tagNo) ? d.tagNo : [], mediaNo: Array.isArray(d.mediaNo) ? d.mediaNo : [], mediaYes: Array.isArray(d.mediaYes) ? d.mediaYes : [] }); applyPrivacy(f); rerenderSoft(); } }, () => {});
 }
 // Friends' privacy settings decide what this app shows of their log. f.raw keeps the full
 // docs for Crew Family syncing; everything you see goes through f.shows.
@@ -1934,7 +2081,8 @@ function renderPublicProfile(uid){
   const list = shows.length ? `<section class="sect"><h3>Shows <span class="lbl">${shows.length}</span></h3><div class="list">${shows.map(pubTicket).join("")}</div></section>`
     : `<div class="empty"><h3>Nothing public</h3><div>@${esc(u.handle || "")} keeps their shows to their crew. Add them to see more once they accept.</div></div>`;
   const note = self ? `<div class="pubnote"><b>Public preview.</b> This is what people outside your crew see${settingsOf(u).searchable === "public" ? " (and can find in search)" : ". You're hidden from search"}. Change what's shown in Settings → Privacy.</div>` : "";
-  $("#view").innerHTML = `<div class="crew">${back}${seg}${note}<section class="prof">${top}</section>${self ? "" : `<div class="prof-act">${act}</div>`}${stats}${list}${self ? "" : safetyRow(uid, u.handle)}</div>`;
+  const pm = shows.some(x => items(x, "photos").length) ? `<section class="sect"><h3>Photos &amp; videos</h3>${mediaGrid(shows, uid, "")}</section>` : "";
+  $("#view").innerHTML = `<div class="crew">${back}${seg}${note}<section class="prof">${top}</section>${self ? "" : `<div class="prof-act">${act}</div>`}${stats}${pm}${list}${self ? "" : safetyRow(uid, u.handle)}</div>`;
 }
 // What someone in your crew sees: your log run through your own privacy settings, as a friend would get it.
 function crewPreview(){
@@ -2113,6 +2261,8 @@ function renderHome(){
     <div class="rechead"><h2 class="hh2">Your recap</h2><button class="btn ghost sm" data-recap aria-expanded="${open}">${open ? "Hide details ▴" : "Details ▾"}</button></div>
     ${kpis}
     ${open ? `<div class="hgrid">${shows}${disc}${stats}${vault}${crewCard}</div>` : ""}
+    ${(() => { const late = S.shows.filter(x => !isUpcoming(x) && x.date && x.date <= todayISO && !(Number(x.rating) > 0) && (parse(todayISO).dt - parse(x.date).dt) / 864e5 <= 7).sort((a, b) => b.date.localeCompare(a.date));
+      return late.length ? `<div class="nudges home">${late.slice(0, 3).map(x => `<div class="nudge"><span><b>Rate ${esc(headline(x))}</b> · ${esc(fmtDate(x.date))}</span><button class="btn red sm" data-rateopen="${esc(x.id)}">Rate it</button></div>`).join("")}</div>` : ""; })()}
     ${feedBlock()}</div>`;
   if (open) fillHomeDiscover();
   document.querySelectorAll(".fsoc[data-soc]").forEach(el => { const k = el.dataset.soc; if (!SOC.get(k)) loadSocial(k).then(() => paintSocial(k)); });
@@ -2333,7 +2483,7 @@ async function fillHomeDiscover(){
   const list = res.shown, bk = list.filter(g => g.bk), fresh = list.filter(g => g.isNew), pv = list.filter(g => g.pv.length);
   const nums = `<div class="hrow">${[[list.length, "tours for you"], [bk.length, "bucket list"], [fresh.length, "just announced"]].map(([n, l]) => `<div class="hnum"><b class="num">${n}</b><span>${l}</span></div>`).join("")}</div>`;
   const top = [...bk, ...fresh, ...pv, ...list].filter((g, i, a) => a.indexOf(g) === i).slice(0, 3);
-  box.innerHTML = nums + (top.length ? top.map(g => `<div class="ro"><b class="bone">${esc(headline(g.show))}</b> · ${esc(rangeText(g))}${g.bk ? ` <span class="chip bkc">Bucket list</span>` : g.isNew ? ` <span class="chip up">New</span>` : g.pv.length ? ` <span class="chip pvc">Your venue</span>` : ""}</div>`).join("") : `<div class="ro">Nothing new for your bands yet. Add some to your bucket list.</div>`);
+  box.innerHTML = nums + (top.length ? top.map(g => `<div class="hdline"><span class="ro"><b class="bone">${esc(headline(g.show))}</b> · ${esc(rangeText(g))}</span>${g.bk ? `<span class="chip bkc">Bucket list</span>` : g.isNew ? `<span class="chip up">New</span>` : g.pv.length ? `<span class="chip pvc">Your venue</span>` : ""}</div>`).join("") : `<div class="ro">Nothing new for your bands yet. Add some to your bucket list.</div>`);
 }
 
 /* ---------- Discover: upcoming tours from the daily catalog ----------
@@ -2963,10 +3113,32 @@ function tagInbox(){
     if (no.has(key) || seen.has(key) || S.shows.some(o => sameShow(o, s))) continue;
     out.push({ f, s, key, stage: yes.has(key) ? "add" : "ask" });
   }
+  // Photos/videos you're tagged in (one prompt per show).
+  const myes = L("mediaYes"), mno = L("mediaNo");
+  for (const f of friendList()) for (const s of (f.shows || [])) {
+    const key = f.uid + "|" + s.id; if (myes.has(key) || mno.has(key)) continue;
+    const media = items(s, "photos").filter(m => (m.people || []).some(p => p.uid === ME.uid)); if (!media.length) continue;
+    out.push({ f, s, key, media, stage: "ask", kind: "media" });
+  }
   return out.sort((a, b) => (a.stage === "ask" ? 0 : 1) - (b.stage === "ask" ? 0 : 1) || (b.s.date || "").localeCompare(a.s.date || ""));
 }
 const acctBadge = () => { const n = ME && S.loaded ? tagInbox().filter(x => x.stage === "ask").length : 0; return n ? `<span class="badge-n acctb" aria-label="${n} tag${n > 1 ? "s" : ""} to review">${n}</span>` : ""; };
 function updateAcctBadge(){ const a = $("#acct"); if (!a || a.hidden) return; a.querySelectorAll(".acctb").forEach(x => x.remove()); a.insertAdjacentHTML("beforeend", acctBadge()); }
+async function answerMediaTag(key, yes){
+  const field = yes ? "mediaYes" : "mediaNo";
+  PROFILE[field] = [...new Set([...(PROFILE[field] || []), key])];
+  rerenderSoft(); updateAcctBadge();
+  try { await updateDoc(doc(fdb, "users", ME.uid), { [field]: arrayUnion(key) }); toast(yes ? "They'll show on your log of this show." : "Got it. You're untagged on their side.", 3000); } catch (e) { handleWriteErr(e); }
+}
+// Crew photos/videos you accepted, for one of your own shows.
+function crewMediaFor(d){
+  const yes = new Set(PROFILE.mediaYes || []), out = [];
+  for (const f of friendList()) for (const s of (f.shows || [])) {
+    if (!yes.has(f.uid + "|" + s.id) || !sameShow(s, d)) continue;
+    for (const m of items(s, "photos")) if ((m.people || []).some(p => p.uid === ME.uid)) out.push({ it: m, show: s, kind: "photos", owner: f.uid });
+  }
+  return out;
+}
 async function answerTag(key, yes){
   const field = yes ? "tagYes" : "tagNo";
   PROFILE[field] = [...new Set([...(PROFILE[field] || []), key])];
@@ -2978,8 +3150,11 @@ function tagInboxBlock(){
   const asks = list.filter(x => x.stage === "ask").length;
   return `<section class="sect taginbox" id="tagInbox"><h3>Tagged by your crew <span class="lbl">${list.length}</span></h3>
     <div class="ro" style="margin-bottom:8px">${asks ? "Did you go with them? Confirm the ones you were at. Nothing shows up in your stats or on their show as you until you say yes." : "You confirmed these. Add them to your log, or skip."}</div>
-    <div class="plist">${list.map(({ f, s, key, stage }) => {
+    <div class="plist">${list.map(({ f, s, key, stage, kind, media }) => {
     const k = esc(key);
+    if (kind === "media") { const m = media;
+      return `<div class="tagin ask">${showRow(s, f.uid, `@${f.handle} tagged you in ${m.length} ${m.length > 1 ? "photos/videos" : m[0].type === "video" ? "video" : "photo"}`)}<div class="tagthumbs">${m.slice(0, 4).map(x => `<img src="${esc(src(x.type === "video" ? (x.thumb || "") : x.url || x.id))}" alt="" onerror="this.remove()">`).join("")}</div>
+        <div class="tagact"><button class="btn red" data-mtyes="${k}">Add to my show</button><button class="btn ghost" data-mtno="${k}">Not me</button></div></div>`; }
     return `<div class="tagin${stage === "ask" ? " ask" : ""}">${showRow(s, f.uid, "@" + f.handle + " tagged you")}<div class="tagact">${stage === "ask"
       ? `<button class="btn red" data-tagyes="${k}">${isUpcoming(s) ? "I'm going too" : "I was there"}</button><button class="btn ghost" data-tagno="${k}">${isUpcoming(s) ? "Not going" : "Not me"}</button>`
       : `<button class="btn red" data-tagadd="${k}">Add show only</button><button class="btn" data-tagfull="${k}">Add with their details</button><button class="btn ghost" data-tagdis="${k}">Skip</button>`}</div></div>`; }).join("")}</div>
@@ -3049,6 +3224,7 @@ function person(uid, name, handle, photo){
 const avatar = (p, name, cls) => p ? `<img class="av ${cls||""}" src="${esc(p)}" alt="" referrerpolicy="no-referrer">` : `<span class="av ${cls||""}">${esc((name||"?").trim().charAt(0).toUpperCase())}</span>`;
 
 function renderCrew(){
+  navScreen();
   if (S.crewSel && FR[S.crewSel]) return renderFriend(FR[S.crewSel]);
   S.crewSel = null;
   const inc = REQ.in.filter(r => r.status === "pending"), out = REQ.out.filter(r => r.status === "pending");
@@ -3488,6 +3664,24 @@ async function saveProfileEdit(){
   } catch (err) { handleWriteErr(err); }
 }
 
+// Every photo and video someone added (not posters), newest show first, as one grid.
+function mediaGrid(shows, owner, empty){
+  const list = [];
+  for (const s of [...shows].filter(x => !isUpcoming(x)).sort((a, b) => (b.date || "").localeCompare(a.date || ""))) for (const it of items(s, "photos")) list.push({ it, show: s, kind: "photos", owner });
+  VIEW_LIST = list;
+  if (!list.length) return `<div class="empty"><h3>No photos yet</h3><div>${empty}</div></div>`;
+  return `<div class="ro" style="margin:2px 0 8px">${list.length} photo${list.length > 1 ? "s" : ""} and video${list.length > 1 ? "s" : ""} from ${new Set(list.map(e => e.show.id)).size} shows</div><div class="gal pgal">${list.map((e, i) => tile(e.it, { i, tag: headline(e.show) })).join("")}</div>`;
+}
+// Shows you both rated: how your skulls compare with theirs.
+function ratingVs(together, theirs, f){
+  const pairs = together.map(m => { const o = theirs.find(x => sameShow(x, m)); return o && Number(m.rating) > 0 && Number(o.rating) > 0 ? [Number(m.rating), Number(o.rating)] : null; }).filter(Boolean);
+  if (!pairs.length) return "";
+  const a = pairs.reduce((n, p) => n + p[0], 0) / pairs.length, b = pairs.reduce((n, p) => n + p[1], 0) / pairs.length, same = pairs.filter(p => p[0] === p[1]).length;
+  const who = esc(personLabel(f.uid, "@" + f.handle)), d = a - b;
+  return `<div class="sect rcmp" style="margin-top:0"><h3>Ratings vs ${who}</h3><div class="ro">On ${pairs.length} show${pairs.length > 1 ? "s" : ""} you both rated:</div>
+    <div class="rrow you"><span>You</span><span></span><b>${a.toFixed(1)}</b></div><div class="rrow crew"><span>${who}</span><span></span><b>${b.toFixed(1)}</b></div>
+    <div class="ro" style="margin-top:6px">${Math.abs(d) < 0.25 ? "You two rate shows about the same." : d > 0 ? "You're the easier crowd." : `${who} is the easier crowd.`} Exact match on ${same} of ${pairs.length}.</div></div>`;
+}
 function renderFriend(f){
   const theirs = [...(f.shows||[])].sort((a,b) => (b.date||"").localeCompare(a.date||""));
   const done = theirs.filter(s => !isUpcoming(s));
@@ -3498,7 +3692,8 @@ function renderFriend(f){
   const firsts = {};
   let body = "";
   if (f.err) body = `<div class="empty"><h3>Locked</h3><div>${esc(f.err)}</div></div>`;
-  else if (v === "together") body = together.length ? `<div class="list">${together.map(s => ticket(s, firsts)).join("")}</div>` : `<div class="empty"><h3>No shows together yet</h3><div>Shows match when you both logged the same date and venue or band.</div></div>`;
+  else if (v === "media") body = mediaGrid(theirs, f.uid, `${esc(f.name || "They")} haven't added photos or videos yet.`);
+  else if (v === "together") body = together.length ? ratingVs(together, theirs, f) + `<div class="list">${together.map(s => ticket(s, firsts)).join("")}</div>` : `<div class="empty"><h3>No shows together yet</h3><div>Shows match when you both logged the same date and venue or band.</div></div>`;
   else if (v === "bands") body = shared.length ? `<div class="tagrow">${shared.map(b => `<span class="tagbtn" aria-pressed="true">${esc(b.name)}</span>`).join("")}</div>` : `<div class="ro">No bands you've both seen yet.</div>`;
   else body = theirs.length ? `<div class="list">${theirs.map(s => ticket(s, firsts, { friend: f.uid })).join("")}</div>` : `<div class="empty"><h3>Nothing logged</h3><div>${esc(f.name || "They")} haven't logged any shows yet.</div></div>`;
   $("#view").innerHTML = `<div class="crew">
@@ -3507,6 +3702,7 @@ function renderFriend(f){
       : profileBlock({ uid: f.uid, name: f.name, handle: f.handle, photo: f.photo, cover: f.cover || "", bio: f.bio, favBands: favList(f), favVenue: f.favVenue || "", shows: f.shows || [] }, false, f, { together: together.length, shared: shared.length })}
     <div class="seg big" role="group" aria-label="View">
       <button data-crewview="shows" aria-pressed="${v==="shows"}">Their shows</button>
+      <button data-crewview="media" aria-pressed="${v==="media"}">Photos</button>
       <button data-crewview="together" aria-pressed="${v==="together"}">Together</button>
       <button data-crewview="bands" aria-pressed="${v==="bands"}">Shared bands</button></div>
     ${body}
@@ -3540,6 +3736,8 @@ function openInvite(){
 function crewClick(t){
   if (t.hasAttribute("data-invite")) { openInvite(); return true; }
   if (t.hasAttribute("data-tagsgo")) { S.tab = "me"; renderTab(); setTimeout(() => { const b = $("#tagInbox"); if (b) b.scrollIntoView({ block: "start", behavior: "smooth" }); }, 50); return true; }
+  if (t.dataset.mtyes) { answerMediaTag(t.dataset.mtyes, true); return true; }
+  if (t.dataset.mtno) { answerMediaTag(t.dataset.mtno, false); return true; }
   if (t.dataset.tagyes) { answerTag(t.dataset.tagyes, true); return true; }
   if (t.dataset.tagno) { answerTag(t.dataset.tagno, false); return true; }
   if (t.hasAttribute("data-copyhandle")) { const h = "@" + PROFILE.handle; (navigator.clipboard ? navigator.clipboard.writeText(h) : Promise.reject()).then(() => toast("Copied " + h), () => toast("Your username is " + h, 4000)); return true; }
@@ -3972,6 +4170,11 @@ function pushClick(t){
    than the feature it fixes (same-day polish is part of the feature). b = the build it shipped in.
    Every build, user-facing or not (including removals), also gets an entry in version-history.html. */
 const WHATS_NEW = [
+  { b: 72, date: "2026-11-22", icon: "🏷️", t: "Tag crew in photos", d: "Tag friends in photos and videos (each one on its own when you add several). They can add them to their own log of the show." },
+  { b: 72, date: "2026-11-22", icon: "⭐", t: "How it rates", d: "See your rating next to everyone else's on a show, and how you rate compared with each crew member.", },
+  { b: 72, date: "2026-11-22", icon: "📷", t: "Photos on profiles", d: "Crew profiles have a Photos view with everything they've shared in one place.", go: "crew" },
+  { b: 72, date: "2026-11-22", icon: "🔃", t: "Rotate photos and videos", d: "Turn a sideways shot the right way from the photo viewer." },
+  { b: 72, date: "2026-11-22", icon: "↩️", t: "Back button works", d: "The phone's back button now steps back one screen at a time instead of closing everything." },
   { b: 69, date: "2026-11-22", icon: "🎥", t: "Videos", d: "Add clips up to 60 seconds to any show's photos. They play in the Vault too.", go: "vault" },
   { b: 68, date: "2026-11-22", icon: "🏅", t: "77 patches", d: "Level up ladders for shows, bands, venues, states and more, plus one-offs like Hell Week and Called It.", go: "stats:patches" },
   { b: 67, date: "2026-11-22", icon: "🖼️", t: "Tour poster offers", d: "Logged a tour someone else has a poster for? Preview it and add it to your show in one tap." },
