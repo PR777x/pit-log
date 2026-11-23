@@ -87,10 +87,15 @@ async function bandInfo(name, { fetchImpl = fetch } = {}){
     const p18 = claim(e, "P18")[0]; if (p18) out.image = `https://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(p18)}?width=1200`;
     title = ((e.sitelinks || {}).enwiki || {}).title || "";
   }
-  // No Wikidata match (or no English article linked): try Wikipedia directly, band-titled page first.
-  const tries = title ? [title] : [`${name} (band)`, name];
+  // No Wikidata match (or no English article linked): try Wikipedia directly. Only accept a page that says it's about a band.
+  const IS_BAND = /\b(is|are|was|were)\s+(an?\s+|the\s+)?[^.]{0,80}?\b(band|group|duo|trio|supergroup|musical project)\b/i;
+  let tries = title ? [title] : [`${name} (band)`, `${name} (American band)`, name];
+  if (!title) try {
+    const sr = await getJSON(`https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(name + " band")}&srlimit=5&format=json&origin=*`, fetchImpl);
+    for (const r of ((sr.query || {}).search || [])) if (norm(String(r.title).replace(/\s*\(.*\)$/, "")) === norm(name) && !tries.includes(r.title)) tries.splice(1, 0, r.title);
+  } catch (_) {}
   for (const t of tries) {
-    try { const w = await wikiSummary(t, fetchImpl); if (w && (title || BANDISH.test(w.about.slice(0, 200)))) { out.about = w.about; out.wiki = w.wiki; if (w.image) out.image = w.image; out.found = true; break; } } catch (_) {}
+    try { const w = await wikiSummary(t, fetchImpl); if (w && (title || IS_BAND.test(w.about.slice(0, 300)))) { out.about = w.about; out.wiki = w.wiki; if (w.image) out.image = w.image; out.found = true; break; } } catch (_) {}
   }
   return out;
 }
