@@ -56,9 +56,10 @@ async function findBandEntity(name, fetchImpl){
   if (!hits.length) return null;
   const ents = await wdEntities(hits.map(h => h.id), "claims|sitelinks|labels|descriptions", fetchImpl);
   const scored = hits.map((h, i) => { const e = ents[h.id] || {}; const types = claim(e, "P31").map(v => v.id);
-    const band = types.some(t => BAND_TYPES.has(t)) ? 3 : BANDISH.test(h.description || "") ? 2 : claim(e, "P136").length ? 1 : 0;
-    return { e, id: h.id, s: band * 10 - i + (((e.sitelinks || {}).enwiki) ? 1 : 0) }; }).sort((a, b) => b.s - a.s);
-  return scored[0] && scored[0].s > 0 ? scored[0] : null;
+    const d = h.description || "", notBand = /^(\d{4}\s+)?(song|single|album|ep|film|novel|book|episode|video game|television|tv)\b/i.test(d) || /\b(song|single|album) (by|from)\b/i.test(d);
+    const band = notBand ? 0 : types.some(t => BAND_TYPES.has(t)) ? 3 : BANDISH.test(d) ? 2 : 0;
+    return { e, id: h.id, band, s: band * 10 - i + (((e.sitelinks || {}).enwiki) ? 1 : 0) }; }).sort((a, b) => b.s - a.s);
+  return scored[0] && scored[0].band >= 2 ? scored[0] : null;
 }
 async function wikiSummary(title, fetchImpl){
   const sum = await getJSON(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title.replace(/ /g, "_"))}`, fetchImpl);
