@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile, applyActionCode } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=69";
+import { VENUES } from "./venues.js?v=70";
 import { getStorage, ref as sref, uploadBytes, uploadBytesResumable, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -3580,6 +3580,7 @@ function accountMenu(){
   root.innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-label="Account"><div class="mbox">
     <div class="me-card" style="border:0;padding:0">${avatar(PROFILE.photoURL, PROFILE.name, "lg")}<div style="min-width:0"><div class="nm">${esc(PROFILE.name||"")}</div><div class="hd">@${esc(PROFILE.handle)}</div><div class="ro">${esc(ME.email||"")}</div></div></div>
     <button class="btn red" data-myprofile style="text-align:center">View my profile${tagInbox().filter(x => x.stage === "ask").length ? ` · ${tagInbox().filter(x => x.stage === "ask").length} tag${tagInbox().filter(x => x.stage === "ask").length > 1 ? "s" : ""} to review` : ""}</button>
+    <button class="btn" data-whatsnew style="text-align:center">What's new in Pit Log</button>
     <div class="ro">Import a Pit Log export file, or a ticket-cost file. A cost file only fills in ticket totals on shows you've already logged.</div>
     <label class="btn" style="text-align:center">Import Pit Log file<input class="vh" type="file" id="importFile" accept=".json,application/json"></label>
     <div class="mbtns"><button class="btn warn" data-signout>Sign out</button><button class="btn ghost" data-mclose>Close</button></div>
@@ -3587,6 +3588,7 @@ function accountMenu(){
   root.querySelector("[data-mclose]").onclick = () => root.innerHTML = "";
   root.querySelector("[data-signout]").onclick = () => { root.innerHTML = ""; try { localStorage.removeItem(profKey(ME.uid)); } catch (_) {} signOut(auth); };
   root.querySelector("[data-myprofile]").onclick = () => { root.innerHTML = ""; S.tab = "me"; renderTab(); window.scrollTo(0, 0); };
+  root.querySelector("[data-whatsnew]").onclick = () => showWhatsNew(true);
 }
 
 async function importFile(file){
@@ -3665,7 +3667,7 @@ async function saveProfile(){
   try {
     const taken = await getDoc(doc(fdb, "handles", h));
     if (taken.exists() && taken.data().uid !== ME.uid) { msg.textContent = `@${h} is taken. Try another.`; btn.disabled = false; return; }
-    const prof = { name, handle: h, photoURL: ME.photoURL || "", createdAt: serverTimestamp() };
+    const prof = { name, handle: h, photoURL: ME.photoURL || "", createdAt: serverTimestamp(), seenBuild: MY_BUILD };
     const b = writeBatch(fdb);
     if (!taken.exists()) b.set(doc(fdb, "handles", h), { uid: ME.uid });
     b.set(doc(fdb, "users", ME.uid), prof);
@@ -3788,7 +3790,7 @@ function startApp(){
         readForm(); for (const k of ["poster","photos","merch"]) draft[k] = fresh[k]; redraw = true;
       }
     }
-    renderNext(); updateAcctBadge(); clearTimeout(checkNewPatches.t); checkNewPatches.t = setTimeout(checkNewPatches, 1600);
+    renderNext(); updateAcctBadge(); if (!WN_DONE) setTimeout(maybeWhatsNew, 1500); clearTimeout(checkNewPatches.t); checkNewPatches.t = setTimeout(checkNewPatches, 1600);
     schedulePublish();
     if (!S.open) renderTab(); else if (redraw || busy) renderSheet();
   }, err => { clearTimeout(timer); S.loaded = true; S.error = err.code === "permission-denied" ? "Your log is blocked — the Firestore rules aren't published yet." : "The log couldn't load. Reload to try again."; render(); }));
@@ -3963,6 +3965,69 @@ function pushClick(t){
   if (t.hasAttribute("data-pushoff")) { disablePush(); return true; }
   if (t.hasAttribute("data-pushtest")) { testPush(); return true; }
   return false;
+}
+
+/* ---------- What's new ----------
+   One line per change people would notice, newest first. A fix only gets a line when it ships on a later day
+   than the feature it fixes (same-day polish is part of the feature). b = the build it shipped in. */
+const WHATS_NEW = [
+  { b: 69, date: "2026-11-22", icon: "🎥", t: "Videos", d: "Add clips up to 60 seconds to any show's photos. They play in the Vault too.", go: "vault" },
+  { b: 68, date: "2026-11-22", icon: "🏅", t: "77 patches", d: "Level up ladders for shows, bands, venues, states and more, plus one-offs like Hell Week and Called It.", go: "stats:patches" },
+  { b: 67, date: "2026-11-22", icon: "🖼️", t: "Tour poster offers", d: "Logged a tour someone else has a poster for? Preview it and add it to your show in one tap." },
+  { b: 66, date: "2026-11-22", icon: "🎸", t: "Band pages", d: "Tap any band for their photo, bio, your history with them, your crew and upcoming dates. Browse them in Discover → Bands.", go: "disc:bands" },
+  { b: 66, date: "2026-11-22", icon: "⏳", t: "Countdown opens your show", d: "Tap \"Days until next show\" at the top to jump straight to it." },
+  { b: 65, date: "2026-11-22", icon: "🏠", t: "Opens on Home", d: "Pit Log now starts on your recap and Crew feed." },
+  { b: 64, date: "2026-11-22", icon: "🔔", t: "Phone notifications", d: "Tags, comments, crew requests, show day and tickets on sale. Turn them on in Settings → Phone notifications.", go: "me:push" },
+  { b: 63, date: "2026-11-22", icon: "🔄", t: "Pull to refresh on iPhone", d: "Pull down in the home-screen app to refresh. New versions now load on their own." },
+  { b: 62, date: "2026-11-22", icon: "🤘", t: "Horns up and comments", d: "Throw 🤘 and comment on your crew's shows, right from the feed." },
+  { b: 61, date: "2026-11-22", icon: "📰", t: "Crew feed", d: "Home now shows what your crew logged lately, with quick stats on top.", go: "home" },
+  { b: 60, date: "2026-11-22", icon: "🏷️", t: "Approve tags", d: "Confirm or decline when a friend tags you, and choose whether you show as First L. or @username.", go: "me" },
+  { b: 58, date: "2026-11-17", icon: "🌙", t: "Tonight shares", d: "Sharing a show on the day says \"We'll be there tonight!\"" },
+  { b: 57, date: "2026-11-17", icon: "📣", t: "Who you went with on shares", d: "Share images list up to 3 of your crew, plus how many more." },
+];
+const seenBuildOf = () => { const p = Number(PROFILE && PROFILE.seenBuild) || 0; let l = 0; try { l = Number(localStorage.getItem("pitlog.seenBuild." + (ME && ME.uid))) || 0; } catch (_) {} return Math.max(p, l); };
+async function markSeen(){
+  try { localStorage.setItem("pitlog.seenBuild." + ME.uid, String(MY_BUILD)); } catch (_) {}
+  if ((Number(PROFILE.seenBuild) || 0) >= MY_BUILD) return;
+  PROFILE.seenBuild = MY_BUILD; try { await updateDoc(doc(fdb, "users", ME.uid), { seenBuild: MY_BUILD }); } catch (_) {}
+}
+function showWhatsNew(all){
+  const since = seenBuildOf();
+  // People who've never been shown this get recent highlights, not the whole history.
+  let list = all ? WHATS_NEW : WHATS_NEW.filter(x => x.b > since && x.b <= MY_BUILD);
+  if (!all && !since) list = WHATS_NEW.slice(0, 6);
+  if (!list.length) { if (!all) markSeen(); return false; }
+  const more = !all && list.length > 6, shown = all ? list : list.slice(0, 6);
+  const root = $("#modalRoot");
+  root.innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-label="What's new in Pit Log"><div class="mbox wnew">
+    <h3>What's new in Pit Log</h3>
+    ${!all ? `<div class="ro">Since you were last here:</div>` : ""}
+    <div class="wnlist">${shown.map((x, i) => `<${x.go ? `button data-wngo="${esc(x.go)}"` : "div"} class="wnitem"><span class="wni">${x.icon}</span><span><b>${esc(x.t)}</b><span class="ro">${esc(x.d)}</span>${all ? `<span class="wnd">${esc(fmtDate(x.date))}</span>` : ""}</span>${x.go ? `<span class="chev">›</span>` : ""}</${x.go ? "button" : "div"}>`).join("")}</div>
+    ${more ? `<button class="linkbtn" data-wnall>See all ${list.length} updates</button>` : ""}
+    <div class="mbtns"><button class="btn red" data-wnok>Got it</button></div></div></div>`;
+  root.onclick = e => {
+    const b = e.target.closest("button"); if (!b) return;
+    if (b.hasAttribute("data-wnall")) { showWhatsNew(true); return; }
+    if (b.hasAttribute("data-wnok")) { root.innerHTML = ""; root.onclick = null; markSeen(); return; }
+    if (b.dataset.wngo) { root.innerHTML = ""; root.onclick = null; markSeen(); whatsNewGo(b.dataset.wngo); }
+  };
+  return true;
+}
+function whatsNewGo(go){
+  const [tab, sub] = go.split(":");
+  if (tab === "disc") { S.disc.view = sub || "up"; }
+  if (tab === "vault" && S.vault) S.vault.type = "videos";
+  S.tab = tab; renderTab(); window.scrollTo(0, 0);
+  if (tab === "stats" && sub) setTimeout(() => $("#" + sub)?.scrollIntoView({ block: "start" }), 80);
+  if (tab === "me" && sub === "push") setTimeout(() => { const d = document.querySelector('[data-setgrp="push"]'); if (d) { d.open = true; d.scrollIntoView({ block: "start" }); } }, 80);
+}
+// Once per launch, after your log has loaded, if nothing else is open.
+let WN_DONE = false;
+function maybeWhatsNew(){
+  if (WN_DONE || !S.loaded || !PROFILE || !MY_BUILD) return; WN_DONE = true;
+  if (seenBuildOf() >= MY_BUILD) return;
+  if (S.open || $("#modalRoot").innerHTML || START_GO) { markSeen(); return; }
+  showWhatsNew(false);
 }
 
 /* ---------- Pull to refresh + update check ----------
