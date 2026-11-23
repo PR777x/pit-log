@@ -63,7 +63,10 @@ async function findBandEntity(name, fetchImpl){
 async function wikiSummary(title, fetchImpl){
   const sum = await getJSON(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title.replace(/ /g, "_"))}`, fetchImpl);
   if (!sum || sum.type === "disambiguation") return null;
-  return { about: String(sum.extract || "").slice(0, 900), image: (sum.originalimage && sum.originalimage.width <= 2400 ? sum.originalimage.source : (sum.thumbnail || {}).source) || "", wiki: ((sum.content_urls || {}).desktop || {}).page || "" };
+  // Big originals get a 1200px copy (Wikimedia's thumbnail URLs take the width in the path).
+  const o = sum.originalimage, t = (sum.thumbnail || {}).source || "";
+  const image = o && o.width <= 1600 ? o.source : t ? t.replace(/\/\d+px-/, "/1200px-").replace(/\?.*$/, "") : (o && o.source) || "";
+  return { about: String(sum.extract || "").slice(0, 900), image, wiki: ((sum.content_urls || {}).desktop || {}).page || "" };
 }
 async function bandInfo(name, { fetchImpl = fetch } = {}){
   const hit = await findBandEntity(name, fetchImpl);
