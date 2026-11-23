@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile, applyActionCode } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=66";
+import { VENUES } from "./venues.js?v=67";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -873,6 +873,7 @@ function renderShowView(fresh){
     ${d.notes ? `<div class="sect"><h3>Notes</h3><div class="vtext">${esc(d.notes)}</div></div>` : ""}
     ${people.length ? `<div class="sect"><h3>Went with</h3><div class="tagrow">${people.map(p => `<span class="chip${p.no ? " tagno" : ""}"${p.no ? ` title="Said they weren't there"` : ""}>${esc(p.n)}${p.no ? " · not there" : ""}</span>`).join("")}</div></div>` : ""}
     ${money.length ? `<div class="sect"><h3>The damage</h3><div class="ro vmoney">${money.map(esc).join(" · ")}</div></div>` : ""}
+    ${!d.poster && !ro && !d.posterSkip ? `<div id="poOffer"></div>` : ""}
     ${!d.poster && !ro ? `<div class="sect"><h3>Tour poster</h3><label class="btn">Upload poster<input class="vh" type="file" data-upkind="poster" accept="image/*,.heic,.heif" aria-label="Upload poster"></label></div>` : ""}
     ${media}
     <div class="sect"><h3>Comments</h3>${d.id !== "__new" ? `<div class="socrow" data-soc="${esc(owner + "__" + d.id)}">${hornsBtn(owner + "__" + d.id, SOC.get(owner + "__" + d.id))}<span class="likers ro"></span></div>` : ""}<div id="cmts"><div class="ro">Loading…</div></div>
@@ -880,6 +881,8 @@ function renderShowView(fresh){
   </div></div>`;
   const sh = $("#sheetRoot .sheet"); if (sh && !fresh) sh.scrollTop = scroll;
   loadComments(); resolveSpotify(lu);
+  if (!d.poster && !ro && !d.posterSkip && d.id !== "__new") posterCandidates(d).then(list => { const box = $("#poOffer"); if (!box || !list.length || draft !== d) return;
+    box.innerHTML = `<button class="pobanner" data-poopen><img src="${esc(src(list[0].url))}" alt=""><span><b>Tour poster available</b><br><span class="ro">From @${esc(list[0].who.handle || "someone")}${list.length > 1 ? ` +${list.length - 1} more` : ""}. Tap to preview.</span></span></button>`; });
 }
 /* ---------- 🤘 likes + comments (show view and Crew feed) ----------
    Likes: showLikes/{owner__showId}/u/{uid}. Comments: showComments/{owner__showId}/c. Cached per show here. */
@@ -1078,6 +1081,7 @@ async function save(){
     if (draft.id === "__new") { body.addedAt = Date.now(); const ref = await addDoc(myShows(), body); draft.id = ref.id; S.open = ref.id; toast("Show added"); }
     else { await setDoc(myShow(draft.id), body); toast("Saved"); pushShared(body); }
     S.editing = false;
+    if (!body.poster && !body.posterSkip) { const saved = { ...body, id: draft.id }; setTimeout(() => offerPoster(saved, true), 700); }
   } catch(e){ handleWriteErr(e); }
   busy = false; renderSheet(true);
 }
@@ -1340,6 +1344,7 @@ document.addEventListener("click", e => {
   else if (t.hasAttribute("data-viewmode")) { const s0 = S.shows.find(x => x.id === draft.id); if (s0) draft = JSON.parse(JSON.stringify(s0)); S.editing = false; S.multiOpen = false; renderSheet(true); }
   else if (t.dataset.brate) { readForm(); const [b, i] = [t.dataset.brate.slice(0, t.dataset.brate.lastIndexOf("|")), Number(t.dataset.brate.split("|").pop())]; draft.bandRatings = { ...(draft.bandRatings || {}) }; const nv = stepRating(Number(draft.bandRatings[b]) || 0, i); if (nv) draft.bandRatings[b] = nv; else delete draft.bandRatings[b]; renderSheet(); }
   else if (t.hasAttribute("data-share")) shareShow(draft);
+  else if (t.hasAttribute("data-poopen")) offerPoster(S.shows.find(x => x.id === draft.id));
   else if (t.hasAttribute("data-getsetlist")) fetchSetlists(draft);
   else if (t.hasAttribute("data-cpost")) postComment();
   else if (t.dataset.cdel) deleteComment(t.dataset.cdel);
@@ -2042,7 +2047,10 @@ function renderBand(){
   const tours = [...new Set(dates.map(r => r.t).filter(Boolean))];
   const myV = new Set(S.shows.map(x => vkey(x.venue)).filter(Boolean));
   const info = BANDINFO.get(k), ready = info && !(info instanceof Promise);
-  const I = ready ? info : null;
+  let I = ready ? info : null;
+  // No photo out there: use one of your own (a photo tagged with them, else a poster from a show they played).
+  if (I && !I.image) { const own = seen.flatMap(s => items(s, "photos").filter(m => m.type !== "video" && (m.bands || []).some(b => normBand(b) === k)).map(m => m.url || m.id))[0] || (seen.find(s => s.poster) && pid(seen.find(s => s.poster).poster));
+    if (own) I = { ...I, image: src(own), imageSmall: "", imageCredit: "your Vault" }; }
   const tile = (l, v) => `<div class="tile"><div class="lbl">${l}</div><div class="v num">${v}</div></div>`;
   const link = (u, l) => u ? `<a class="chip blink" href="${esc(u)}" target="_blank" rel="noopener">${l}</a>` : "";
   $("#view").innerHTML = `<div class="bandp">
@@ -2053,7 +2061,7 @@ function renderBand(){
         ${I && I.genres && I.genres.length ? `<div class="tagrow">${I.genres.map(g => `<span class="chip dim">${esc(g)}</span>`).join("")}</div>` : ""}</div></section>
     <div class="tagrow">${link(spotifyUrl(name) && (I && I.links && I.links.spotify || spotifyUrl(name)), "▶ Spotify")}${I && I.links ? link(I.links.site, "Website") + link(I.links.instagram, "Instagram") + link(I.links.bandcamp, "Bandcamp") + link(I.links.youtube, "YouTube") : ""}
       <button class="chip${inBucket ? " bkc" : ""}" data-bandbucket>${inBucket ? "✓ On your bucket list" : "+ Bucket list"}</button></div>
-    ${I && I.about ? `<section class="sect"><h3>About</h3><p class="babout">${esc(I.about)}</p>${I.wiki ? `<div class="ro">From <a href="${esc(I.wiki)}" target="_blank" rel="noopener">Wikipedia</a>${I.image ? ", photo via Wikimedia Commons" : ""}.</div>` : ""}</section>` : ready && !I.found ? `<div class="ro" style="margin-top:8px">No profile found for this band yet.</div>` : ""}
+    ${I && I.about ? `<section class="sect"><h3>About</h3><p class="babout">${esc(I.about)}</p>${I.wiki ? `<div class="ro">From <a href="${esc(I.wiki)}" target="_blank" rel="noopener">Wikipedia</a>${I.image ? `, photo ${I.imageCredit === "your Vault" ? "from your Vault" : "via " + esc(I.imageCredit || "Wikimedia Commons")}` : ""}.</div>` : ""}</section>` : ready && !I.found ? `<div class="ro" style="margin-top:8px">No profile found for this band yet.</div>` : ""}
     <section class="sect"><h3>You and ${esc((I && I.name) || name)}</h3>
       ${seen.length || coming.length ? `<div class="tiles">${tile("Times seen", seen.length)}${tile("As headliner", head)}${tile("First seen", seen.length ? parse(seen[seen.length - 1].date).y : "–")}${tile("Your rating", avgB ? fmtRating(avgB) : "–")}</div>
         <div class="plist">${coming.map(s => showRow(s, null, "Coming up")).join("")}${seen.slice(0, 6).map(s => showRow(s, null, "")).join("")}</div>${seen.length > 6 ? `<div class="ro">+${seen.length - 6} more in your log</div>` : ""}`
@@ -2115,6 +2123,50 @@ function bandClick(t){
   if (t.hasAttribute("data-bandmore")) { S.disc.view = "up"; S.disc.q = S.band; S.disc.mode = "all"; S.tab = "disc"; renderTab(); return true; }
   if (t.hasAttribute("data-bandpast")) { S.disc.view = "past"; PAST.q = S.band; S.tab = "disc"; renderTab(); searchPast(false); return true; }
   return false;
+}
+
+/* ---------- Tour poster offers ----------
+   When you save a show without a poster, look for the same tour logged by someone else (your crew, or anyone's
+   public shows): same headliner, plus the same tour name or a date within ~6 weeks. Offer their poster with a preview. */
+async function posterCandidates(s){
+  const head = normBand(lineup(s)[0] || ""); if (!head || !s.date) return [];
+  const tour = normBand(s.tour || ""), day = iso => parse(iso).dt.getTime() / 864e5;
+  const fits = o => { if (!o || !o.poster || !o.date) return false; const lu = lineup(o).map(normBand); if (!lu.includes(head)) return false;
+    const t2 = normBand(o.tour || ""), near = Math.abs(day(o.date) - day(s.date)) <= 45;
+    return tour && t2 ? (t2 === tour || t2.includes(tour) || tour.includes(t2)) && Math.abs(day(o.date) - day(s.date)) <= 400 : near; };
+  const out = [], seen = new Set((s.posterDeclined || []));
+  const push = (o, who) => { const u = pid(o.poster); if (!u || seen.has(u)) return; seen.add(u); out.push({ url: u, who, show: o }); };
+  for (const f of friendList()) for (const o of (f.shows || [])) if (fits(o)) push(o, f);
+  try { await fetchPublicBand(head); for (const o of (MATCH.pub.get("bandKeys:" + head) || [])) if (fits(o)) push(o, { uid: o.ownerUid, handle: o.ownerHandle || "someone" }); } catch (_) {}
+  return out.slice(0, 4);
+}
+async function offerPoster(s, afterSave){
+  if (!s || !s.id || s.poster || s.posterSkip) return;
+  const list = await posterCandidates(s); if (!list.length) return;
+  const cur = S.shows.find(x => x.id === s.id); if (!cur || cur.poster) return;
+  if (afterSave && $("#modalRoot").innerHTML) return;
+  let pick = 0;
+  const root = $("#modalRoot");
+  const draw = () => { root.innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-label="Tour poster available"><div class="mbox posteroffer">
+    <h3>Tour poster available</h3>
+    <div class="ro">${list.length > 1 ? `${list.length} people logged this tour with a poster. Pick one for` : `@${esc(list[0].who.handle || "someone")} logged this tour with a poster. Use it for`} <b class="bone">${esc(headline(s))}</b> on ${esc(fmtDate(s.date))}?</div>
+    <div class="poprev"><img src="${esc(src(list[pick].url))}" alt="Tour poster from @${esc(list[pick].who.handle || "")}" onerror="this.alt='Preview unavailable'"></div>
+    <div class="ro" style="text-align:center">From @${esc(list[pick].who.handle || "someone")}'s ${esc(fmtDate(list[pick].show.date))} show${list[pick].show.venue ? " at " + esc(list[pick].show.venue) : ""}</div>
+    ${list.length > 1 ? `<div class="pothumbs">${list.map((c, i) => `<button class="pothumb${i === pick ? " on" : ""}" data-popick="${i}" aria-label="Poster ${i + 1}"><img src="${esc(src(c.url))}" alt=""></button>`).join("")}</div>` : ""}
+    <div class="mbtns"><button class="btn ghost" data-pono>No thanks</button><button class="btn red" data-poyes>Use this poster</button></div></div></div>`; };
+  draw();
+  root.onclick = async e => {
+    const b = e.target.closest("button"); if (!b) return;
+    if (b.dataset.popick) { pick = Number(b.dataset.popick); draw(); return; }
+    if (b.hasAttribute("data-pono")) { root.innerHTML = ""; root.onclick = null; try { await updateDoc(myShow(s.id), { posterSkip: true }); } catch (_) {} return; }
+    if (b.hasAttribute("data-poyes")) {
+      const c = list[pick]; b.disabled = true; b.textContent = "Adding…";
+      try { const m = await copyMedia({ url: c.url, type: "image" }, s.id, "poster", c.who.uid);
+        await updateDoc(myShow(s.id), { poster: { url: m.url, path: m.path, ...(m.sharedFrom ? { sharedFrom: m.sharedFrom } : {}) } });
+        toast("Poster added 🤘"); } catch (err) { handleWriteErr(err); }
+      root.innerHTML = ""; root.onclick = null;
+    }
+  };
 }
 
 /* ---------- Crew feed: what your crew added lately ---------- */

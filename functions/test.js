@@ -452,6 +452,16 @@ const sentTo = who => emails.filter(e => e.to[0] === who + "@example.com");
   assert.deepStrictEqual(bi.genres, ["melodic death metal", "doom metal"]); assert.strictEqual(bi.links.spotify, "https://open.spotify.com/artist/sp9");
   assert.strictEqual(bi.links.instagram, "https://www.instagram.com/insomniumofficial/"); assert.strictEqual(bi.links.site, "https://insomnium.net");
   assert.match(bi.about, /melodic death metal band/); assert.strictEqual(bi.image, "https://upload.wikimedia.org/i.jpg");
+  const fake23b = async url => ({ ok: true, status: 200, json: async () => {
+    if (url.includes("wbsearchentities")) return { search: [] };
+    if (url.includes("list=search")) return { query: { search: [{ title: "156/Silence" }] } };
+    if (url.includes("page/summary/156%2FSilence") || url.includes("page/summary/156/Silence")) return { type: "standard", extract: "156/Silence is an American metalcore band from Pittsburgh founded in 2015.", wikibase_item: "Q77", content_urls: { desktop: { page: "https://en.wikipedia.org/wiki/156/Silence" } } };
+    if (url.includes("wbgetentities") && url.includes("Q77")) return { entities: { Q77: { claims: { P571: [{ mainsnak: { datavalue: { value: { time: "+2015-00-00T00:00:00Z" } } } }] }, labels: { en: { value: "156/Silence" } } } } };
+    if (url.includes("deezer")) return { data: [{ name: "156/Silence", picture_xl: "https://e-cdns-images.dzcdn.net/images/artist/abc/1000x1000.jpg", picture_big: "https://e-cdns-images.dzcdn.net/images/artist/abc/500x500.jpg", link: "https://www.deezer.com/artist/1" }] };
+    if (url.includes("page/summary")) return { type: "standard", extract: "Something else entirely." };
+    return {}; } });
+  const b156 = await A23.bandInfo("156/Silence", { fetchImpl: fake23b });
+  assert.match(b156.about, /metalcore band/); assert.strictEqual(b156.formed, "2015", "origin/years from the article's Wikidata entry"); assert.strictEqual(b156.image, "https://e-cdns-images.dzcdn.net/images/artist/abc/1000x1000.jpg"); assert.strictEqual(b156.imageCredit, "Deezer");
   const sl = await A23.lookup("Insomnium", { fetchImpl: fake23, pause: async () => {} }); assert.strictEqual(sl.spotify, "https://open.spotify.com/artist/sp9", "Spotify from Wikidata, no MusicBrainz needed");
 
   console.log("All email function tests passed.");

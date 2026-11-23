@@ -69,14 +69,38 @@ async function wikiSummary(title, fetchImpl){
   // Wikimedia only serves thumbnails at standard widths (…, 330, 500, 960, 1280); 960 looks sharp on phones.
   const small = t ? t.replace(/\?.*$/, "") : "";
   const image = o && o.width <= 1280 ? o.source : small ? small.replace(/\/\d+px-/, "/960px-") : (o && o.source) || "";
-  return { about: String(sum.extract || "").slice(0, 900), image, imageSmall: small || image, wiki: ((sum.content_urls || {}).desktop || {}).page || "" };
+  return { about: String(sum.extract || "").slice(0, 900), image, imageSmall: small || image, wiki: ((sum.content_urls || {}).desktop || {}).page || "", wd: sum.wikibase_item || "" };
 }
 async function bandInfo(name, { fetchImpl = fetch } = {}){
   const hit = await findBandEntity(name, fetchImpl);
   const out = { found: false, name, origin: "", formed: "", ended: "", genres: [], links: {}, about: "", image: "", wiki: "" };
   let title = "";
-  if (hit) {
-    const e = hit.e; out.found = true; out.name = ((e.labels || {}).en || {}).value || name; out.wd = hit.id;
+  if (hit) { await fillFromEntity(out, hit.e, hit.id, name, fetchImpl); title = ((hit.e.sitelinks || {}).enwiki || {}).title || ""; }
+  // No Wikidata match (or no English article linked): try Wikipedia directly. Only accept a page that says it's about a band.
+  const IS_BAND = /\b(is|are|was|were)\s+(an?\s+|the\s+)?[^.]{0,80}?\b(band|group|duo|trio|supergroup|musical project)\b/i;
+  let tries = title ? [title] : [`${name} (band)`, `${name} (American band)`, name];
+  if (!title) try {
+    const sr = await getJSON(`https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(name + " band")}&srlimit=5&format=json&origin=*`, fetchImpl);
+    for (const r of ((sr.query || {}).search || [])) if (norm(String(r.title).replace(/\s*\(.*\)$/, "")) === norm(name) && !tries.includes(r.title)) tries.splice(1, 0, r.title);
+  } catch (_) {}
+  for (const t of tries) {
+    try { const w = await wikiSummary(t, fetchImpl); if (w && (title || IS_BAND.test(w.about.slice(0, 300)))) {
+      out.about = w.about; out.wiki = w.wiki; if (w.image) { out.image = w.image; out.imageSmall = w.imageSmall; } out.found = true;
+      // Found the article without Wikidata search: its Wikidata entry still has origin, genres and links.
+      if (!out.wd && w.wd) try { const ents = await wdEntities([w.wd], "claims|sitelinks|labels", fetchImpl); if (ents[w.wd]) await fillFromEntity(out, ents[w.wd], w.wd, name, fetchImpl); } catch (_) {}
+      break; } } catch (_) {}
+  }
+  // Still no photo: Deezer's artist picture (free, no key). Skip its blank placeholder.
+  if (!out.image) try {
+    const dz = await getJSON(`https://api.deezer.com/search/artist?q=${encodeURIComponent(name)}&limit=5`, fetchImpl);
+    const a = ((dz && dz.data) || []).find(x => norm(x.name) === norm(name) && x.picture_xl && !/\/artist\/\/|\/images\/artist\/\//.test(x.picture_xl));
+    if (a) { out.image = a.picture_xl; out.imageSmall = a.picture_big || a.picture_xl; out.imageCredit = "Deezer"; out.found = true; if (!out.links.deezer && a.link) out.links.deezer = a.link; }
+  } catch (_) {}
+  return out;
+}
+async function fillFromEntity(out, e, id, name, fetchImpl){
+  {
+    out.found = true; out.name = ((e.labels || {}).en || {}).value || out.name || name; out.wd = id;
     out.formed = yearOf(claim(e, "P571")[0]); const end = yearOf(claim(e, "P576")[0]); if (end) out.ended = end;
     const place = claim(e, "P740").map(v => v.id), country = claim(e, "P495").map(v => v.id), genres = claim(e, "P136").map(v => v.id).slice(0, 6);
     const labels = await wdEntities([...new Set([...place.slice(0, 1), ...country.slice(0, 1), ...genres])], "labels", fetchImpl).catch(() => ({}));
@@ -87,19 +111,7 @@ async function bandInfo(name, { fetchImpl = fetch } = {}){
     if (site) out.links.site = site; if (sp) out.links.spotify = `https://open.spotify.com/artist/${sp}`;
     if (ig) out.links.instagram = `https://www.instagram.com/${ig}/`; if (bc) out.links.bandcamp = `https://${bc}.bandcamp.com`;
     if (yt) out.links.youtube = `https://www.youtube.com/channel/${yt}`;
-    const p18 = claim(e, "P18")[0]; if (p18) out.image = out.imageSmall = `https://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(p18)}?width=960`;
-    title = ((e.sitelinks || {}).enwiki || {}).title || "";
+    const p18 = claim(e, "P18")[0]; if (p18 && !out.image) out.image = out.imageSmall = `https://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(p18)}?width=960`;
   }
-  // No Wikidata match (or no English article linked): try Wikipedia directly. Only accept a page that says it's about a band.
-  const IS_BAND = /\b(is|are|was|were)\s+(an?\s+|the\s+)?[^.]{0,80}?\b(band|group|duo|trio|supergroup|musical project)\b/i;
-  let tries = title ? [title] : [`${name} (band)`, `${name} (American band)`, name];
-  if (!title) try {
-    const sr = await getJSON(`https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(name + " band")}&srlimit=5&format=json&origin=*`, fetchImpl);
-    for (const r of ((sr.query || {}).search || [])) if (norm(String(r.title).replace(/\s*\(.*\)$/, "")) === norm(name) && !tries.includes(r.title)) tries.splice(1, 0, r.title);
-  } catch (_) {}
-  for (const t of tries) {
-    try { const w = await wikiSummary(t, fetchImpl); if (w && (title || IS_BAND.test(w.about.slice(0, 300)))) { out.about = w.about; out.wiki = w.wiki; if (w.image) { out.image = w.image; out.imageSmall = w.imageSmall; } out.found = true; break; } } catch (_) {}
-  }
-  return out;
 }
 module.exports = { lookup, norm, bandInfo };

@@ -481,7 +481,7 @@ exports.account = onRequest({ cors: [/thepitlog\.com$/, /localhost/, /pr777x\.gi
   }
   if (action === "bandInfo") {
     const band = String((req.body && req.body.band) || "").trim().slice(0, 80); if (!band) return res.status(400).json({ error: "which band?" });
-    const key = "b2_" + A.norm(band).slice(0, 80); if (key.length < 3) return res.json({ found: false, name: band });
+    const key = "b3_" + A.norm(band).slice(0, 80); if (key.length < 3) return res.json({ found: false, name: band });
     const ref = db.doc(`bandInfo/${key}`), c = await ref.get();
     if (c.exists && Date.now() - c.data().at < (c.data().info.found ? 30 : 7) * 864e5) return res.json(c.data().info);
     try { const info = await A.bandInfo(band); await ref.set({ at: Date.now(), info }); return res.json(info); }

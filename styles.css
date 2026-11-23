@@ -815,3 +815,12 @@ nav.tabs .bslot:empty{display:none}
 .bandcard .chev{grid-column:2;grid-row:1/3;color:var(--ash);font-size:22px}
 .bandcard.any{border-color:var(--blood);margin-bottom:10px}
 .next[data-nextid]{cursor:pointer}
+/* tour poster offer */
+.posteroffer{display:grid;gap:10px}
+.poprev{display:grid;place-items:center;background:#000;border:1px solid var(--iron);padding:8px}
+.poprev img{max-width:100%;max-height:52vh;object-fit:contain;display:block}
+.pothumbs{display:flex;gap:6px;justify-content:center}
+.pothumb{padding:0;border:2px solid var(--iron);background:#000;width:56px;height:74px;cursor:pointer}
+.pothumb.on{border-color:var(--blood-hi)}.pothumb img{width:100%;height:100%;object-fit:cover;display:block}
+.pobanner{display:flex;gap:12px;align-items:center;text-align:left;width:100%;background:rgba(181,18,27,.12);border:1px solid var(--blood);padding:8px 10px;color:var(--bone);font:inherit;cursor:pointer;margin:6px 0}
+.pobanner img{width:46px;height:62px;object-fit:cover;border:1px solid var(--iron)}
