@@ -1,0 +1,60 @@
+name: Diagnose (read-only)
+
+# Read-only checks for troubleshooting: recent server logs for one feature, and a live lookup from a runner.
+# Changes nothing in the app or database.
+on:
+  workflow_dispatch:
+    inputs:
+      filter:
+        description: "Log text to look for"
+        default: "bandInfo"
+      band:
+        description: "Band to look up live"
+        default: "Insomnium"
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install function dependencies
+        working-directory: functions
+        run: npm install --no-audit --no-fund
+      - name: Credentials
+        env:
+          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          node -e '
+            const fs = require("fs");
+            let raw = process.env.SA.replace(/[\r\n\t]/g, "").trim();
+            if (!raw.startsWith("{")) raw = Buffer.from(raw, "base64").toString("utf8");
+            fs.writeFileSync(process.argv[1], JSON.stringify(JSON.parse(raw)), { mode: 0o600 });
+          ' "$RUNNER_TEMP/sa.json"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/sa.json" >> "$GITHUB_ENV"
+          gcloud auth activate-service-account --key-file="$RUNNER_TEMP/sa.json" --quiet
+      - name: Recent server log lines
+        continue-on-error: true
+        env:
+          F: ${{ inputs.filter }}
+        run: |
+          gcloud logging read "resource.type=\"cloud_run_revision\" AND (textPayload:\"$F\" OR jsonPayload.message:\"$F\") AND timestamp>=\"$(date -u -d '-6 hours' +%Y-%m-%dT%H:%M:%SZ)\"" --project pit-log --limit 30 --format='value(timestamp,severity,textPayload,jsonPayload.message)' || true
+      - name: Cached band lookups
+        continue-on-error: true
+        working-directory: functions
+        run: |
+          node -e '
+            const { initializeApp } = require("firebase-admin/app"); const { getFirestore } = require("firebase-admin/firestore");
+            initializeApp(); const db = getFirestore("pit-log");
+            db.collection("bandInfo").limit(20).get().then(s => { for (const d of s.docs) { const x = d.data(); console.log(d.id, new Date(x.at).toISOString(), JSON.stringify(x.info).slice(0, 200)); } });
+          '
+      - name: Live lookup from this runner
+        continue-on-error: true
+        working-directory: functions
+        env:
+          BAND: ${{ inputs.band }}
+        run: |
+          node -e 'require("./artists").bandInfo(process.env.BAND).then(r => console.log(JSON.stringify(r).slice(0, 900))).catch(e => console.log("ERROR", e.status, e.message))'
+          curl -s -o /dev/null -w "musicbrainz %{http_code}\n" -A "PitLog/1.0 (https://thepitlog.com; support@thepitlog.com)" "https://musicbrainz.org/ws/2/artist?query=artist:%22Insomnium%22&fmt=json&limit=1"
