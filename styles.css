@@ -848,3 +848,4 @@ button.wnitem{cursor:pointer}button.wnitem:hover{border-color:var(--blood-hi)}
 .wnitem .wni{font-size:24px}.wnitem b{display:block;color:var(--bone);font-family:var(--f-label);letter-spacing:.03em}
 .wnitem .ro{display:block;font-size:13px;margin-top:2px}.wnitem .wnd{display:block;font-size:11px;color:var(--dim);margin-top:3px}
 .wnitem .chev{color:var(--ash);font-size:20px}
+.wnhist{justify-self:center;font-size:14px;color:var(--ash);text-decoration:underline;text-underline-offset:3px}

@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile, applyActionCode } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=70";
+import { VENUES } from "./venues.js?v=71";
 import { getStorage, ref as sref, uploadBytes, uploadBytesResumable, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -3969,7 +3969,8 @@ function pushClick(t){
 
 /* ---------- What's new ----------
    One line per change people would notice, newest first. A fix only gets a line when it ships on a later day
-   than the feature it fixes (same-day polish is part of the feature). b = the build it shipped in. */
+   than the feature it fixes (same-day polish is part of the feature). b = the build it shipped in.
+   Every build, user-facing or not (including removals), also gets an entry in version-history.html. */
 const WHATS_NEW = [
   { b: 69, date: "2026-11-22", icon: "🎥", t: "Videos", d: "Add clips up to 60 seconds to any show's photos. They play in the Vault too.", go: "vault" },
   { b: 68, date: "2026-11-22", icon: "🏅", t: "77 patches", d: "Level up ladders for shows, bands, venues, states and more, plus one-offs like Hell Week and Called It.", go: "stats:patches" },
@@ -4004,6 +4005,7 @@ function showWhatsNew(all){
     ${!all ? `<div class="ro">Since you were last here:</div>` : ""}
     <div class="wnlist">${shown.map((x, i) => `<${x.go ? `button data-wngo="${esc(x.go)}"` : "div"} class="wnitem"><span class="wni">${x.icon}</span><span><b>${esc(x.t)}</b><span class="ro">${esc(x.d)}</span>${all ? `<span class="wnd">${esc(fmtDate(x.date))}</span>` : ""}</span>${x.go ? `<span class="chev">›</span>` : ""}</${x.go ? "button" : "div"}>`).join("")}</div>
     ${more ? `<button class="linkbtn" data-wnall>See all ${list.length} updates</button>` : ""}
+    <a class="wnhist" href="version-history.html" target="_blank" rel="noopener">Full version history ›</a>
     <div class="mbtns"><button class="btn red" data-wnok>Got it</button></div></div></div>`;
   root.onclick = e => {
     const b = e.target.closest("button"); if (!b) return;
