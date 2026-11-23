@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile, applyActionCode } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=67";
+import { VENUES } from "./venues.js?v=68";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -409,6 +409,83 @@ function orderSpend(s){
   return Number(s.ticket) > 0 ? Number(s.ticket) * (Number(s.ticketQty) || 1) : 0;
 }
 
+/* ---------- Patches ----------
+   Ladders (each with tiers you climb, e.g. 5 → 10 → 20 → 50 shows) plus one-off patches for moments.
+   Always counted across your whole log, whatever year Stats is showing. */
+const LADDERS = [
+  { id: "shows", icon: "🎟️", t: "Shows", unit: "shows", tiers: [[1, "First Blood"], [5, "Regular"], [10, "Devoted"], [20, "Lifer"], [50, "Veteran"], [100, "Legend"], [250, "Immortal"], [500, "Pit Deity"]] },
+  { id: "bands", icon: "🎸", t: "Bands seen", unit: "bands", tiers: [[10, "Crate Digger"], [25, "Scene Kid"], [50, "Lineup Junkie"], [100, "Encyclopedia"], [250, "Walking Festival"], [500, "Everybody"]] },
+  { id: "venues", icon: "🏛️", t: "Venues", unit: "venues", tiers: [[3, "Wanderer"], [5, "Venue Hopper"], [10, "Room Collector"], [25, "Hall Crawler"], [50, "Every Stage"]] },
+  { id: "states", icon: "🗺️", t: "States", unit: "states", tiers: [[2, "Border Run"], [3, "Road Trip"], [5, "Interstate"], [10, "Coast to Coast"]] },
+  { id: "repeat", icon: "🔁", t: "Same band", unit: "times one band", tiers: [[2, "Repeat Offender"], [3, "Superfan"], [5, "Disciple"], [10, "Cult Member"]] },
+  { id: "regular", icon: "🏠", t: "Same venue", unit: "shows at one venue", tiers: [[3, "Familiar Face"], [5, "House Regular"], [10, "Furniture"], [25, "Owns the Place"]] },
+  { id: "year", icon: "📅", t: "Shows in a year", unit: "shows in one year", tiers: [[5, "Busy Year"], [10, "Packed Calendar"], [20, "Twenty Strong"], [30, "No Days Off"], [52, "Every Week"]] },
+  { id: "crew", icon: "🤘", t: "With the crew", unit: "shows with company", tiers: [[1, "Plus One"], [5, "Pack Mentality"], [10, "Wolf Pack"], [25, "Family Business"], [50, "Ride or Die"]] },
+  { id: "vault", icon: "📸", t: "Vault", unit: "photos, posters and merch", tiers: [[10, "Shutterbug"], [50, "Archivist"], [100, "Curator"], [250, "Museum"]] },
+  { id: "posters", icon: "🖼️", t: "Posters", unit: "tour posters", tiers: [[1, "First Print"], [5, "Wall Starter"], [10, "Gallery"], [25, "Poster Hoarder"]] },
+  { id: "songs", icon: "🎶", t: "Songs heard", unit: "songs from setlists", tiers: [[50, "Earful"], [250, "Ringing Ears"], [500, "Setlist Nerd"], [1000, "Human Jukebox"]] },
+  { id: "miles", icon: "🚐", t: "Miles driven", unit: "miles", tiers: [[250, "Road Dog"], [1000, "Highway Hound"], [5000, "Tour Van"]] },
+  { id: "rated5", icon: "💀", t: "Five-skull nights", unit: "5-skull shows", tiers: [[1, "Perfect Night"], [5, "Spoiled"], [10, "Connoisseur"]] },
+  { id: "fest", icon: "⛺", t: "Festivals", unit: "festivals", tiers: [[1, "Festival Survivor"], [3, "Mud Veteran"], [5, "Field General"]] },
+];
+function patchStats(){
+  const done = S.shows.filter(s => !isUpcoming(s) && s.date).sort((a, b) => a.date.localeCompare(b.date));
+  const bandN = counts(done.flatMap(lineup)), venueN = counts(done.map(s => s.venue || "")).filter(v => v.name);
+  const states = new Set(done.map(s => ((s.city || "").split(",")[1] || "").trim().toUpperCase()).filter(x => /^[A-Z]{2}$/.test(x)));
+  const perYear = counts(done.map(s => String(parse(s.date).y)));
+  const vault = done.reduce((n, s) => n + (s.poster ? 1 : 0) + items(s, "photos").length + items(s, "merch").length, 0);
+  const songs = done.reduce((n, s) => n + Object.values(s.songs || {}).reduce((a, l) => a + (Array.isArray(l) ? l.length : 0), 0), 0);
+  const v = { shows: done.length, bands: bandN.length, venues: venueN.length, states: states.size, repeat: bandN[0] ? bandN[0].n : 0, regular: venueN[0] ? venueN[0].n : 0,
+    year: perYear.length ? Math.max(...perYear.map(c => c.n)) : 0, crew: done.filter(s => companions(s).length).length, vault, posters: done.filter(s => s.poster).length, songs,
+    miles: Math.round(done.reduce((a, s) => a + (Number(s.miles) || 0), 0)), rated5: done.filter(s => Number(s.rating) >= 5).length, fest: done.filter(s => s.endDate && s.endDate > s.date).length };
+  const day = s => parse(s.date).dt.getTime() / 864e5, dates = done.map(day);
+  // Saw a band as support, then later headlining.
+  const firstSupport = new Map(); let climbed = "";
+  for (const s of done) { const lu = lineup(s); lu.slice(s.coHead ? 2 : 1).forEach(b => { const k = normBand(b); if (!firstSupport.has(k)) firstSupport.set(k, b); }); const h = normBand(lu[0] || ""); if (!climbed && firstSupport.has(h) && day(s) > 0) climbed = lu[0]; }
+  const single = [
+    { id: "b2b", icon: "🌙", t: "Back-to-Back", d: "Shows on consecutive nights", on: dates.some((d, i) => i && d - dates[i - 1] === 1) },
+    { id: "triple", icon: "🔥", t: "Hell Week", d: "3 shows in 7 days", on: dates.some((d, i) => i >= 2 && d - dates[i - 2] <= 6) },
+    { id: "halloween", icon: "🎃", t: "Hallowed Night", d: "A show on Halloween", on: done.some(s => s.date.slice(5) === "10-31") },
+    { id: "nye", icon: "🎆", t: "Countdown", d: "A show on New Year's Eve", on: done.some(s => s.date.slice(5) === "12-31") },
+    { id: "valentine", icon: "🖤", t: "Blood Valentine", d: "A show on Valentine's Day", on: done.some(s => s.date.slice(5) === "02-14") },
+    { id: "rail", icon: "🚧", t: "Barricade Bound", d: "Logged a show on the rail", on: done.some(s => s.spot === "Barricade") },
+    { id: "pit5", icon: "🌀", t: "Pit Rat", d: "Max pit intensity at a show", on: done.some(s => Number(s.pit) >= 5) },
+    { id: "arena", icon: "🏟️", t: "Arena Mass", d: "An arena or amphitheater show", on: done.some(s => /arena|pavilion|amphitheat|center|stadium/i.test(s.venue || "")) },
+    { id: "tiny", icon: "🕯️", t: "Basement Dweller", d: "A show at a bar, club or basement", on: done.some(s => /\b(bar|club|basement|tavern|pub|lounge|saloon)\b/i.test(s.venue || "")) },
+    { id: "far", icon: "🛣️", t: "Long Haul", d: "One show 200+ miles round trip", on: done.some(s => Number(s.miles) >= 200) },
+    { id: "climb", icon: "📈", t: "Called It", d: climbed ? `Saw ${climbed} open, then headline` : "Saw a band open, then later headline", on: !!climbed },
+    { id: "merch", icon: "👕", t: "Merch Table Raid", d: "$100+ on merch in one night", on: done.some(s => Number(s.merchSpend) >= 100) },
+    { id: "setlist", icon: "📝", t: "Setlist Keeper", d: "Setlists saved for 10 shows", on: done.filter(s => Object.keys(s.songs || {}).length).length >= 10 },
+    { id: "family", icon: "🩸", t: "Blood Bond", d: "Linked logs with Crew Family", on: friendList().some(f => f.family) },
+    { id: "pack", icon: "📣", t: "Pack Leader", d: "3 or more people in your crew", on: friendList().length >= 3 },
+  ];
+  const ladders = LADDERS.map(L => { const have = v[L.id] || 0; let tier = -1; L.tiers.forEach(([n], i) => { if (have >= n) tier = i; });
+    const next = L.tiers[tier + 1]; return { ...L, have, tier, name: tier >= 0 ? L.tiers[tier][1] : L.tiers[0][1], at: tier >= 0 ? L.tiers[tier][0] : 0, next: next ? next[0] : 0, nextName: next ? next[1] : "" }; });
+  return { ladders, single, earned: ladders.reduce((n, l) => n + l.tier + 1, 0) + single.filter(x => x.on).length, total: LADDERS.reduce((n, l) => n + l.tiers.length, 0) + single.length };
+}
+function patchesSection(){
+  const P = patchStats();
+  const lad = P.ladders.map(l => { const on = l.tier >= 0, pct = l.next ? Math.min(100, Math.round(l.have / l.next * 100)) : 100;
+    return `<div class="patch ladder${on ? " on" : ""}${!l.next && on ? " maxed" : ""}" title="${esc(l.t)}"><div class="pemb"><span class="pic">${l.icon}</span>${on ? `<span class="ptier">${roman(l.tier + 1)}</span>` : ""}</div>
+      <div class="pt"><div class="t">${esc(on ? l.name : l.t)}</div><div class="d">${on ? `${l.at.toLocaleString()} ${esc(l.unit)}` : `Locked · ${esc(l.unit)}`}</div>
+      ${l.next ? `<div class="pbar"><i style="width:${pct}%"></i></div><div class="d">${l.have.toLocaleString()} / ${l.next.toLocaleString()} to <b>${esc(l.nextName)}</b></div>` : `<div class="d">Top tier 🤘</div>`}</div></div>`; }).join("");
+  const one = P.single.slice().sort((a, b) => b.on - a.on).map(x => `<div class="patch one${x.on ? " on" : ""}"><div class="pemb"><span class="pic">${x.icon}</span></div><div class="pt"><div class="t">${esc(x.t)}</div><div class="d">${esc(x.d)}</div></div></div>`).join("");
+  return `<section id="patches"><h2>Patches <span class="lbl">${P.earned} of ${P.total}</span></h2><div class="ro" style="margin:-4px 0 10px">Counted across your whole log. Climb a ladder to level up its patch.</div>
+    <div class="patches">${lad}</div><h3 class="psub">One-offs</h3><div class="patches small">${one}</div></section>`;
+}
+const roman = n => ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"][n] || String(n);
+// New patch since last time: celebrate once.
+function checkNewPatches(){
+  if (!S.loaded || !ME) return;
+  const P = patchStats(), now = [...P.ladders.filter(l => l.tier >= 0).map(l => l.id + ":" + l.tier), ...P.single.filter(x => x.on).map(x => x.id)];
+  const key = "pitlog.patches." + ME.uid; let prev = null; try { prev = JSON.parse(localStorage.getItem(key) || "null"); } catch (_) {}
+  try { localStorage.setItem(key, JSON.stringify(now)); } catch (_) {}
+  if (!prev) return; // first run: don't flood with everything already earned
+  const fresh = now.filter(x => !prev.includes(x)); if (!fresh.length) return;
+  const f = fresh[fresh.length - 1], [id, tier] = f.split(":"), L = P.ladders.find(l => l.id === id), one = P.single.find(x => x.id === id);
+  const name = L ? `${L.icon} ${L.tiers[Number(tier)][1]}` : one ? `${one.icon} ${one.t}` : "";
+  if (name) toast(`New patch: ${name}${fresh.length > 1 ? ` (+${fresh.length - 1} more)` : ""}`, 4500);
+}
 function renderStats(){
   const all = sorted().filter(inYear), done = all.filter(s=>!isUpcoming(s)), up = all.filter(isUpcoming);
   if (!S.loaded || !all.length) { $("#view").innerHTML = `<div class="filters">${yearSeg()}${crewToggle()}</div><div class="empty" style="margin-top:16px"><h3>No stats yet</h3><div>Stats build up as shows are logged.</div></div>`; return; }
@@ -424,16 +501,6 @@ function renderStats(){
   const repeats = bands.filter(b=>b.n>1);
   const dates = new Set(done.map(s=>s.date));
   const backToBack = done.some(s=>{ const d = parse(s.date).dt; d.setDate(d.getDate()+1); const k = d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); return dates.has(k); });
-  const badges = [
-    {t:"Back-to-Back", d:"Shows on consecutive nights", on:backToBack},
-    {t:"Hallowed Night", d:"A show on Halloween", on:done.some(s=>(s.date||"").slice(5)==="10-31")},
-    {t:"House Regular", d:"5+ shows at one venue", on:venues.some(v=>v.name&&v.n>=5)},
-    {t:"Repeat Offender", d:"Saw a band more than once", on:repeats.length>0},
-    {t:"Road Dog", d:"One show 100+ mi round trip", on:done.some(s=>Number(s.miles)>=100)},
-    {t:"Arena Mass", d:"Played an arena or amphitheater", on:done.some(s=>/arena|pavilion|center/i.test(s.venue||""))},
-    {t:"Twenty Strong", d:"20 shows in a year", on:counts(done.map(s=>String(parse(s.date).y))).some(c=>c.n>=20)},
-    {t:"Barricade Bound", d:"Logged a show on the rail", on:done.some(s=>s.spot==="Barricade")},
-  ];
   const rank = (rows, max, band) => rows.length ? `<div class="rank">${rows.slice(0,8).map(r=>`<div class="row">${band ? `<button class="n bandlink" data-bandp="${esc(r.name)}">${esc(r.name)}</button>` : `<span class="n">${esc(r.name)}</span>`}<span class="num lbl" style="color:var(--bone)">${r.n}×</span><div class="track"><i style="width:${(r.n/max*100).toFixed(1)}%"></i></div></div>`).join("")}</div>` : `<div class="ro">Nothing logged yet.</div>`;
   $("#view").innerHTML = `<div class="filters">${yearSeg()}${crewToggle()}</div>
     <button class="wrapbtn" data-wrapped><span class="lbl">Your ${S.year === "all" ? parse(todayISO).y : S.year}</span><b>Year in review</b><span>Your shows, top bands and pit crew as shareable cards ›</span></button>
@@ -466,7 +533,7 @@ function renderStats(){
       const top = [...br.values()].filter(e => e.sum).map(e => ({ name: e.name, n: Math.round(e.sum / e.n * 2) / 2 })).sort((a, b) => b.n - a.n || a.name.localeCompare(b.name)).slice(0, 8);
       return top.length ? `<section><h2>Top-rated bands</h2><div class="rank">${top.map(r => `<div class="row"><button class="n bandlink" data-bandp="${esc(r.name)}">${esc(r.name)}</button><span class="skulls">${[1,2,3,4,5].map(i => SKULLV(r.n, i)).join("")}</span></div>`).join("")}</div></section>` : ""; })()}
     <section><h2>The crew</h2>${people.length ? rank(people, people[0].n) + `<div class="ro" style="margin-top:6px">Counts names in Went with, crew you tagged, and Crew Family shows that are in both your logs.</div>` : `<div class="ro">Add who you went with on each show and the crew leaderboard fills in.</div>`}</section>
-    <section><h2>Patches earned</h2><div class="badges">${badges.map(b=>`<div class="badge ${b.on?'on':'off'}"><div class="t">${esc(b.t)}</div><div class="d">${esc(b.d)}</div></div>`).join("")}</div></section>
+    ${patchesSection()}
   </div>`;
 }
 
@@ -1080,7 +1147,7 @@ async function save(){
   try {
     if (draft.id === "__new") { body.addedAt = Date.now(); const ref = await addDoc(myShows(), body); draft.id = ref.id; S.open = ref.id; toast("Show added"); }
     else { await setDoc(myShow(draft.id), body); toast("Saved"); pushShared(body); }
-    S.editing = false;
+    S.editing = false; clearTimeout(checkNewPatches.t); checkNewPatches.t = setTimeout(checkNewPatches, 1600);
     if (!body.poster && !body.posterSkip) { const saved = { ...body, id: draft.id }; setTimeout(() => offerPoster(saved, true), 700); }
   } catch(e){ handleWriteErr(e); }
   busy = false; renderSheet(true);
@@ -3683,7 +3750,7 @@ function startApp(){
         readForm(); for (const k of ["poster","photos","merch"]) draft[k] = fresh[k]; redraw = true;
       }
     }
-    renderNext(); updateAcctBadge();
+    renderNext(); updateAcctBadge(); clearTimeout(checkNewPatches.t); checkNewPatches.t = setTimeout(checkNewPatches, 1600);
     schedulePublish();
     if (!S.open) renderTab(); else if (redraw || busy) renderSheet();
   }, err => { clearTimeout(timer); S.loaded = true; S.error = err.code === "permission-denied" ? "Your log is blocked — the Firestore rules aren't published yet." : "The log couldn't load. Reload to try again."; render(); }));
