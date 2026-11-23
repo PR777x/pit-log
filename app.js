@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile, applyActionCode } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=65";
+import { VENUES } from "./venues.js?v=66";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -160,6 +160,8 @@ function tile(it, opts){
   return `<button class="mt" data-lbi="${opts.i}" aria-label="View image"><img src="${src(it.id)}" alt="" loading="lazy">${kind}${tag}</button>`;
 }
 
+document.addEventListener("click", e => { const n = e.target.closest && e.target.closest("#next"); if (n && n.dataset.nextid && S.shows.some(x => x.id === n.dataset.nextid)) openSheet(n.dataset.nextid); });
+document.addEventListener("keydown", e => { if ((e.key === "Enter" || e.key === " ") && e.target.id === "next" && e.target.dataset.nextid) { e.preventDefault(); openSheet(e.target.dataset.nextid); } });
 function renderNext(){
   const ys = S.shows.map(s=>parse(s.date).y).filter(Boolean);
   if (ys.length) $("#yearLabel").textContent = `EST. ${Math.min(...ys)} · ${S.shows.filter(s=>!isUpcoming(s)).length} SHOWS DEEP`;
@@ -167,7 +169,7 @@ function renderNext(){
   const nx = sorted().find(s => isUpcoming(s) || s.date === todayISO);
   if (!nx) { el.hidden = true; return; }
   const days = Math.round((parse(nx.date).dt - parse(todayISO).dt) / 86400000);
-  el.hidden = false;
+  el.hidden = false; el.dataset.nextid = nx.id; el.setAttribute("role", "button"); el.tabIndex = 0; el.setAttribute("aria-label", "Open your next show");
   el.innerHTML = `<div class="cd num">${days === 0 ? "!" : days}</div>
     <div><div class="lbl">${days === 0 ? "Tonight" : days === 1 ? "Day until next show" : "Days until next show"}</div>
     <div class="who">${esc([headline(nx), ...support(nx)].filter(Boolean).join(" · "))}</div>
@@ -2045,7 +2047,7 @@ function renderBand(){
   const link = (u, l) => u ? `<a class="chip blink" href="${esc(u)}" target="_blank" rel="noopener">${l}</a>` : "";
   $("#view").innerHTML = `<div class="bandp">
     <button class="btn ghost" data-bandback style="justify-self:start">← Back</button>
-    <section class="bhero${I && I.image ? " hasimg" : ""}">${I && I.image ? `<div class="bimg" style="background-image:url('${esc(I.image)}')" role="img" aria-label="${esc(name)}"></div>` : ""}
+    <section class="bhero${I && I.image ? " hasimg" : ""}">${I && I.image ? `<div class="bimg"><img src="${esc(I.image)}" alt="${esc(name)}" referrerpolicy="no-referrer" data-alt="${esc(I.imageSmall || "")}" onerror="if(this.dataset.alt&&this.src!==this.dataset.alt){this.src=this.dataset.alt}else{this.closest('.bhero').classList.remove('hasimg');this.parentNode.remove()}"></div>` : ""}
       <div class="bhead"><h2 class="bname">${esc((I && I.name) || name)}</h2>
         <div class="bmeta">${I ? esc([I.origin, I.formed ? (I.ended ? `${I.formed}–${I.ended === "yes" ? "" : I.ended}` : `since ${I.formed}`) : ""].filter(Boolean).join(" · ")) : `<span class="ro">Looking them up…</span>`}</div>
         ${I && I.genres && I.genres.length ? `<div class="tagrow">${I.genres.map(g => `<span class="chip dim">${esc(g)}</span>`).join("")}</div>` : ""}</div></section>
@@ -2070,6 +2072,39 @@ function renderBand(){
   if (!info) bandInfoFor(name).then(() => { if (S.tab === "band" && normBand(S.band) === k) renderBand(); });
   if (!DISC.months) loadDiscover().then(() => { if (S.tab === "band" && normBand(S.band) === k) renderBand(); });
 }
+// Discover → Bands: every band you know of, whether or not they're touring. Search any band to open its profile.
+const BANDQ = { q: "" };
+function bandDirectory(){
+  const m = new Map(), add = (name, f) => { const k = normBand(name); if (!k) return; const e = m.get(k) || { name, k, seen: 0, up: 0, crew: new Set(), bucket: false, dates: 0 }; f(e); m.set(k, e); };
+  for (const s of S.shows) for (const b of lineup(s)) add(b, e => isUpcoming(s) ? e.up++ : e.seen++);
+  for (const b of (PROFILE.bucket || [])) add(b, e => { e.bucket = true; });
+  for (const f of friendList()) for (const s of (f.shows || [])) for (const b of lineup(s)) add(b, e => e.crew.add(f.uid));
+  for (const mo of DISC.months || []) for (const r of (DISC.data && DISC.data.get(mo.m)) || []) if (r.d >= todayISO) for (const b of (r.l || []).slice(0, 4)) add(b, e => { e.dates++; });
+  return [...m.values()];
+}
+function renderBands(){
+  $("#view").innerHTML = `<div class="disc">${dviewSeg()}
+    <form id="bandForm" class="pastform" autocomplete="off"><input class="search" id="bq" value="${esc(BANDQ.q)}" placeholder="Any band, ex: Insomnium" autocapitalize="none" spellcheck="false" aria-label="Band"><button class="btn red" type="submit">Open</button></form>
+    <div id="bres"></div></div>`;
+  drawBands();
+  if (!DISC.months) loadDiscover().then(() => { if (S.tab === "disc" && S.disc.view === "bands") drawBands(); });
+}
+function drawBands(){
+  const box = $("#bres"); if (!box) return;
+  const q = BANDQ.q.trim().toLowerCase(), all = bandDirectory().filter(e => !q || e.name.toLowerCase().includes(q));
+  const card = e => `<button class="bandcard" data-bandp="${esc(e.name)}"><span class="bc-n">${esc(e.name)}</span><span class="bc-m">${[e.bucket ? `<span class="chip bkc">Bucket list</span>` : "", e.seen ? `<span class="chip">Seen ${e.seen}×</span>` : "", e.up ? `<span class="chip up">Going</span>` : "", e.dates ? `<span class="chip pvc">${e.dates} date${e.dates > 1 ? "s" : ""}</span>` : "", e.crew.size && !e.seen ? `<span class="chip tog">${e.crew.size} crew</span>` : ""].join("")}</span><span class="chev">›</span></button>`;
+  const sect = (title, list, note) => list.length ? `<section class="sect"><h3>${title} <span class="lbl">${list.length}</span></h3>${note ? `<div class="ro" style="margin-bottom:6px">${note}</div>` : ""}<div class="bandlist">${list.slice(0, q ? 60 : 12).map(card).join("")}</div>${!q && list.length > 12 ? `<div class="ro">+${list.length - 12} more. Search above to find them.</div>` : ""}</section>` : "";
+  const by = f => (a, b) => f(b) - f(a) || a.name.localeCompare(b.name);
+  const bucket = all.filter(e => e.bucket).sort(by(e => e.dates * 10 + e.crew.size));
+  const mine = all.filter(e => e.seen && !e.bucket).sort(by(e => e.seen * 100 + e.dates));
+  const crewOnly = all.filter(e => !e.seen && !e.bucket && e.crew.size).sort(by(e => e.crew.size * 10 + e.dates));
+  const touring = all.filter(e => e.dates && !e.seen && !e.bucket && !e.crew.size).sort(by(e => e.dates));
+  const exact = q && !all.some(e => e.name.toLowerCase() === q) ? `<button class="bandcard any" data-bandp="${esc(BANDQ.q.trim())}"><span class="bc-n">${esc(BANDQ.q.trim())}</span><span class="bc-m ro">Open band profile</span><span class="chev">›</span></button>` : "";
+  box.innerHTML = exact + sect("Bucket list", bucket) + sect("Bands you've seen", mine) + sect("Your crew's bands", crewOnly, "Bands your crew has seen or is going to, that you haven't.") + sect("Touring near you", touring, "Bands with dates in PA, NJ, DE and NY you haven't seen yet.")
+    || `<div class="empty"><h3>No bands match</h3><div>Tap <b>Open</b> to look up "${esc(BANDQ.q)}" anyway.</div></div>`;
+}
+document.addEventListener("input", e => { if (e.target.id === "bq") { BANDQ.q = e.target.value; clearTimeout(BANDQ.t); BANDQ.t = setTimeout(drawBands, 120); } });
+document.addEventListener("submit", e => { if (e.target.id === "bandForm") { e.preventDefault(); const v = ($("#bq").value || "").trim(); if (v) openBand(v); } });
 function bandClick(t){
   if (t.dataset.bandp) { openBand(t.dataset.bandp); return true; }
   if (S.tab !== "band") return false;
@@ -2249,10 +2284,11 @@ function buildGroups(){
   return out;
 }
 function mostCommon(map){ let best = "", n = 0; for (const [k, v] of map) if (v > n) { best = k; n = v; } return best; }
-const dviewSeg = () => `<div class="seg big dview" role="group" aria-label="Upcoming or past"><button data-dview="up" aria-pressed="${S.disc.view !== "past"}">Upcoming tours</button><button data-dview="past" aria-pressed="${S.disc.view === "past"}">Past shows</button></div>`;
+const dviewSeg = () => `<div class="seg big dview" role="group" aria-label="What to browse"><button data-dview="up" aria-pressed="${!["past", "bands"].includes(S.disc.view)}">Tours</button><button data-dview="bands" aria-pressed="${S.disc.view === "bands"}">Bands</button><button data-dview="past" aria-pressed="${S.disc.view === "past"}">Past shows</button></div>`;
 function renderDiscover(){
   const d = S.disc;
   if (d.view === "past") return renderPast();
+  if (d.view === "bands") return renderBands();
   $("#view").innerHTML = `<div class="disc">${dviewSeg()}
     <div class="tagrow dmodes" role="group" aria-label="Which bands">${DMODES.map(([v, l]) => `<button class="tagbtn${d.mode === v ? " on" : ""}" data-dmode="${v}" aria-pressed="${d.mode === v}">${l}</button>`).join("")}</div>
     <input class="search" id="dq" value="${esc(d.q)}" placeholder="Band, tour, venue or city" autocapitalize="none" spellcheck="false" aria-label="Filter tours">

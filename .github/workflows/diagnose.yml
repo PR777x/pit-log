@@ -56,5 +56,6 @@ jobs:
         env:
           BAND: ${{ inputs.band }}
         run: |
-          node -e 'require("./artists").bandInfo(process.env.BAND).then(r => console.log(JSON.stringify(r).slice(0, 900))).catch(e => console.log("ERROR", e.status, e.message))'
+          node -e 'require("./artists").bandInfo(process.env.BAND).then(r => { console.log(JSON.stringify(r).slice(0, 900)); require("fs").writeFileSync("/tmp/img.txt", [r.image || "", r.imageSmall || ""].join("\n")); }).catch(e => console.log("ERROR", e.status, e.message))'
+          while read -r u; do [ -n "$u" ] && curl -s -o /dev/null -w "image %{http_code} %{content_type} $u\n" -A "Mozilla/5.0 (Linux; Android 14) Chrome/130 Mobile" -e "https://thepitlog.com/" "$u"; done < /tmp/img.txt || true
           curl -s -o /dev/null -w "musicbrainz %{http_code}\n" -A "PitLog/1.0 (https://thepitlog.com; support@thepitlog.com)" "https://musicbrainz.org/ws/2/artist?query=artist:%22Insomnium%22&fmt=json&limit=1"

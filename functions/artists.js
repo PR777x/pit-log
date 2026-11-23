@@ -66,8 +66,10 @@ async function wikiSummary(title, fetchImpl){
   if (!sum || sum.type === "disambiguation") return null;
   // Big originals get a 1200px copy (Wikimedia's thumbnail URLs take the width in the path).
   const o = sum.originalimage, t = (sum.thumbnail || {}).source || "";
-  const image = o && o.width <= 1600 ? o.source : t ? t.replace(/\/\d+px-/, "/1200px-").replace(/\?.*$/, "") : (o && o.source) || "";
-  return { about: String(sum.extract || "").slice(0, 900), image, wiki: ((sum.content_urls || {}).desktop || {}).page || "" };
+  // Wikimedia only serves thumbnails at standard widths (…, 330, 500, 960, 1280); 960 looks sharp on phones.
+  const small = t ? t.replace(/\?.*$/, "") : "";
+  const image = o && o.width <= 1280 ? o.source : small ? small.replace(/\/\d+px-/, "/960px-") : (o && o.source) || "";
+  return { about: String(sum.extract || "").slice(0, 900), image, imageSmall: small || image, wiki: ((sum.content_urls || {}).desktop || {}).page || "" };
 }
 async function bandInfo(name, { fetchImpl = fetch } = {}){
   const hit = await findBandEntity(name, fetchImpl);
@@ -85,7 +87,7 @@ async function bandInfo(name, { fetchImpl = fetch } = {}){
     if (site) out.links.site = site; if (sp) out.links.spotify = `https://open.spotify.com/artist/${sp}`;
     if (ig) out.links.instagram = `https://www.instagram.com/${ig}/`; if (bc) out.links.bandcamp = `https://${bc}.bandcamp.com`;
     if (yt) out.links.youtube = `https://www.youtube.com/channel/${yt}`;
-    const p18 = claim(e, "P18")[0]; if (p18) out.image = `https://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(p18)}?width=1200`;
+    const p18 = claim(e, "P18")[0]; if (p18) out.image = out.imageSmall = `https://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(p18)}?width=960`;
     title = ((e.sitelinks || {}).enwiki || {}).title || "";
   }
   // No Wikidata match (or no English article linked): try Wikipedia directly. Only accept a page that says it's about a band.
@@ -96,7 +98,7 @@ async function bandInfo(name, { fetchImpl = fetch } = {}){
     for (const r of ((sr.query || {}).search || [])) if (norm(String(r.title).replace(/\s*\(.*\)$/, "")) === norm(name) && !tries.includes(r.title)) tries.splice(1, 0, r.title);
   } catch (_) {}
   for (const t of tries) {
-    try { const w = await wikiSummary(t, fetchImpl); if (w && (title || IS_BAND.test(w.about.slice(0, 300)))) { out.about = w.about; out.wiki = w.wiki; if (w.image) out.image = w.image; out.found = true; break; } } catch (_) {}
+    try { const w = await wikiSummary(t, fetchImpl); if (w && (title || IS_BAND.test(w.about.slice(0, 300)))) { out.about = w.about; out.wiki = w.wiki; if (w.image) { out.image = w.image; out.imageSmall = w.imageSmall; } out.found = true; break; } } catch (_) {}
   }
   return out;
 }
