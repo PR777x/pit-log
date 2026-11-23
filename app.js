@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile, applyActionCode } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=72";
+import { VENUES } from "./venues.js?v=73";
 import { getStorage, ref as sref, uploadBytes, uploadBytesResumable, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -4170,6 +4170,7 @@ function pushClick(t){
    than the feature it fixes (same-day polish is part of the feature). b = the build it shipped in.
    Every build, user-facing or not (including removals), also gets an entry in version-history.html. */
 const WHATS_NEW = [
+  { b: 73, date: "2026-11-22", icon: "📐", t: "Tidier show cards", d: "Names, ratings and tags on show cards now line up on clean rows." },
   { b: 72, date: "2026-11-22", icon: "🏷️", t: "Tag crew in photos", d: "Tag friends in photos and videos (each one on its own when you add several). They can add them to their own log of the show." },
   { b: 72, date: "2026-11-22", icon: "⭐", t: "How it rates", d: "See your rating next to everyone else's on a show, and how you rate compared with each crew member.", },
   { b: 72, date: "2026-11-22", icon: "📷", t: "Photos on profiles", d: "Crew profiles have a Photos view with everything they've shared in one place.", go: "crew" },
