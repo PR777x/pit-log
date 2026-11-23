@@ -870,3 +870,4 @@ button.wnitem{cursor:pointer}button.wnitem:hover{border-color:var(--blood-hi)}
 .tagthumbs{display:flex;gap:4px;margin:6px 0}.tagthumbs img{width:52px;height:52px;object-fit:cover;border:1px solid var(--iron)}
 .pgal{grid-template-columns:repeat(auto-fill,minmax(96px,1fr))}
 .chips .chip{display:inline-flex;align-items:center;white-space:nowrap;line-height:1.35}
+.ticket .ttour{font-family:var(--f-label);font-size:13px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--rust);margin-top:2px;line-height:1.25}
