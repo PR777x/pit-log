@@ -7,7 +7,7 @@ name: Deploy email alerts
 on:
   push:
     branches: [main]
-    paths: ["functions/**", "firebase.json", "firestore.rules", "storage-cors.json", ".github/workflows/deploy-functions.yml"]
+    paths: ["functions/**", "firebase.json", "firestore.rules", "storage.rules", "storage-cors.json", ".github/workflows/deploy-functions.yml"]
   workflow_dispatch:
 
 jobs:
@@ -90,7 +90,7 @@ jobs:
           rm -f "$RUNNER_TEMP/sl.txt"
       - name: Deploy functions
         if: steps.gate.outputs.ok == 'true'
-        run: npx -y firebase-tools@latest deploy --only functions,firestore:rules --project pit-log --force --non-interactive
+        run: npx -y firebase-tools@latest deploy --only functions,firestore:rules,storage --project pit-log --force --non-interactive
       - name: Let the app read photos for share images (storage CORS)
         if: steps.gate.outputs.ok == 'true'
         continue-on-error: true

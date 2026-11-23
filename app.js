@@ -2,8 +2,8 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile, applyActionCode } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=68";
-import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
+import { VENUES } from "./venues.js?v=69";
+import { getStorage, ref as sref, uploadBytes, uploadBytesResumable, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBBbSi3h5wPsIMMZoj2kUoHBa3d-dTb4Ik",
@@ -156,7 +156,7 @@ function firstSightings(){
 function tile(it, opts){
   const tag = opts.tag ? `<span class="tag">${esc(opts.tag)}</span>` : "";
   const kind = opts.kind ? `<span class="kind">${esc(opts.kind)}</span>` : "";
-  if (it.type === "video") return `<button class="mt vid" data-lbi="${opts.i}" aria-label="Play video"><video src="${src(it.id)}#t=0.5" preload="metadata" muted playsinline></video>${kind}${tag}</button>`;
+  if (it.type === "video") return `<button class="mt vid" data-lbi="${opts.i}" aria-label="Play video">${it.thumb ? `<img src="${esc(src(it.thumb))}" alt="" loading="lazy">` : `<video src="${src(it.id)}#t=0.5" preload="metadata" muted playsinline></video>`}${it.dur ? `<span class="vdur">${Math.floor(it.dur / 60)}:${String(it.dur % 60).padStart(2, "0")}</span>` : ""}${kind}${tag}</button>`;
   return `<button class="mt" data-lbi="${opts.i}" aria-label="View image"><img src="${src(it.id)}" alt="" loading="lazy">${kind}${tag}</button>`;
 }
 
@@ -368,7 +368,7 @@ const LV = { private: 0, family: 1, crew: 2, public: 3 };
 const PRIVACY = [
   ["ticketCost", "Ticket cost", "Order totals and price per ticket."],
   ["merchCost", "Merch cost", "What you spent on merch."],
-  ["photos", "Photos", "Show photos and merch photos, including in the Vault."],
+  ["photos", "Photos and videos", "Show photos, videos and merch photos, including in the Vault."],
   ["poster", "Tour posters", "Linked Crew Family shows always share their poster."],
   ["ratings", "Ratings", "Skulls, pit intensity and best band of the night."],
   ["notes", "Notes and setlists", "Notes, highlight moment and setlist notes."],
@@ -1164,7 +1164,7 @@ async function del(){
   if (!confirmDel) { confirmDel = true; renderSheet(); return; }
   const s = S.shows.find(x=>x.id===draft.id); if (!s) return;
   try { await deleteDoc(myShow(s.id)); } catch(e){ handleWriteErr(e); return; }
-  for (const p of [!s.linkId && s.poster && s.poster.path, ...items(s,"photos").map(m=>m.path), ...items(s,"merch").map(m=>m.path)].filter(Boolean)) await removeFile(p);
+  for (const p of [!s.linkId && s.poster && s.poster.path, ...items(s,"photos").flatMap(m=>[m.path, m.thumbPath]), ...items(s,"merch").map(m=>m.path)].filter(Boolean)) await removeFile(p);
   closeSheet(); toast("Show deleted");
 }
 
@@ -1219,15 +1219,29 @@ async function compress(file, kind){
 }
 
 function isVideo(f){ return /^video\//.test(f.type) || /\.(mp4|m4v|mov|webm)$/i.test(f.name||""); }
-function videoType(f){ return (f.type === "video/webm" || /\.webm$/i.test(f.name||"")) ? "video/webm" : "video/mp4"; }
-
-const ACCEPT_MEDIA = "image/*,.heic,.heif";
+function videoType(f){ return f.type && /^video\//.test(f.type) ? f.type : /\.webm$/i.test(f.name||"") ? "video/webm" : /\.mov$/i.test(f.name||"") ? "video/quicktime" : "video/mp4"; }
+const MAX_VIDEO_SECS = 60, MAX_VIDEO_BYTES = 100 * 1024 * 1024;
+// Read a video's length and grab a frame for its thumbnail (some formats can't be drawn on some phones: then no thumbnail).
+function videoMeta(file){
+  return new Promise(resolve => {
+    const v = document.createElement("video"), url = URL.createObjectURL(file); let done = false;
+    const finish = (dur, thumb) => { if (done) return; done = true; URL.revokeObjectURL(url); resolve({ dur, thumb }); };
+    v.preload = "metadata"; v.muted = true; v.playsInline = true; v.src = url;
+    v.onloadedmetadata = () => { const d = v.duration; if (!isFinite(d)) { finish(0, null); return; } try { v.currentTime = Math.min(1, d / 3); } catch (_) { finish(d, null); } };
+    v.onseeked = () => { try { const w = Math.min(640, v.videoWidth || 640), h = Math.round(w * ((v.videoHeight || 360) / (v.videoWidth || 640))); const c = document.createElement("canvas"); c.width = w; c.height = h;
+      c.getContext("2d").drawImage(v, 0, 0, w, h); c.toBlob(b => finish(v.duration, b && b.size > 2000 ? b : null), "image/jpeg", 0.8); } catch (_) { finish(v.duration, null); } };
+    v.onerror = () => finish(0, null);
+    setTimeout(() => finish(isFinite(v.duration) ? v.duration : 0, null), 8000);
+  });
+}
+const ACCEPT_MEDIA = "image/*,.heic,.heif,video/*,.mov,.mp4,.m4v,.webm";
 function handleFiles(kind, files){
   if (!draft || !assets) return;
   const vids = files.filter(isVideo).length;
-  files = files.filter(f => !isVideo(f));
-  if (!files.length) { toast(vids ? "Videos aren't supported — photos only" : "No photos selected", 3500); return; }
-  toast(`${files.length} photo${files.length>1?"s":""} ready${vids?` (skipped ${vids} video${vids>1?"s":""})`:""}`, 2500);
+  if (kind !== "photos") files = files.filter(f => !isVideo(f));
+  if (!files.length) { toast(vids ? "Videos go in Show photos" : "Nothing selected", 3500); return; }
+  const nv = files.filter(isVideo).length, ni = files.length - nv;
+  toast([ni ? `${ni} photo${ni > 1 ? "s" : ""}` : "", nv ? `${nv} video${nv > 1 ? "s" : ""}` : ""].filter(Boolean).join(" and ") + " ready", 2500);
   const lu = lineup(draft);
   if (kind === "poster" || !lu.length) return doUpload(kind, files, []);
   tagModal(files, lu, (bands) => doUpload(kind, files, bands));
@@ -1239,7 +1253,7 @@ function tagModal(files, lu, onGo){
   const draw = () => {
     $("#modalRoot").innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-label="Tag bands"><div class="mbox">
       <h3>Who's in ${files.length>1?"these":"this"}?</h3>
-      <div class="ro">${files.length} photo${files.length>1?"s":""}. Tag every band that appears. Leave all off for crowd or venue shots.</div>
+      <div class="ro">${[imgs ? `${imgs} photo${imgs > 1 ? "s" : ""}` : "", vids ? `${vids} video${vids > 1 ? "s" : ""}` : ""].filter(Boolean).join(" and ")}. Tag every band that appears. Leave all off for crowd or venue shots.</div>
       <div class="tagrow">${lu.map(b=>`<button class="tagbtn" data-mtag="${esc(b)}" aria-pressed="${sel.has(b)}">${esc(b)}</button>`).join("")}</div>
       <div class="mbtns"><button class="btn ghost" data-mcancel>Cancel</button><button class="btn red" data-mgo>Upload</button></div>
     </div></div>`;
@@ -1254,8 +1268,22 @@ function tagModal(files, lu, onGo){
 async function doUpload(kind, files, bands){
   const showId = draft && draft.id; if (!showId || showId === "__new") return;
   const out = []; let skipped = 0, n = 0, before = 0, after = 0;
+  let tooLong = 0, tooBig = 0;
   for (const f of files) {
     n++;
+    if (isVideo(f)) {
+      try {
+        if (f.size > MAX_VIDEO_BYTES) { tooBig++; skipped++; continue; }
+        toast(`Checking video ${n} of ${files.length}…`, 60000);
+        const meta = await videoMeta(f);
+        if (meta.dur > MAX_VIDEO_SECS + 1) { tooLong++; skipped++; continue; }
+        const v = await putVideo(f, showId, pct => toast(`Uploading video ${n} of ${files.length}… ${pct}%`, 60000));
+        let thumb = null; if (meta.thumb) try { thumb = await putImage(meta.thumb, showId, "thumb"); } catch (_) {}
+        out.push({ url: v.url, path: v.path, type: "video", bands, dur: Math.round(meta.dur || 0), ...(thumb ? { thumb: thumb.url, thumbPath: thumb.path } : {}) });
+        before += f.size; after += f.size;
+      } catch (e) { skipped++; console.error(e); if (e?.code === "storage/unauthorized") { toast("Video upload blocked. Storage rules may still be updating; try again in a minute.", 5000); break; } }
+      continue;
+    }
     toast(`Compressing & uploading ${n} of ${files.length}…`, 60000);
     try {
       const b = await compress(f, kind);
@@ -1270,14 +1298,15 @@ async function doUpload(kind, files, bands){
       if (e?.code === "storage/quota-exceeded") { toast("Storage quota reached", 4000); break; }
     }
   }
-  if (!out.length) { toast(skipped ? "Nothing uploaded. Use JPG, PNG, WEBP or GIF photos under 20 MB." : "Nothing uploaded", 5000); return; }
+  const why = [tooLong ? `${tooLong} video${tooLong > 1 ? "s" : ""} over ${MAX_VIDEO_SECS} seconds` : "", tooBig ? `${tooBig} video${tooBig > 1 ? "s" : ""} over 100 MB` : ""].filter(Boolean).join(", ");
+  if (!out.length) { toast(why ? `Nothing uploaded: ${why}. Trim it on your phone and try again.` : skipped ? "Nothing uploaded. Use photos under 20 MB, or videos up to 60 seconds." : "Nothing uploaded", 6000); return; }
   const s = S.shows.find(x=>x.id===showId); if (!s) return;
   const old = s.poster;
   const patch = kind === "poster" ? { poster: { url: out[0].url, path: out[0].path } } : { [kind]: [...items(s,kind), ...out] };
   try {
     await updateDoc(myShow(s.id), patch); if (draft && draft.id === s.id) { Object.assign(draft, patch); renderSheet(); }
     const saved = before > after ? ` · ${fmtBytes(before)} → ${fmtBytes(after)}` : "";
-    toast(skipped ? `Added ${out.length}${saved}. Skipped ${skipped} that couldn't upload.` : `Added ${out.length}${saved}`, skipped ? 5000 : 3500);
+    toast(skipped ? `Added ${out.length}${saved}. Skipped ${why || `${skipped} that couldn't upload`}.` : `Added ${out.length}${saved}`, skipped ? 6000 : 3500);
     if (kind === "poster") { await pushPoster(s, patch.poster); if (old && old.path) await removeFile(old.path); }
   } catch(e){ handleWriteErr(e); }
 }
@@ -1295,7 +1324,7 @@ function drawLB(){
   const tagEditable = canEdit && e.kind !== "poster";
   const lu = lineup(s), bands = e.it.bands || [];
   const media = e.it.type === "video"
-    ? `<video src="${src(e.it.id)}" controls playsinline preload="metadata"></video>`
+    ? `<video src="${src(e.it.id)}" controls playsinline preload="metadata"${e.it.thumb ? ` poster="${esc(src(e.it.thumb))}"` : ""}></video>`
     : `<img src="${src(e.it.id)}" alt="">`;
   $("#lbRoot").innerHTML = `<div class="lightbox" role="dialog" aria-modal="true" aria-label="Media viewer">
     <div class="lt"><button class="btn ghost" data-lbclose>Close</button>
@@ -1328,7 +1357,7 @@ async function lbRemove(){
   try {
     await updateDoc(myShow(s.id), e.kind === "poster" && s.linkId && s.poster ? { ...patch, posterCleared: arrayUnion(s.poster.url) } : patch);
     if (e.kind === "poster") await pushPoster(s, null);
-    await removeFile(e.it.path);
+    await removeFile(e.it.path); if (e.it.thumbPath) await removeFile(e.it.thumbPath);
     if (draft && draft.id === s.id) Object.assign(draft, patch);
     LB.list.splice(LB.i, 1); LB.confirm = false;
     if (!LB.list.length) closeLightbox(); else { LB.i = Math.min(LB.i, LB.list.length-1); drawLB(); }
@@ -1468,6 +1497,13 @@ async function putImage(blob, showId, kind){
   const path = `users/${ME.uid}/shows/${showId}/${kind}-${rid()}.${ext}`;
   const r = sref(storage, path);
   await uploadBytes(r, blob, { contentType: blob.type || "image/jpeg", cacheControl: "public,max-age=31536000" });
+  return { path, url: await getDownloadURL(r) };
+}
+async function putVideo(file, showId, onPct){
+  const type = videoType(file), ext = /webm/.test(type) ? "webm" : /quicktime/.test(type) ? "mov" : "mp4";
+  const path = `users/${ME.uid}/shows/${showId}/video-${rid()}.${ext}`, r = sref(storage, path);
+  await new Promise((res, rej) => { const t = uploadBytesResumable(r, file, { contentType: type, cacheControl: "public,max-age=31536000" });
+    t.on("state_changed", s => onPct && onPct(Math.round(s.bytesTransferred / Math.max(1, s.totalBytes) * 100)), rej, res); });
   return { path, url: await getDownloadURL(r) };
 }
 async function removeFile(path){ if (!path) return; try { await deleteObject(sref(storage, path)); } catch (_) {} }
@@ -2953,6 +2989,8 @@ function tagInboxBlock(){
 // "Everything" also brings over their rating, notes, spend, poster and photos.
 const PERSONAL = ["rating", "pit", "spot", "best", "highlight", "setlist", "notes", "ticket", "ticketQty", "ticketTotal", "merchSpend", "miles"];
 async function copyMedia(m, showId, kind, owner){
+  // Videos stay where they are (copying 100 MB on a phone isn't worth it); point at theirs.
+  if (m.type === "video") return { url: m.url, path: "", type: "video", bands: m.bands || [], sharedFrom: owner, ...(m.thumb ? { thumb: m.thumb } : {}), ...(m.dur ? { dur: m.dur } : {}) };
   try {
     const r = await fetch(m.url); if (!r.ok) throw new Error(r.status);
     const put = await putImage(await r.blob(), showId, kind);

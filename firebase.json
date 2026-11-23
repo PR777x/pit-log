@@ -16,5 +16,8 @@
       "database": "pit-log",
       "rules": "firestore.rules"
     }
-  ]
+  ],
+  "storage": {
+    "rules": "storage.rules"
+  }
 }

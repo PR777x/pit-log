@@ -839,3 +839,4 @@ nav.tabs .bslot:empty{display:none}
 .patch .d{font-size:12px;color:var(--ash);margin-top:2px}.patch .d b{color:var(--bone);font-weight:600}
 .pbar{height:5px;background:#2a2123;margin-top:6px}.pbar i{display:block;height:100%;background:var(--blood-hi)}
 .psub{margin:14px 0 8px}
+.mt .vdur{position:absolute;right:4px;bottom:4px;background:rgba(0,0,0,.7);color:var(--bone);font-size:11px;font-family:var(--f-label);padding:1px 5px}
