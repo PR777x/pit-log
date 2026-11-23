@@ -433,20 +433,26 @@ const sentTo = who => emails.filter(e => e.to[0] === who + "@example.com");
   assert.ok(PUSHES.some(m => /Tonight/.test(m.data.title) && /Whitechapel/.test(m.data.body)), "noon reminder for tonight's show");
   PUSHES.length = 0; await F.runPushHourly(noonET); assert.ok(!PUSHES.some(m => /Tonight/.test(m.data.title)), "only once a day");
 
-  // 23. Band profile: MusicBrainz basics + Wikipedia summary/photo
+  // 23. Band profile: Wikidata basics + Wikipedia summary/photo (picks the band, not the same-named film)
   const A23 = require("./artists");
+  const ent = (id, label, desc, claims, enwiki) => ({ id, labels: { en: { value: label } }, descriptions: { en: { value: desc } }, claims, sitelinks: enwiki ? { enwiki: { title: enwiki } } : {} });
+  const v = x => [{ mainsnak: { datavalue: { value: x } } }];
+  const E = {
+    Q1: ent("Q1", "Insomnium", "1997 film", { P31: v({ id: "Q11424" }) }, "Insomnium (film)"),
+    Q2: ent("Q2", "Insomnium", "Finnish melodic death metal band", { P31: v({ id: "Q215380" }), P571: v({ time: "+1997-00-00T00:00:00Z" }), P740: v({ id: "Q10" }), P495: v({ id: "Q11" }),
+      P136: [...v({ id: "Q20" }), ...v({ id: "Q21" })], P856: v("https://insomnium.net"), P1902: v("sp9"), P2003: v("insomniumofficial") }, "Insomnium"),
+    Q10: { labels: { en: { value: "Joensuu" } } }, Q11: { labels: { en: { value: "Finland" } } }, Q20: { labels: { en: { value: "melodic death metal" } } }, Q21: { labels: { en: { value: "doom metal" } } } };
   const fake23 = async url => ({ ok: true, status: 200, json: async () => {
-    if (url.includes("/ws/2/artist?")) return { artists: [{ id: "mb-1", name: "Varials", score: 100 }, { id: "x", name: "Varials Tribute", score: 90 }] };
-    if (url.includes("/ws/2/artist/mb-1")) return { name: "Varials", type: "Group", area: { name: "United States" }, "begin-area": { name: "Philadelphia" }, "life-span": { begin: "2014-01" },
-      genres: [{ name: "metalcore", count: 5 }], tags: [{ name: "nu metal", count: 2 }],
-      relations: [{ type: "official homepage", url: { resource: "https://varials.com" } }, { type: "social network", url: { resource: "https://www.instagram.com/varials/?hl=en" } }, { type: "wikidata", url: { resource: "https://www.wikidata.org/wiki/Q123" } }] };
-    if (url.includes("wikidata")) return { entities: { Q123: { sitelinks: { enwiki: { title: "Varials" } }, claims: { P1902: [{ mainsnak: { datavalue: { value: "sp1" } } }] } } } };
-    if (url.includes("wikipedia.org/api")) return { type: "standard", extract: "Varials is an American metalcore band from Philadelphia.", originalimage: { source: "https://upload.wikimedia.org/v.jpg", width: 1200 }, content_urls: { desktop: { page: "https://en.wikipedia.org/wiki/Varials" } } };
+    if (url.includes("wbsearchentities")) return { search: [{ id: "Q1", label: "Insomnium", description: "1997 film" }, { id: "Q2", label: "Insomnium", description: "Finnish melodic death metal band" }] };
+    if (url.includes("wbgetentities")) { const ids = decodeURIComponent(url.split("ids=")[1].split("&")[0]).split("|"); return { entities: Object.fromEntries(ids.map(i => [i, E[i]])) }; }
+    if (url.includes("page/summary/Insomnium")) return { type: "standard", extract: "Insomnium is a Finnish melodic death metal band from Joensuu.", originalimage: { source: "https://upload.wikimedia.org/i.jpg", width: 1200 }, content_urls: { desktop: { page: "https://en.wikipedia.org/wiki/Insomnium" } } };
     return {}; } });
-  const bi = await A23.bandInfo("varials", { fetchImpl: fake23, pause: async () => {} });
-  assert.strictEqual(bi.name, "Varials"); assert.strictEqual(bi.origin, "Philadelphia, United States"); assert.strictEqual(bi.formed, "2014");
-  assert.deepStrictEqual(bi.genres, ["metalcore", "nu metal"]); assert.strictEqual(bi.links.instagram, "https://www.instagram.com/varials/"); assert.strictEqual(bi.links.spotify, "https://open.spotify.com/artist/sp1");
-  assert.match(bi.about, /metalcore band/); assert.strictEqual(bi.image, "https://upload.wikimedia.org/v.jpg"); assert.strictEqual(bi.wiki, "https://en.wikipedia.org/wiki/Varials");
+  const bi = await A23.bandInfo("insomnium", { fetchImpl: fake23 });
+  assert.strictEqual(bi.found, true); assert.strictEqual(bi.name, "Insomnium"); assert.strictEqual(bi.origin, "Joensuu, Finland"); assert.strictEqual(bi.formed, "1997");
+  assert.deepStrictEqual(bi.genres, ["melodic death metal", "doom metal"]); assert.strictEqual(bi.links.spotify, "https://open.spotify.com/artist/sp9");
+  assert.strictEqual(bi.links.instagram, "https://www.instagram.com/insomniumofficial/"); assert.strictEqual(bi.links.site, "https://insomnium.net");
+  assert.match(bi.about, /melodic death metal band/); assert.strictEqual(bi.image, "https://upload.wikimedia.org/i.jpg");
+  const sl = await A23.lookup("Insomnium", { fetchImpl: fake23, pause: async () => {} }); assert.strictEqual(sl.spotify, "https://open.spotify.com/artist/sp9", "Spotify from Wikidata, no MusicBrainz needed");
 
   console.log("All email function tests passed.");
 })().catch(e => { console.error(e); process.exit(1); });
