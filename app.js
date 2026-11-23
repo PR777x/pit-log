@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile, applyActionCode } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=62";
+import { VENUES } from "./venues.js?v=63";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -3625,3 +3625,43 @@ onAuthStateChanged(auth, async user => {
 
 if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js").catch(() => {}));
 
+
+/* ---------- Pull to refresh + update check ----------
+   iPhone home-screen apps have no pull-to-refresh, so draw our own: pull down from the very top, let go to reload.
+   Any installed copy also checks for a newer build when it comes back to the screen. */
+const STANDALONE = !!(window.navigator.standalone || (window.matchMedia && matchMedia("(display-mode: standalone)").matches));
+const IOS = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+if (STANDALONE && IOS) {
+  const ptr = document.createElement("div"); ptr.className = "ptr"; ptr.innerHTML = `<span class="ptr-i">🤘</span><span class="ptr-t">Pull to refresh</span>`;
+  document.body.appendChild(ptr);
+  let y0 = null, dy = 0;
+  const blocked = t => document.body.style.overflow === "hidden" || $("#modalRoot")?.innerHTML || $(".sharemodal") || $(".cropmodal") || (t && t.closest && t.closest("input,textarea,select,.cropview,.wimg"));
+  document.addEventListener("touchstart", e => { y0 = (window.scrollY <= 0 && e.touches.length === 1 && !blocked(e.target)) ? e.touches[0].clientY : null; dy = 0; }, { passive: true });
+  document.addEventListener("touchmove", e => {
+    if (y0 === null) return; dy = e.touches[0].clientY - y0;
+    if (dy <= 0 || window.scrollY > 0) { ptr.style.transform = ""; ptr.classList.remove("show", "ready"); return; }
+    const d = Math.min(dy * 0.5, 90); ptr.classList.add("show"); ptr.classList.toggle("ready", d >= 64);
+    ptr.style.transform = `translate(-50%, ${d}px)`; ptr.querySelector(".ptr-t").textContent = d >= 64 ? "Let go to refresh" : "Pull to refresh";
+    ptr.querySelector(".ptr-i").style.transform = `rotate(${d * 4}deg)`;
+  }, { passive: true });
+  document.addEventListener("touchend", () => {
+    if (y0 === null) return; const go = dy * 0.5 >= 64; y0 = null;
+    if (go) { ptr.classList.add("spin"); ptr.querySelector(".ptr-t").textContent = "Refreshing…"; setTimeout(() => location.reload(), 150); }
+    else { ptr.style.transform = ""; ptr.classList.remove("show", "ready"); }
+  }, { passive: true });
+}
+// Newer build on the server? Reload quietly if nothing is open, otherwise offer it.
+const MY_BUILD = Number(((document.querySelector('script[src*="app.js?v="]') || {}).src || "").split("v=")[1]) || 0;
+let lastCheck = 0;
+async function checkForUpdate(){
+  if (!MY_BUILD || Date.now() - lastCheck < 60000) return; lastCheck = Date.now();
+  try {
+    const html = await (await fetch("./?u=" + Date.now(), { cache: "no-store" })).text();
+    const v = Number((html.match(/app\.js\?v=(\d+)/) || [])[1]) || 0;
+    if (v <= MY_BUILD) return;
+    const busyNow = S.open || $("#modalRoot")?.innerHTML || $(".sharemodal") || $(".cropmodal") || document.activeElement?.matches?.("input,textarea");
+    if (!busyNow) { location.reload(); return; }
+    if (!$(".updbar")) { const b = document.createElement("button"); b.className = "updbar"; b.textContent = "A new version of Pit Log is ready. Tap to update."; b.onclick = () => location.reload(); document.body.appendChild(b); }
+  } catch (_) {}
+}
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && STANDALONE) checkForUpdate(); });

@@ -786,3 +786,9 @@ nav.tabs .bslot:empty{display:none}
 .likers{font-size:13px}
 .fthread{grid-column:1/-1;display:grid;gap:8px;border-top:1px solid var(--iron);padding-top:10px}
 .fthread .cmlist{display:grid;gap:6px}
+/* pull to refresh (iPhone home-screen app) + update bar */
+.ptr{position:fixed;left:50%;top:calc(env(safe-area-inset-top,0px) - 46px);transform:translate(-50%,0);z-index:95;display:flex;align-items:center;gap:8px;background:var(--crypt);border:1px solid var(--iron);border-radius:999px;padding:8px 14px;font-family:var(--f-label);font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:var(--ash);opacity:0;transition:opacity .15s;pointer-events:none}
+.ptr.show{opacity:1}.ptr.ready{border-color:var(--blood-hi);color:var(--bone)}
+.ptr-i{font-size:18px;display:inline-block}
+.ptr.spin .ptr-i{animation:spin .6s linear infinite}
+.updbar{position:fixed;left:12px;right:12px;top:calc(env(safe-area-inset-top,0px) + 8px);z-index:96;background:var(--blood);color:var(--bone);border:0;padding:12px 14px;font-family:var(--f-label);font-weight:700;letter-spacing:.04em;text-transform:uppercase;font-size:13px;box-shadow:0 8px 24px rgba(0,0,0,.5)}
