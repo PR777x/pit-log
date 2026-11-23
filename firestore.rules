@@ -17,6 +17,11 @@ service cloud.firestore {
       allow read: if signedIn();
       allow write: if signedIn() && me() == uid;
 
+      // Phones that turned on notifications (one token per phone). Only the owner and the server touch these.
+      match /push/{id} {
+        allow read, write: if signedIn() && me() == uid;
+      }
+
       match /shows/{showId} {
         allow read: if signedIn() && (me() == uid || friends(me(), uid));
         allow delete: if signedIn() && me() == uid;

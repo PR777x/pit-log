@@ -32,6 +32,7 @@ const fakes = {
   "firebase-functions/params": { defineSecret: () => ({ value: () => "test-key" }) },
   "firebase-functions/v2": { setGlobalOptions: () => {}, logger: { info: () => {}, error: (...a) => console.error(...a) } },
   "firebase-admin/app": { initializeApp: () => {} },
+  "firebase-admin/messaging": { getMessaging: () => ({ send: async m => { if (m.token === "dead") { const e = new Error("gone"); e.code = "messaging/registration-token-not-registered"; throw e; } PUSHES.push(m); return "id"; } }) },
   "firebase-admin/storage": { getStorage: () => ({ bucket: () => ({ deleteFiles: async o => { DELETED_PREFIX.push(o.prefix); } }) }) },
   "firebase-admin/auth": { getAuth: () => ({ getUser: async uid => AUTH[uid] || { email: uid + "@example.com", emailVerified: true },
     generateEmailVerificationLink: async (email, s) => `https://pit-log.firebaseapp.com/__/auth/action?mode=verifyEmail&oobCode=CODE-${encodeURIComponent(email)}&continueUrl=${encodeURIComponent(s.url)}`,
@@ -39,6 +40,7 @@ const fakes = {
     verifyIdToken: async t => { if (!t.startsWith("tok-")) throw new Error("bad"); return { uid: t.slice(4) }; } }) },
   "firebase-admin/firestore": { getFirestore: id => { assert.strictEqual(id, "pit-log"); return fakeDb; }, FieldValue: { serverTimestamp: () => ({ __ts: 1 }) } },
 };
+const PUSHES = [];
 const orig = Module._load;
 Module._load = function (req, ...rest) { return fakes[req] || orig.call(this, req, ...rest); };
 global.fetch = async (url, init) => { emails.push({ url, ...JSON.parse(init.body) }); return { ok: true, text: async () => "" }; };
@@ -414,6 +416,22 @@ const sentTo = who => emails.filter(e => e.to[0] === who + "@example.com");
     { type: "like", fromHandle: "ken", show: { id: "s1", date: "2026-11-20", lineup: ["Whitechapel"], venue: "Starland Ballroom", city: "Sayreville, NJ" } },
     { type: "comment", fromHandle: "corey", text: "insane pit", show: { id: "s1", date: "2026-11-20", lineup: ["Whitechapel"], venue: "Starland Ballroom" } } ], reminders: [], today: "2026-11-22" });
   assert.match(dl.body, /Horns up/); assert.match(dl.body, /@carly, @ken threw 🤘/); assert.match(dl.summary, /2 🤘/); assert.match(dl.subject, /corey/);
+
+  // 22. Phone notifications: tags push right away, dead tokens are dropped, likes are off unless turned on, noon "tonight" reminder
+  store.set("users/zoe", { name: "Zoe Q", handle: "zoe", pushOn: true, settings: { tz: "America/New_York" } });
+  store.set("users/zoe/push/p1", { token: "good" }); store.set("users/zoe/push/p2", { token: "dead" });
+  PUSHES.length = 0;
+  let n22 = await F.pushTo("zoe", "tags", { title: "@pat tagged you", body: "x", url: "./?go=tags" });
+  assert.strictEqual(n22, 1); assert.strictEqual(PUSHES[0].data.title, "@pat tagged you"); assert.ok(!store.has("users/zoe/push/p2"), "dead token removed");
+  assert.strictEqual(await F.pushTo("zoe", "likes", { title: "🤘" }), 0, "likes start off");
+  store.set("users/zoe", { ...store.get("users/zoe"), settings: { tz: "America/New_York", pushLikes: "on", pushTags: "off" } });
+  assert.strictEqual(await F.pushTo("zoe", "likes", { title: "🤘" }), 1); assert.strictEqual(await F.pushTo("zoe", "tags", { title: "t" }), 0, "tags switched off");
+  const noonET = new Date(); const lp22 = L.localParts("America/New_York", noonET); noonET.setTime(noonET.getTime() + (12 - lp22.hour) * 3600e3);
+  const lpn = L.localParts("America/New_York", noonET);
+  store.set("users/zoe/shows/z1", { date: lpn.date, lineup: ["Whitechapel", "Chelsea Grin"], venue: "Starland Ballroom", city: "Sayreville, NJ" });
+  PUSHES.length = 0; await F.runPushHourly(noonET);
+  assert.ok(PUSHES.some(m => /Tonight/.test(m.data.title) && /Whitechapel/.test(m.data.body)), "noon reminder for tonight's show");
+  PUSHES.length = 0; await F.runPushHourly(noonET); assert.ok(!PUSHES.some(m => /Tonight/.test(m.data.title)), "only once a day");
 
   console.log("All email function tests passed.");
 })().catch(e => { console.error(e); process.exit(1); });

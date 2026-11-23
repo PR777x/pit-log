@@ -13,6 +13,7 @@ const { initializeApp } = require("firebase-admin/app");
 const { getAuth } = require("firebase-admin/auth");
 const { getFirestore, FieldValue } = require("firebase-admin/firestore");
 const { getStorage } = require("firebase-admin/storage");
+const { getMessaging } = require("firebase-admin/messaging");
 const crypto = require("crypto");
 const L = require("./lib");
 const C = require("./catalog");
@@ -83,6 +84,32 @@ async function send(uid, kind, { subject, title, intro, body, button }){
   return true;
 }
 const handleOf = u => (u && u.handle) || "someone";
+/* ---------- Phone notifications (web push through Firebase Cloud Messaging) ----------
+   Each phone that turned notifications on has a token at users/{uid}/push/{id}. Every kind can be switched off
+   in Settings; 🤘 likes start off. Tokens the phone has dropped are cleaned up when a send fails. */
+const PUSH_PREF = { requests: "pushRequests", tags: "pushTags", comments: "pushComments", likes: "pushLikes", reminders: "pushReminders", onsale: "pushOnsale", announce: "pushAnnounce" };
+const PUSH_OFF_BY_DEFAULT = new Set(["pushLikes"]);
+let messaging = null;
+const pushPrefOn = (u, kind) => { const k = PUSH_PREF[kind], v = ((u && u.settings) || {})[k]; return v ? v === "on" : !PUSH_OFF_BY_DEFAULT.has(k); };
+async function pushTo(uid, kind, { title, body, url = "./", tag = "" }, u){
+  u = u || await userDoc(uid); if (!u || !pushPrefOn(u, kind)) return 0;
+  const toks = await db.collection(`users/${uid}/push`).get(); if (!toks.docs.length) return 0;
+  messaging = messaging || getMessaging();
+  let n = 0;
+  for (const d of toks.docs) {
+    try {
+      await messaging.send({ token: d.data().token, data: { title: String(title).slice(0, 120), body: String(body || "").slice(0, 240), url, tag: tag || kind },
+        webpush: { headers: { Urgency: "high", TTL: "86400" }, fcmOptions: { link: L.SITE + "/" + url.replace(/^\.\//, "") } } });
+      n++;
+    } catch (e) {
+      const code = (e && (e.code || (e.errorInfo && e.errorInfo.code))) || "";
+      if (/registration-token-not-registered|invalid-registration-token|invalid-argument/.test(code)) await d.ref.delete().catch(() => {});
+      else logger.warn("push", code || e.message);
+    }
+  }
+  return n;
+}
+module.exports._setMessaging = m => { messaging = m; };
 const nameOf = u => (u && (u.name || u.handle)) || "Someone";
 
 /* ---------- crew requests and Crew Family ----------
@@ -101,6 +128,7 @@ exports.onCrewRequest = onDocumentCreated({ document: "friendRequests/{id}", dat
   if (!(await cooldownOk(r.to, `req_${r.from}`, 24 * 60))) return; // re-sent/cancelled requests only count once a day
   const from = await userDoc(r.from);
   await queue(r.to, "requests", { type: "request", from: r.from, fromHandle: handleOf(from), fromName: nameOf(from) });
+  await pushTo(r.to, "requests", { title: "Crew request", body: `${nameOf(from)} (@${handleOf(from)}) wants you in their crew`, url: "./?go=crew", tag: "req-" + r.from });
 });
 
 exports.onCrewRequestChange = onDocumentUpdated({ document: "friendRequests/{id}", database: DB_ID }, async event => {
@@ -112,6 +140,7 @@ exports.onCrewRequestChange = onDocumentUpdated({ document: "friendRequests/{id}
   if (a.family === "pending" && b.family !== "pending" && a.familyBy && await cooldownOk(a.familyBy === a.from ? a.to : a.from, `fam_${a.familyBy}`, 24 * 60)) {
     const other = a.familyBy === a.from ? a.to : a.from, by = await userDoc(a.familyBy);
     await queue(other, "requests", { type: "familyInvite", from: a.familyBy, fromHandle: handleOf(by), fromName: nameOf(by) });
+    await pushTo(other, "requests", { title: "Crew Family invite", body: `@${handleOf(by)} wants to link logs with you`, url: "./?go=crew", tag: "fam-" + a.familyBy });
   }
   if (a.family === "active" && b.family === "pending" && a.familyBy) {
     const other = a.familyBy === a.from ? a.to : a.from, o = await userDoc(other);
@@ -136,6 +165,7 @@ exports.onShowWrite = onDocumentWritten({ document: "users/{uid}/shows/{showId}"
     const rel = await relation(uid, t); if (!rel.friends) continue;
     const tagged = await userDoc(t); if (!L.canSee(L.prefs(tagged), "tagMe", rel.family)) continue;
     await queue(t, "tags", { type: "tagged", from: uid, fromHandle: handleOf(owner), show });
+    await pushTo(t, "tags", { title: `@${handleOf(owner)} tagged you`, body: `${L.showLine(show)} · ${L.placeLine(show)}. Were you there?`, url: "./?go=tags", tag: "tag-" + showId }, tagged);
   }
 
   // New shows only (not edits). Skip copies made by Crew Family syncing or by accepting a tag.
@@ -488,8 +518,10 @@ exports.onComment = onDocumentCreated({ document: "showComments/{key}/c/{id}", d
   const [owner, showId] = String(event.params.key).split("__");
   if (!owner || !showId || c.uid === owner) return;
   const show = await db.doc(`users/${owner}/shows/${showId}`).get(); if (!show.exists) return;
-  const ou = await userDoc(owner); if (!ou || L.prefs(ou).emailDigest === "off") return;
+  const ou = await userDoc(owner); if (!ou) return;
   const by = await userDoc(c.uid);
+  await pushTo(owner, "comments", { title: `@${handleOf(by)} commented`, body: `${String(c.text || "").slice(0, 140)} · ${L.showLine(L.showSummary(show.data(), showId))}`, url: `./?go=show&o=${owner}&s=${showId}`, tag: "cmt-" + showId }, ou);
+  if (L.prefs(ou).emailDigest === "off") return;
   await db.collection(`users/${owner}/inbox`).add({ type: "comment", from: c.uid, owner, fromHandle: handleOf(by), show: L.showSummary(show.data(), showId), text: String(c.text || "").slice(0, 300), sent: false, at: FieldValue.serverTimestamp() });
 });
 // 🤘 on someone's show: queued for their digest (never sends an email on its own).
@@ -497,10 +529,52 @@ exports.onLike = onDocumentCreated({ document: "showLikes/{key}/u/{uid}", databa
   const [owner, showId] = String(event.params.key).split("__"), uid = event.params.uid;
   if (!owner || !showId || uid === owner) return;
   const show = await db.doc(`users/${owner}/shows/${showId}`).get(); if (!show.exists) return;
-  const ou = await userDoc(owner); if (!ou || L.prefs(ou).emailDigest === "off") return;
+  const ou = await userDoc(owner); if (!ou) return;
   const by = await userDoc(uid);
+  await pushTo(owner, "likes", { title: `🤘 from @${handleOf(by)}`, body: L.showLine(L.showSummary(show.data(), showId)), url: `./?go=show&o=${owner}&s=${showId}`, tag: "like-" + showId }, ou);
+  if (L.prefs(ou).emailDigest === "off") return;
   await db.collection(`users/${owner}/inbox`).add({ type: "like", from: uid, owner, fromHandle: handleOf(by), show: L.showSummary(show.data(), showId), sent: false, at: FieldValue.serverTimestamp() });
 });
+// Hourly, in each person's own time zone: "tonight" at noon, tickets going on sale within the hour,
+// and new tour dates for bucket-list bands at 10 AM. Only for people with notifications on.
+async function runPushHourly(now = new Date()){
+  const users = await db.collection("users").where("pushOn", "==", true).get();
+  let recent = null, sent = 0;
+  for (const u of users.docs) {
+    const d = u.data(), lp = L.localParts((d.settings || {}).tz, now), mref = db.doc(`mail/${u.id}`);
+    const ms0 = await mref.get(), m = (ms0.exists && ms0.data()) || {}, patch = {};
+    if (lp.hour === 12 && m.pushTonight !== lp.date && pushPrefOn(d, "reminders")) {
+      const s = await db.collection(`users/${u.id}/shows`).where("date", "==", lp.date).get();
+      if (s.docs.length) { const sh = L.showSummary(s.docs[0].data(), s.docs[0].id);
+        sent += await pushTo(u.id, "reminders", { title: "Tonight 🤘", body: `${L.showLine(sh)} at ${sh.venue || "the venue"}${s.docs.length > 1 ? ` (+${s.docs.length - 1} more)` : ""}`, url: `./?go=show&o=${u.id}&s=${sh.id}`, tag: "tonight" }, d); }
+      patch.pushTonight = lp.date;
+    }
+    if (pushPrefOn(d, "onsale")) {
+      const done = m.pushSale || {}, hit = {};
+      for (const it of (Array.isArray(d.interested) ? d.interested : [])) {
+        if (!it || !it.o || done[it.k]) continue;
+        const ms = Date.parse(it.o) - now.getTime(); if (!(ms > 0 && ms <= 65 * 60000)) continue;
+        sent += await pushTo(u.id, "onsale", { title: "Tickets on sale soon", body: `${it.n}: on sale in about ${Math.max(5, Math.round(ms / 60000 / 5) * 5)} minutes`, url: "./?go=disc", tag: "sale-" + it.k }, d);
+        hit[it.k] = lp.date;
+      }
+      if (Object.keys(hit).length) patch.pushSale = { ...done, ...hit };
+    }
+    if (lp.hour === 10 && m.pushAnn !== lp.date && pushPrefOn(d, "announce") && Array.isArray(d.bucket) && d.bucket.length) {
+      if (!recent) { const r = await db.doc("catalogMeta/recent").get(); recent = r.exists ? JSON.parse(r.data().data || "[]") : []; }
+      const want = new Set(d.bucket.map(C.normBand)), today = lp.date;
+      const hits = recent.filter(r => r.f && L.daysBetween(r.f, today) <= 0 && (r.l || []).some(b => want.has(C.normBand(b))));
+      if (hits.length) { const b = (hits[0].l || []).find(x => want.has(C.normBand(x))) || hits[0].l[0];
+        sent += await pushTo(u.id, "announce", { title: "New tour dates 🔥", body: `${b}: ${hits[0].v}, ${hits[0].d}${hits.length > 1 ? ` (+${hits.length - 1} more)` : ""}`, url: "./?go=disc", tag: "ann" }, d); }
+      patch.pushAnn = lp.date;
+    }
+    if (Object.keys(patch).length) await mref.set(patch, { merge: true });
+  }
+  logger.info(`push hourly: ${sent} sent`);
+  return sent;
+}
+exports.pushHourly = onSchedule({ schedule: "11 * * * *", timeZone: "UTC", timeoutSeconds: 300 }, () => runPushHourly());
+module.exports.runPushHourly = runPushHourly;
+module.exports.pushTo = pushTo;
 // Every morning: email support if the app logged errors, or if the Discover catalog didn't refresh.
 async function runOps(now = new Date()){
   const since = new Date(now.getTime() - 864e5);

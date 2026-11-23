@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile, applyActionCode } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=63";
+import { VENUES } from "./venues.js?v=64";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -382,7 +382,8 @@ const PRIVACY = [
 const PRIVATE_BY_DEFAULT = { ticketCost: "crew", merchCost: "crew", notes: "crew", spot: "crew" };
 const SETTING_DEFAULTS = { ...Object.fromEntries(PRIVACY.map(([k]) => [k, PRIVATE_BY_DEFAULT[k] || "public"])),
   defaultView: "list", defaultSort: "newest", crewDefault: "off", weekStart: "sun", currency: "$", distance: "mi",
-  emailRequests: "on", emailTags: "on", emailDigest: "daily", emailReminders: "on", emailWeekly: "on" };
+  emailRequests: "on", emailTags: "on", emailDigest: "daily", emailReminders: "on", emailWeekly: "on",
+  pushRequests: "on", pushTags: "on", pushComments: "on", pushLikes: "off", pushReminders: "on", pushOnsale: "on", pushAnnounce: "on" };
 const settingsOf = prof => ({ ...SETTING_DEFAULTS, ...((prof && prof.settings) || {}) });
 const MY = () => settingsOf(PROFILE);
 // Family sees what's "family" and up; the rest of the crew sees "crew" and up.
@@ -1324,6 +1325,7 @@ document.addEventListener("click", e => {
   else if (t.hasAttribute("data-crewtoggle")) { S.crewOn = !S.crewOn; try { localStorage.setItem("pitlog.crewOn", S.crewOn ? "1" : "0"); } catch (_) {} renderTab(); }
   else if (t.dataset.tagf) { readForm(); toggleTag(t.dataset.tagf); }
   else if (crewClick(t)) {}
+  else if (pushClick(t)) {}
   else if (t.hasAttribute("data-close")) closeSheet();
   else if (t.hasAttribute("data-save")) save();
   else if (t.hasAttribute("data-del")) del();
@@ -2963,7 +2965,15 @@ function settingsBlock(){
   return `<section class="sect settings"><h3 style="margin-bottom:6px">Settings</h3>
     ${grp("privacy", "Privacy", `<div class="ro" style="margin:4px 0 10px">Choose who sees each part of your log. Family only means people you've linked with Crew Family. Public covers your whole crew today, and anyone on Pit Log if public profiles are added later.</div>
       ${PRIVACY.map(([k, l, h]) => selectRow(k, l, h, LEVELS, set[k])).join("")}`)}
-    ${grp("notify", "Notifications", `<div class="ro" style="margin:4px 0 10px">Emails come from alerts@thepitlog.com and go to ${esc((ME && ME.email) || "the address you sign in with")}.</div>` + [
+    ${grp("push", "Phone notifications", pushBlock() + [
+      selectRow("pushRequests", "Crew requests", "Crew requests and Crew Family invites.", [["on", "On"], ["off", "Off"]], set.pushRequests),
+      selectRow("pushTags", "Tags", "When someone tags you on a show.", [["on", "On"], ["off", "Off"]], set.pushTags),
+      selectRow("pushComments", "Comments", "Comments on your shows.", [["on", "On"], ["off", "Off"]], set.pushComments),
+      selectRow("pushLikes", "🤘 on your shows", "Each time someone throws you the horns.", [["on", "On"], ["off", "Off"]], set.pushLikes),
+      selectRow("pushReminders", "Show day", "Around noon on the day of a show you're going to.", [["on", "On"], ["off", "Off"]], set.pushReminders),
+      selectRow("pushOnsale", "Tickets on sale", "About an hour before tickets go on sale for tours you marked Interested.", [["on", "On"], ["off", "Off"]], set.pushOnsale),
+      selectRow("pushAnnounce", "New tour dates", "Around 10 AM when a bucket-list band announces dates near you.", [["on", "On"], ["off", "Off"]], set.pushAnnounce)].join(""))}
+    ${grp("notify", "Email", `<div class="ro" style="margin:4px 0 10px">Emails come from alerts@thepitlog.com and go to ${esc((ME && ME.email) || "the address you sign in with")}.</div>` + [
       selectRow("emailDigest", "Daily digest", "One email around 6 PM, only on days something happened: crew requests, tags, shows your crew adds, and show reminders. Weekly sends it Sundays instead.", [["daily", "Daily"], ["weekly", "Weekly"], ["off", "Off"]], set.emailDigest),
       selectRow("emailRequests", "Include crew requests", "Crew requests, accepts and Crew Family invites, in the digest.", [["on", "Include"], ["off", "Leave out"]], set.emailRequests),
       selectRow("emailTags", "Include tags", "When someone tags you on a show, in the digest.", [["on", "Include"], ["off", "Leave out"]], set.emailTags),
@@ -3521,6 +3531,7 @@ function startApp(){
   }, err => console.error("requests", err));
   UNSUBS.push(reqs("to", "in"), reqs("from", "out"));
   setTimeout(claimInvite, 3000);
+  if (START_GO) setTimeout(() => goTo(START_GO), 1800);
 }
 function updateCrewBadge(){ updateAcctBadge(); const n = REQ.in.filter(r => r.status === "pending").length
   + (ME ? friendList().filter(f => f.famState === "pending" && f.famBy && f.famBy !== ME.uid).length : 0); $("#tab-crew .bslot").innerHTML = n ? `<span class="badge-n">${n}</span>` : ""; $("#tab-crew").setAttribute("aria-selected", S.tab === "crew"); navArrows(); }
@@ -3625,6 +3636,68 @@ onAuthStateChanged(auth, async user => {
 
 if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js").catch(() => {}));
 
+
+/* ---------- Phone notifications (web push via Firebase Cloud Messaging) ---------- */
+const VAPID = "BJz9SJHsKI4UKAejmHlehVPTEtzI0zudMDB7NACPDQeO8GSiRIZzGGvp7I6648B4a33L9P7IHo-u5-V8L27dK6w";
+const pushSupported = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+const IS_IOS = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+const IS_STANDALONE = !!(window.navigator.standalone || (window.matchMedia && matchMedia("(display-mode: standalone)").matches));
+const pushOnHere = () => { try { return !!localStorage.getItem("pitlog.pushTok") && Notification.permission === "granted"; } catch (_) { return false; } };
+function pushBlock(){
+  let state;
+  if (IS_IOS && !IS_STANDALONE) state = `<div class="ro">On iPhone, notifications only work from the home-screen app. In Safari tap <b>Share → Add to Home Screen</b>, open Pit Log from there, and turn them on in this spot.</div>`;
+  else if (!pushSupported()) state = `<div class="ro">This browser can't show notifications. Try Chrome on Android, or the home-screen app on iPhone.</div>`;
+  else if (Notification.permission === "denied") state = `<div class="ro">Notifications are blocked for Pit Log on this phone. Allow them in your phone's settings for this app, then come back here.</div>`;
+  else if (pushOnHere()) state = `<div class="pushon"><b>✓ On for this phone.</b> <button class="linkbtn" data-pushoff>Turn off here</button> · <button class="linkbtn" data-pushtest>Send a test</button></div>`;
+  else state = `<button class="btn red" data-pushon>Turn on notifications on this phone</button>`;
+  return `<div class="ro" style="margin:4px 0 10px">Alerts on this phone's lock screen, even when Pit Log is closed. Each phone is turned on separately. Pick what's worth a buzz below; everything else stays in email.</div>${state}<div style="height:10px"></div>`;
+}
+async function messagingMod(){ return await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging.js"); }
+async function enablePush(){
+  if (!pushSupported()) { toast("This browser can't show notifications"); return; }
+  const perm = await Notification.requestPermission();
+  if (perm !== "granted") { toast(perm === "denied" ? "Notifications are blocked. Allow them in your phone's settings." : "Notifications not turned on"); if (S.tab === "me") renderMe(); return; }
+  try {
+    toast("Turning on notifications…", 4000);
+    const reg = await navigator.serviceWorker.register("./sw.js"); await navigator.serviceWorker.ready;
+    const { getMessaging, getToken } = await messagingMod();
+    const token = await getToken(getMessaging(app), { vapidKey: VAPID, serviceWorkerRegistration: reg });
+    if (!token) throw new Error("no token");
+    let h1 = 0x811c9dc5, h2 = 0x9e3779b9; for (let i = 0; i < token.length; i++) { const c = token.charCodeAt(i); h1 = Math.imul(h1 ^ c, 16777619); h2 = Math.imul(h2 ^ c, 2246822519); }
+    const id = (h1 >>> 0).toString(16).padStart(8, "0") + (h2 >>> 0).toString(16).padStart(8, "0"); // one doc per phone token
+    await setDoc(doc(fdb, "users", ME.uid, "push", id), { token, ua: navigator.userAgent.slice(0, 160), at: serverTimestamp() });
+    await updateDoc(doc(fdb, "users", ME.uid), { pushOn: true });
+    try { localStorage.setItem("pitlog.pushTok", token); localStorage.setItem("pitlog.pushId", id); } catch (_) {}
+    toast("Notifications on 🤘", 2500);
+  } catch (e) { console.error("push", e); logError(String((e && e.message) || e), "enablePush"); toast("Couldn't turn on notifications. Try again in a minute.", 4000); }
+  if (S.tab === "me") renderMe();
+}
+async function disablePush(){
+  let id = ""; try { id = localStorage.getItem("pitlog.pushId") || ""; localStorage.removeItem("pitlog.pushTok"); localStorage.removeItem("pitlog.pushId"); } catch (_) {}
+  try { const { getMessaging, deleteToken } = await messagingMod(); await deleteToken(getMessaging(app)); } catch (_) {}
+  if (id) try { await deleteDoc(doc(fdb, "users", ME.uid, "push", id)); } catch (_) {}
+  toast("Notifications off for this phone"); if (S.tab === "me") renderMe();
+}
+async function testPush(){
+  try { const reg = await navigator.serviceWorker.ready; await reg.showNotification("Pit Log 🤘", { body: "This is what an alert looks like on this phone.", icon: "icons/icon-192.png", badge: "icons/favicon-64.png", tag: "test" }); }
+  catch (_) { toast("Couldn't show a test notification"); }
+}
+// Notification taps land on ?go=… (or arrive as a message when the app is already open).
+function goTo(url){
+  let q; try { q = new URL(url, location.href).searchParams; } catch (_) { return; }
+  const go = q.get("go"); if (!go || !ME || !PROFILE) return;
+  if (go === "tags") { S.tab = "me"; renderTab(); setTimeout(() => $("#tagInbox")?.scrollIntoView({ block: "start" }), 80); }
+  else if (go === "crew" || go === "disc") { S.tab = go; renderTab(); }
+  else if (go === "show") { const o = q.get("o"), id = q.get("s"); if (o === ME.uid) { if (S.shows.some(x => x.id === id)) { S.tab = "shows"; renderTab(); openSheet(id); } } else if (FR[o]) openFriendSheet(o, id); }
+}
+if ("serviceWorker" in navigator) navigator.serviceWorker.addEventListener("message", e => { if (e.data && e.data.go) goTo(e.data.go); });
+const START_GO = (() => { try { const q = new URLSearchParams(location.search); if (!q.get("go")) return ""; const u = location.href; q.delete("go"); q.delete("o"); q.delete("s"); history.replaceState(null, "", location.pathname + (q.toString() ? "?" + q : "") + location.hash); return u; } catch (_) { return ""; } })();
+function pushClick(t){
+  if (t.hasAttribute("data-pushon")) { enablePush(); return true; }
+  if (t.hasAttribute("data-pushoff")) { disablePush(); return true; }
+  if (t.hasAttribute("data-pushtest")) { testPush(); return true; }
+  return false;
+}
 
 /* ---------- Pull to refresh + update check ----------
    iPhone home-screen apps have no pull-to-refresh, so draw our own: pull down from the very top, let go to reload.
