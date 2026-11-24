@@ -489,6 +489,7 @@ exports.account = onRequest({ cors: [/thepitlog\.com$/, /localhost/, /pr777x\.gi
     await deleteAccount(uid);
     return res.json({ result: "deleted" });
   }
+  if (action === "features") { const k = SETLISTFM_API_KEY.value(); return res.json({ setlist: !!k && k !== "none" }); }
   if (action === "bandInfo") {
     const band = String((req.body && req.body.band) || "").trim().slice(0, 80); if (!band) return res.status(400).json({ error: "which band?" });
     const key = "b3_" + A.norm(band).slice(0, 80); if (key.length < 3) return res.json({ found: false, name: band });

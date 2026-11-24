@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile, applyActionCode } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=74";
+import { VENUES } from "./venues.js?v=75";
 import { getStorage, ref as sref, uploadBytes, uploadBytesResumable, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -978,7 +978,7 @@ function renderShowView(fresh){
     </div>
     ${allSongs ? `<div class="sect"><h3>Setlist <span class="lbl">${allSongs} songs</span></h3>${Object.entries(songs).map(([b, list]) => `<div class="vset"><div class="lbl">${esc(b)}</div><ol>${(list || []).map(x => `<li>${esc(x)}</li>`).join("")}</ol></div>`).join("")}${d.setlistUrl ? `<div class="ro">From <a href="${esc(d.setlistUrl)}" target="_blank" rel="noopener">setlist.fm</a></div>` : ""}</div>`
       : d.setlist ? `<div class="sect"><h3>Setlist notes</h3><div class="vtext">${esc(d.setlist)}</div></div>` : ""}
-    ${!ro && !up && d.date && !allSongs ? `<div class="sect"><button class="btn" data-getsetlist>Get the setlist from setlist.fm</button><div class="ro" id="slmsg"></div></div>` : ""}
+    ${!ro && !up && d.date && !allSongs ? (FEAT.setlist ? `<div class="sect"><button class="btn" data-getsetlist>Get the setlist from setlist.fm</button><div class="ro" id="slmsg"></div></div>` : `<div class="sect">${SOON_SETLIST}</div>`) : ""}
     ${d.notes ? `<div class="sect"><h3>Notes</h3><div class="vtext">${esc(d.notes)}</div></div>` : ""}
     ${people.length ? `<div class="sect"><h3>Went with</h3><div class="tagrow">${people.map(p => `<span class="chip${p.no ? " tagno" : ""}"${p.no ? ` title="Said they weren't there"` : ""}>${esc(p.n)}${p.no ? " · not there" : ""}</span>`).join("")}</div></div>` : ""}
     ${!up && d.id !== "__new" ? `<div id="rcmp"></div>` : ""}
@@ -2328,7 +2328,7 @@ function renderBand(){
         return `<div class="ddate${myV.has(vkey(r.v)) ? " pv" : ""}"><span class="pdate"><b class="num">${p.d}</b>${MONTHS[p.m - 1]} · ${DAYS[p.dt.getDay()]}</span><div class="pt"><div class="dv">${esc(r.v)}</div><div class="ro">${esc(r.y)}${normBand(r.l[0]) !== k ? ` · with ${esc(r.l[0])}` : ""}</div>
           <div class="tagrow">${inLog ? `<span class="chip tog">In your log</span>` : `${ticketLink(r.u)}<button class="chip catadd" data-bandadd="${i}">+ Add to my shows</button>`}</div></div></div>`; }).join("")}</div>${dates.length > 8 ? `<button class="btn ghost dmore" data-bandmore>See all ${dates.length} in Discover</button>` : ""}`
         : `<div class="ro">${DISC.months ? "No dates announced in PA, NJ, DE or NY right now." : "Loading tour dates…"}</div>`}</section>
-    <section class="sect"><h3>Past tours</h3><div class="ro" style="margin-bottom:8px">Find a night you were at, with the full bill and setlists.</div><button class="btn" data-bandpast>Search past shows</button></section>
+    <section class="sect"><h3>Past tours</h3><div class="ro" style="margin-bottom:8px">Find a night you were at, with the full bill and setlists.</div>${FEAT.setlist ? `<button class="btn" data-bandpast>Search past shows</button>` : `<div class="soon"><b>Coming soon:</b> past tours from setlist.fm.</div>`}</section>
   </div>`;
   S.bandDates = dates.slice(0, 8);
   if (!info) bandInfoFor(name).then(() => { if (S.tab === "band" && normBand(S.band) === k) renderBand(); });
@@ -2713,6 +2713,7 @@ function renderPast(){
   const yrs = []; for (let y = parse(todayISO).y; y >= 1990; y--) yrs.push(y);
   const quick = pastQuickBands();
   $("#view").innerHTML = `<div class="disc">${dviewSeg()}
+    ${FEAT.setlist ? "" : `<div class="soon"><b>Coming soon:</b> past show search runs on setlist.fm, and we're finishing that connection. Until then you can add past shows by hand with <b>+</b>.</div>`}
     <div class="ro">Find a show you went to: search a band, open the tour or venue, and add your night with the full bill and setlists.</div>
     <form id="pastForm" class="pastform" autocomplete="off">
       <input class="search" id="pq" value="${esc(PAST.q)}" placeholder="Band, ex: Varials" list="dl-pbands" autocapitalize="none" spellcheck="false" aria-label="Band">
@@ -2774,6 +2775,7 @@ function drawPast(){
     <div class="ro" style="margin-top:14px">Past shows come from <a href="https://www.setlist.fm" target="_blank" rel="noopener">setlist.fm</a>, built by fans. If your night is missing, add it by hand with + Add show.</div>`;
 }
 async function searchPast(more){
+  if (FEAT.setlist === false) { toast("Past show search is coming soon", 3000); return; }
   if (!more) { PAST.q = ($("#pq") || {}).value || PAST.q; PAST.year = ($("#pyear") || {}).value || ""; }
   const q = PAST.q.trim(); if (!q) { toast("Type a band name"); return; }
   PAST.loading = true; PAST.err = ""; if (!more) { PAST.res = null; PAST.open = new Set(); PAST.filter = ""; }
@@ -3431,7 +3433,7 @@ function settingsBlock(){
       selectRow("distance", "Distance", "", [["mi", "Miles"], ["km", "Kilometers"]], set.distance)].join(""))}
     ${grp("data", "Your data", `<div class="ro" style="margin:4px 0 10px">Download a backup of every show you've logged. Import it from the account menu to restore it.</div>
       <button class="btn" data-backup>Download my data</button>
-      <div class="ro" style="margin:16px 0 8px"><b class="bone">Import from setlist.fm.</b> Already log shows there? Bring your whole attended history over, setlists included. Shows you already have are skipped.</div>
+      <div class="ro" style="margin:16px 0 8px"><b class="bone">Import from setlist.fm.</b> Already log shows there? Bring your whole attended history over, setlists included. Shows you already have are skipped.${FEAT.setlist ? "" : ` <b>Coming soon:</b> we're finishing the setlist.fm connection.`}</div>
       <div class="bkadd"><input id="slUser" placeholder="Your setlist.fm username" autocapitalize="none" spellcheck="false" aria-label="setlist.fm username"><button class="btn red" data-slimport>Import</button></div>
       <div class="ro" id="slImportMsg"></div>
       <div class="ro" style="margin:18px 0 8px"><b class="bone">Delete my account.</b> Permanently removes your profile, shows, photos and crew links. Shows you shared with Crew Family stay in their log.</div>
@@ -3449,6 +3451,7 @@ async function saveSetting(key, val){
   catch (e) { handleWriteErr(e); }
 }
 async function importSetlistFm(){
+  if (FEAT.setlist === false) { toast("setlist.fm import is coming soon", 3000); return; }
   const user = ($("#slUser")?.value || "").trim(), msg = $("#slImportMsg"); if (!user) { msg.textContent = "Type your setlist.fm username first."; return; }
   msg.textContent = "Reading your setlist.fm history… (big histories take a minute)";
   let res; try { res = await callAccount("setlistImport", { username: user }); }
@@ -3913,6 +3916,10 @@ const verifyDone = !VERIFY_LINK ? Promise.resolve(null) : applyActionCode(auth, 
   .then(() => "ok").catch(e => (console.warn("verify", e), e.code === "auth/invalid-action-code" || e.code === "auth/expired-action-code" ? "expired" : "error"))
   .then(r => { try { history.replaceState(null, "", location.pathname); } catch (_) {} if (r === "ok") setTimeout(() => toast("Email confirmed. Welcome to the pit!", 3500), 300);
     else if (r) $("#signinMsg").textContent = r === "expired" ? "That confirm link has expired or was already used. Sign in and tap Resend for a new one." : "Couldn't confirm that link. Sign in and tap Resend."; return r; });
+// Which server features are switched on (setlist.fm needs its API key). Asked once per launch.
+const FEAT = { setlist: null };
+async function loadFeatures(){ if (FEAT.setlist !== null) return FEAT; try { const j = await callAccount("features"); FEAT.setlist = !!j.setlist; } catch (_) { FEAT.setlist = false; } if (S.tab !== "home" || S.open) { try { if (S.open) renderSheet(); else renderTab(); } catch (_) {} } return FEAT; }
+const SOON_SETLIST = `<div class="soon"><b>Coming soon:</b> setlists from setlist.fm. We're finishing the connection, so this will switch on by itself shortly.</div>`;
 async function callAccount(action, extra){
   const tok = await ME.getIdToken();
   const r = await fetch(ACCOUNT_URL, { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + tok }, body: JSON.stringify({ action, ...(extra || {}) }) });
@@ -3997,7 +4004,7 @@ function startApp(){
     REQ[key] = snap.docs.map(d => ({ id: d.id, ...d.data() })); syncFriends(); updateCrewBadge();
   }, err => console.error("requests", err));
   UNSUBS.push(reqs("to", "in"), reqs("from", "out"));
-  setTimeout(claimInvite, 3000);
+  setTimeout(claimInvite, 3000); setTimeout(loadFeatures, 1200);
   if (START_GO) setTimeout(() => goTo(START_GO), 1800);
 }
 function updateCrewBadge(){ updateAcctBadge(); const n = REQ.in.filter(r => r.status === "pending").length
@@ -4171,6 +4178,7 @@ function pushClick(t){
    than the feature it fixes (same-day polish is part of the feature). b = the build it shipped in.
    Every build, user-facing or not (including removals), also gets an entry in version-history.html. */
 const WHATS_NEW = [
+  { b: 75, date: "2026-11-23", icon: "📜", t: "Setlists are coming", d: "Setlist features show a coming-soon note until setlist.fm is connected. Privacy policy and terms were refreshed too." },
   { b: 74, date: "2026-11-22", icon: "🗺️", t: "Tour names on show cards", d: "Your Shows list now shows each show's tour name when it has one.", go: "shows" },
   { b: 73, date: "2026-11-22", icon: "📐", t: "Tidier show cards", d: "Names, ratings and tags on show cards now line up on clean rows." },
   { b: 72, date: "2026-11-22", icon: "🏷️", t: "Tag crew in photos", d: "Tag friends in photos and videos (each one on its own when you add several). They can add them to their own log of the show." },

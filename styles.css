@@ -871,3 +871,4 @@ button.wnitem{cursor:pointer}button.wnitem:hover{border-color:var(--blood-hi)}
 .pgal{grid-template-columns:repeat(auto-fill,minmax(96px,1fr))}
 .chips .chip{display:inline-flex;align-items:center;white-space:nowrap;line-height:1.35}
 .ticket .ttour{font-family:var(--f-label);font-size:13px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--rust);margin-top:2px;line-height:1.25}
+.soon{border:1px dashed var(--rust);color:var(--ash);background:rgba(201,118,47,.08);padding:10px 12px;font-size:14px;line-height:1.45}.soon b{color:var(--rust)}

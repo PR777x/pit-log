@@ -8,7 +8,7 @@ on:
     inputs:
       backup:
         description: "Backup branch to restore"
-        default: "backup/build-43"
+        default: "backup/build-74"
         required: true
       dry_run:
         description: "Dry run (just show what would change)"
