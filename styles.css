@@ -957,3 +957,13 @@ details.hastate{margin-top:4px}details.hastate select{margin-top:8px;width:100%}
 .sdband>div{display:grid;min-width:0}.sdband .n{font-size:18px;font-weight:600;text-align:left;background:none;border:0;padding:0;color:var(--bone)}
 .sdpos{font-size:11px}
 .sdrate{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 0}
+/* Performance: the browser skips drawing cards that are off screen */
+.tourcard{content-visibility:auto;contain-intrinsic-size:auto 160px}
+.stath{font-family:var(--f-display);font-weight:400;font-size:34px;margin:30px 0 10px;padding-top:16px;border-top:1px solid var(--iron)}
+.tips{display:grid;gap:10px;margin:0 0 6px}
+.tipcard{display:grid;grid-template-columns:30px 1fr;gap:10px;border:1px solid var(--iron);border-left:3px solid var(--blood);background:var(--crypt);padding:12px}
+.tipic{font-size:22px;line-height:1.2}.tipt{display:grid;gap:6px;min-width:0}.tipt>b{font-size:16px}.tipt .ro b{color:var(--bone);font-weight:600}
+.tipbtns{display:flex;align-items:center;gap:14px;flex-wrap:wrap}.tipbtns .linkbtn{color:var(--ash)}
+.tipt>.btn{justify-self:start}
+.statseg button{font-size:13px;letter-spacing:.04em}
+.statseg button{flex:1 1 auto;padding-left:5px;padding-right:5px;font-size:12.5px;letter-spacing:.03em}

@@ -24,10 +24,16 @@
 <meta property="og:type" content="website">
 <script type="application/ld+json">{"@context":"https://schema.org","@type":"WebApplication","name":"Pit Log","url":"https://thepitlog.com/","applicationCategory":"EntertainmentApplication","operatingSystem":"Any (web, Android, iPhone)","description":"Free concert tracker and show diary for metal, rock and punk fans: log the concerts you've attended, rate bands and pits, keep posters and photos, track upcoming shows and tour announcements, and compare stats with friends.","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="preconnect" href="https://www.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://firestore.googleapis.com" crossorigin>
+<link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js">
+<link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js">
+<link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js">
+<link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Pirata+One&family=Barlow+Condensed:wght@400;500;600;700&family=Barlow:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="styles.css?v=77">
+<link rel="stylesheet" href="styles.css?v=78">
 </head>
 <body>
 
@@ -132,7 +138,7 @@
     <p class="ro" id="signinMsg" role="alert"></p>
     <p class="ro">You choose who sees what. By signing up you agree to the <a class="suplink" href="terms.html">Terms</a> and <a class="suplink" href="privacy.html">Privacy policy</a>.</p>
     <p class="ro">Trouble signing in? Email <a class="suplink" href="mailto:support@thepitlog.com?subject=Pit%20Log%20sign-in%20help">support@thepitlog.com</a></p>
-    <p class="ro" style="opacity:.5">build 77</p>
+    <p class="ro" style="opacity:.5">build 78</p>
     <p class="ro" id="inapp" hidden>Opened inside another app? Use ⋮ → <b>Open in Chrome</b> (or Safari on iPhone) for sign-in to work.</p>
   </div>
   <footer class="lfoot"><span>Pit Log · Every show. Every pit.</span><span><a href="privacy.html">Privacy</a> · <a href="terms.html">Terms</a> · <a href="mailto:support@thepitlog.com">support@thepitlog.com</a></span></footer>
@@ -201,6 +207,7 @@
 <div id="modalRoot"></div>
 <div id="toastRoot"></div>
 
-<script type="module" src="app.js?v=77"></script>
+<!-- app.js?v=78 (marker for older versions checking for updates) -->
+<script type="module" src="app.min.js?v=78"></script>
 </body>
 </html>

@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile, applyActionCode } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=77";
+import { VENUES } from "./venues.js?v=78";
 import { getStorage, ref as sref, uploadBytes, uploadBytesResumable, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -54,7 +54,12 @@ S.showView = showViewPref;
 const FR = {}; // friend uid -> { uid, name, handle, photo, shows, err, unsub }
 let REQ = { in: [], out: [] };
 
-const parse = (iso) => { const [y,m,d] = (iso||"").split("-").map(Number); return { y, m, d, dt: new Date(y, (m||1)-1, d||1) }; };
+// Dates are parsed constantly while drawing lists, so each distinct date string is parsed once.
+// (Every caller still gets its own Date object, so changing it can't affect anyone else.)
+const PARSED = new Map();
+const parse = (iso) => { const k = iso || ""; let p = PARSED.get(k);
+  if (!p) { const [y,m,d] = k.split("-").map(Number); p = { y, m, d, t: new Date(y, (m||1)-1, d||1).getTime() }; if (PARSED.size > 6000) PARSED.clear(); PARSED.set(k, p); }
+  return { y: p.y, m: p.m, d: p.d, dt: new Date(p.t) }; };
 const fmtDate = iso => { const p = parse(iso); return p.y ? `${MONTHS[p.m-1]} ${p.d}, ${p.y}` : ""; };
 const isUpcoming = s => (s.date||"") > todayISO;
 const lineup = s => Array.isArray(s.lineup) ? s.lineup.filter(Boolean) : [];
@@ -164,9 +169,12 @@ function flushUndo(){ if (UNDO.cur) UNDO.cur.fin(false); }
 window.addEventListener("pagehide", flushUndo);
 function toast(msg, ms){ if (UNDO.cur) flushUndo(); const r = $("#toastRoot"); r.innerHTML = `<div class="toast" role="status">${esc(msg)}</div>`; clearTimeout(toast.t); toast.t = setTimeout(()=> r.innerHTML="", ms || 2400); }
 
+let FIRSTS = null;
 function firstSightings(){
+  if (FIRSTS && FIRSTS.src === S.shows) return FIRSTS.out;
   const seen = new Set(), firsts = {};
   for (const s of sorted()) { if (isUpcoming(s)) continue; const f = []; for (const b of lineup(s)) { const k = b.toLowerCase(); if (!seen.has(k)) { seen.add(k); f.push(b); } } firsts[s.id] = f; }
+  FIRSTS = { src: S.shows, out: firsts };
   return firsts;
 }
 
@@ -174,7 +182,7 @@ function tile(it, opts){
   const tag = opts.tag ? `<span class="tag">${esc(opts.tag)}</span>` : "";
   const kind = opts.kind ? `<span class="kind">${esc(opts.kind)}</span>` : "";
   if (it.type === "video") return `<button class="mt vid" data-lbi="${opts.i}" aria-label="Play video">${it.thumb ? `<img src="${esc(src(it.thumb))}" alt="" loading="lazy"${it.rot ? ` style="transform:rotate(${Number(it.rot)}deg)"` : ""}>` : `<video src="${src(it.id)}#t=0.5" preload="metadata" muted playsinline${it.rot ? ` style="transform:rotate(${Number(it.rot)}deg)"` : ""}></video>`}${it.dur ? `<span class="vdur">${Math.floor(it.dur / 60)}:${String(it.dur % 60).padStart(2, "0")}</span>` : ""}${kind}${tag}</button>`;
-  return `<button class="mt" data-lbi="${opts.i}" aria-label="View image"><img src="${src(it.id)}" alt="" loading="lazy">${kind}${tag}</button>`;
+  return `<button class="mt" data-lbi="${opts.i}" aria-label="View image"><img src="${src(it.thumb || it.id)}" alt="" loading="lazy" decoding="async"${it.thumb ? ` onerror="this.onerror=null;this.src='${esc(src(it.id))}'"` : ""}>${kind}${tag}</button>`;
 }
 
 const openNext = id => { if (showsToday().some(x => x.id === id)) { S.showDayId = id; S.tab = "showday"; renderTab(); window.scrollTo(0, 0); } else openSheet(id); };
@@ -201,7 +209,7 @@ function ticket(s, firsts, opts){
   const sup = support(s), firstsHere = (firsts[s.id]||[]), rating = Number(s.rating)||0;
   const media = [...items(s,"photos"), ...items(s,"merch")];
   const vids = media.filter(m=>m.type==="video").length;
-  const thumbs = [pid(s.poster), ...media.filter(m=>m.type!=="video").map(m=>m.id)].filter(Boolean).slice(0,5);
+  const thumbs = [pid(s.poster), ...media.filter(m=>m.type!=="video").map(m=>m.thumb || m.id)].filter(Boolean).slice(0,5);
   return `<button class="ticket ${up?'upcoming':''}${opts.friend && S.tab!=="crew" ? " crewt" : ""}" ${opts.friend ? `data-fopen="${esc(opts.friend)}|${esc(s.id)}"` : `data-open="${esc(s.id)}"`} aria-label="Open ${esc(lu[0]||'show')}">
     <div class="stub"><div class="mo">${MONTHS[(p.m||1)-1].toUpperCase()}</div><div class="dd num">${p.d||"?"}</div><div class="dw">${DAYS[p.dt.getDay()]}</div></div>
     <div class="tbody">
@@ -281,15 +289,20 @@ function renderShows(){
     : `<div class="empty"><h3>Nothing matches</h3><div>Try another band, venue or name${S.listYear !== "all" ? `, or <button class="linkbtn" data-lyear="all">search all years</button>` : ""}.</div></div>`;
   else {
     const counts = {}; for (const s of list) { const g = groupOf(s).join("|"); counts[g] = (counts[g]||0) + 1; }
+    // Long lists draw 80 cards at a time; more load as you scroll to the end.
+    const lkey = [S.listYear, S.filter, S.sort, q, S.crewOn].join("|"); if (S.listKey !== lkey) { S.listKey = lkey; S.listN = 80; }
+    const shown = list.slice(0, S.listN || 80);
     let lastKey = null; html += `<div class="list">`;
-    for (const s of list) {
+    for (const s of shown) {
       const [g, sub] = groupOf(s), key = g + "|" + sub;
       if (key !== lastKey) { html += `<div class="month">${esc(g)} <span class="lbl" style="font-size:13px">${esc(sub)}${S.sort!=="newest"&&S.sort!=="oldest" ? `${sub?" · ":""}${counts[key]}` : ""}</span></div>`; lastKey = key; }
       html += ticket(s, firsts, s._f ? { friend: s._f } : null);
     }
     html += `</div>`;
+    if (list.length > shown.length) html += `<button class="btn ghost dmore" data-listmore>Show more (${list.length - shown.length} left)</button>`;
   }
   $("#view").innerHTML = html;
+  const more = $("[data-listmore]"); if (more && "IntersectionObserver" in window) { const io = new IntersectionObserver(es => { if (es.some(e => e.isIntersecting)) { io.disconnect(); if (more.isConnected) more.click(); } }, { rootMargin: "600px" }); io.observe(more); }
 }
 
 /* ---------- Vault tab ---------- */
@@ -522,12 +535,12 @@ function renderStats(){
   const backToBack = done.some(s=>{ const d = parse(s.date).dt; d.setDate(d.getDate()+1); const k = d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); return dates.has(k); });
   const rank = (rows, max, band) => rows.length ? `<div class="rank">${rows.slice(0,8).map(r=>`<div class="row">${band ? `<button class="n bandlink" data-bandp="${esc(r.name)}">${esc(r.name)}</button>` : `<span class="n">${esc(r.name)}</span>`}<span class="num lbl" style="color:var(--bone)">${r.n}×</span><div class="track"><i style="width:${(r.n/max*100).toFixed(1)}%"></i></div></div>`).join("")}</div>` : `<div class="ro">Nothing logged yet.</div>`;
   // Lighter Stats: one view at a time instead of everything in one long scroll.
-  const V = ["overview", "bands", "money", "patches"].includes(S.statView) ? S.statView : "overview";
-  const seg = `<div class="seg big statseg" role="group" aria-label="Stats view">${[["overview", "Overview"], ["bands", "Bands"], ["money", "Spend"], ["patches", "Patches"]].map(([k, l]) => `<button data-statv="${k}" aria-pressed="${V === k}">${l}</button>`).join("")}</div>`;
+  const V = ["overview", "bands", "money", "patches", "all"].includes(S.statView) ? S.statView : "overview";
+  const seg = `<div class="seg big statseg" role="group" aria-label="Stats view">${[["overview", "Overview"], ["bands", "Bands"], ["money", "Spend"], ["patches", "Patches"], ["all", "All"]].map(([k, l]) => `<button data-statv="${k}" aria-pressed="${V === k}">${l}</button>`).join("")}</div>`;
   const tile = (l, v) => `<div class="tile"><div class="lbl">${l}</div><div class="v num">${v}</div></div>`;
   const songs = done.reduce((a, s) => a + Object.values(s.songs || {}).reduce((b, l) => b + (Array.isArray(l) ? l.length : 0), 0), 0);
-  let body = "";
-  if (V === "overview") body = `
+  const parts = {};
+  parts.overview = `
     <button class="wrapbtn" data-wrapped><span class="lbl">Your ${S.year === "all" ? parse(todayISO).y : S.year}</span><b>Year in review</b><span>Your shows, top bands and pit crew as shareable cards ›</span></button>
     ${S.crewOn ? crewStats() : ""}
     <div class="tiles">${tile("Shows attended", done.length)}${tile("Still to come", up.length)}${tile("Bands seen", bands.length)}${tile("Avg rating", `${avg}<small>/5</small>`)}</div>
@@ -536,8 +549,8 @@ function renderStats(){
       <div class="barx">${MONTHS.map(m=>`<span>${m[0]}</span>`).join("")}</div>
       <div class="ro" style="margin-top:6px">Solid = attended · hatched = upcoming</div>
     </section>`;
-  else if (V === "bands") body = `
-    <div class="tiles">${tile("Bands seen", bands.length)}${tile("Venues", venues.filter(v=>v.name).length)}${songs ? tile("Songs heard live", songs.toLocaleString()) : ""}${tile("Vault items", `${media.length}${vids?`<small> · ${vids} vid</small>`:""}`)}</div>
+  parts.bands = `
+    <div class="tiles">${tile("Bands seen", bands.length)}${tile("Seen 2+ times", repeats.length)}${tile("Venues", venues.filter(v=>v.name).length)}${tile("Vault items", `${media.length}${vids?`<small> · ${vids} vid</small>`:""}`)}${songs ? tile("Songs heard live", songs.toLocaleString()) : ""}</div>
     <div class="two">
       <section><h2>Repeat offenders</h2>${rank(repeats, repeats[0]?.n||1, true)}</section>
       <section><h2>Venues</h2>${rank(venues.filter(v=>v.name), venues[0]?.n||1)}</section>
@@ -546,10 +559,11 @@ function renderStats(){
       const top = [...br.values()].filter(e => e.sum).map(e => ({ name: e.name, n: Math.round(e.sum / e.n * 2) / 2 })).sort((a, b) => b.n - a.n || a.name.localeCompare(b.name)).slice(0, 8);
       return top.length ? `<section><h2>Top-rated bands</h2><div class="rank">${top.map(r => `<div class="row"><button class="n bandlink" data-bandp="${esc(r.name)}">${esc(r.name)}</button><span class="skulls">${[1,2,3,4,5].map(i => SKULLV(r.n, i)).join("")}</span></div>`).join("")}</div></section>` : ""; })()}
     <section><h2>The crew</h2>${people.length ? rank(people, people[0].n) + `<div class="ro" style="margin-top:6px">Counts names in Went with, crew you tagged, and Crew Family shows that are in both your logs.</div>` : `<div class="ro">Add who you went with on each show and the crew leaderboard fills in.</div>`}</section>`;
-  else if (V === "money") body = `
+  parts.money = `
     <div class="tiles">${tile("Ticket spend", tix?money(tix):"–")}${tile("Your seats", share?money(share):"–")}${tile("Avg per ticket", avgTix?money2(avgTix):"–")}${tile("Merch haul", merch?money(merch):"–")}${miles ? tile(`Est. ${distLbl()} driven`, Math.round(dist(miles)).toLocaleString()) : ""}${(() => { const n = done.filter(s => orderSpend(s) > 0 || Number(s.merchSpend) > 0).length; return n ? tile("Avg per show", money((tix + merch) / n)) : ""; })()}</div>
     ${tix || merch ? "" : `<div class="ro" style="margin-top:10px">Add ticket totals and merch on your shows (under Spend and travel) and this fills in.</div>`}`;
-  else body = patchesSection();
+  const body = V === "all" ? [["Overview", parts.overview], ["Bands", parts.bands], ["Spend", parts.money], ["", patchesSection()]].map(([h, b], i) => `${i && h ? `<h2 class="stath">${h}</h2>` : ""}${b}`).join("")
+    : V === "patches" ? patchesSection() : parts[V];
   $("#view").innerHTML = `<div class="filters">${yearSeg()}${crewToggle()}</div>${seg}<div class="stats" style="margin-top:0">${body}</div>`;
 }
 
@@ -599,8 +613,9 @@ function renderTab(){
   if (S.tab === "cal") { S.tab = "shows"; S.showView = "cal"; }
   for (const t of ["shows","disc","vault","stats","crew"]) $("#tab-"+t).setAttribute("aria-selected", S.tab===t);
   $("#navHome")?.classList.toggle("on", S.tab === "home"); $("#bellBtn")?.classList.toggle("on", S.tab === "inbox");
-  const cur = $("#tab-" + S.tab), sc = $("#tabScroll");
-  if (cur && sc) { const l = cur.offsetLeft - sc.offsetLeft, r = l + cur.offsetWidth; if (l < sc.scrollLeft || r > sc.scrollLeft + sc.clientWidth) sc.scrollTo({ left: l - 12, behavior: "smooth" }); }
+  // Keep the current tab in view (measured on the next frame, so drawing the screen isn't held up by a layout).
+  requestAnimationFrame(() => { const cur = $("#tab-" + S.tab), sc = $("#tabScroll");
+    if (cur && sc) { const l = cur.offsetLeft - sc.offsetLeft, r = l + cur.offsetWidth; if (l < sc.scrollLeft || r > sc.scrollLeft + sc.clientWidth) sc.scrollTo({ left: l - 12, behavior: "smooth" }); } });
   navArrows();
   navScreen();
   trackScreen(S.tab === "disc" && S.disc && S.disc.view && S.disc.view !== "up" ? "disc-" + S.disc.view : S.tab === "crew" && S.crewSel ? "friend" : S.tab);
@@ -1297,7 +1312,7 @@ function handleWriteErr(e){
 async function del(){
   const s = S.shows.find(x=>x.id===draft.id); if (!s) return;
   try { await deleteDoc(myShow(s.id)); } catch(e){ handleWriteErr(e); return; }
-  const files = [!s.linkId && s.poster && s.poster.path, ...items(s,"photos").flatMap(m=>[m.path, m.thumbPath]), ...items(s,"merch").map(m=>m.path)].filter(Boolean);
+  const files = [!s.linkId && s.poster && s.poster.path, ...items(s,"photos").flatMap(m=>[m.path, m.thumbPath]), ...items(s,"merch").flatMap(m=>[m.path, m.thumbPath])].filter(Boolean);
   const { id, ...data } = JSON.parse(JSON.stringify(s));
   closeSheet();
   toastUndo(`Deleted ${headline(s) || "show"}`, async () => { await setDoc(myShow(id), data); toast("Show restored"); }, async () => { for (const p of files) await removeFile(p); });
@@ -1353,6 +1368,14 @@ async function compress(file, kind){
   return blob.size < file.size || isHeic(file) || file.size > COMPRESS.target ? blob : (file.type === "image/png" || file.type === "image/webp" || file.type === "image/jpeg" ? blob : file);
 }
 
+// A small copy (480 px) for grids and cards, so lists don't download full-size photos.
+async function makeThumb(blob, canvasIn){
+  let c = canvasIn;
+  if (!c) { const img = await decodeImage(blob); const w = img.width || img.naturalWidth, h = img.height || img.naturalHeight, sc = Math.min(1, 480 / Math.max(w, h));
+    c = document.createElement("canvas"); c.width = Math.max(1, Math.round(w * sc)); c.height = Math.max(1, Math.round(h * sc)); const x = c.getContext("2d"); x.imageSmoothingQuality = "high"; x.drawImage(img, 0, 0, c.width, c.height); if (img.close) img.close(); }
+  else if (Math.max(c.width, c.height) > 480) { const sc = 480 / Math.max(c.width, c.height), d = document.createElement("canvas"); d.width = Math.round(c.width * sc); d.height = Math.round(c.height * sc); const x = d.getContext("2d"); x.imageSmoothingQuality = "high"; x.drawImage(c, 0, 0, d.width, d.height); c = d; }
+  return await new Promise(r => c.toBlob(r, "image/webp", 0.72)) || await new Promise(r => c.toBlob(r, "image/jpeg", 0.72));
+}
 function isVideo(f){ return /^video\//.test(f.type) || /\.(mp4|m4v|mov|webm)$/i.test(f.name||""); }
 function videoType(f){ return f.type && /^video\//.test(f.type) ? f.type : /\.webm$/i.test(f.name||"") ? "video/webm" : /\.mov$/i.test(f.name||"") ? "video/quicktime" : "video/mp4"; }
 const MAX_VIDEO_SECS = 60, MAX_VIDEO_BYTES = 100 * 1024 * 1024;
@@ -1448,8 +1471,8 @@ async function doUpload(kind, files, tags){
       const b = await compress(f, kind);
       before += f.size; after += b.size;
       if (b.size > MAX_BYTES) { skipped++; continue; }
-      const r = await putImage(b, showId, kind);
-      out.push({ url: r.url, path: r.path, type: "image", bands, ...ppl });
+      const [r, th] = await Promise.all([putImage(b, showId, kind), kind === "poster" ? null : makeThumb(b).then(t => t && putImage(t, showId, "thumb")).catch(() => null)]);
+      out.push({ url: r.url, path: r.path, type: "image", bands, ...ppl, ...(th ? { thumb: th.url, thumbPath: th.path } : {}) });
     } catch(e){
       skipped++;
       console.error(e);
@@ -1538,8 +1561,9 @@ async function rotateMedia(){
       const x = c.getContext("2d"); x.translate(c.width, 0); x.rotate(Math.PI / 2); x.drawImage(im, 0, 0);
       const blob = await new Promise(r => c.toBlob(r, "image/jpeg", 0.9));
       const put = await putImage(blob, s.id, e.kind === "poster" ? "poster" : e.kind);
-      const oldPath = e.it.path; await save({ url: put.url, path: put.path });
-      e.it = { ...e.it, url: put.url, id: put.url, path: put.path }; if (oldPath) removeFile(oldPath);
+      let th = null; if (e.kind !== "poster") try { const tb = await makeThumb(null, c); th = tb && await putImage(tb, s.id, "thumb"); } catch (_) {}
+      const oldPath = e.it.path, oldThumb = e.it.thumbPath; await save({ url: put.url, path: put.path, ...(e.kind !== "poster" ? { thumb: th ? th.url : null, thumbPath: th ? th.path : null } : {}) });
+      e.it = { ...e.it, url: put.url, id: put.url, path: put.path, thumb: th ? th.url : null, thumbPath: th ? th.path : null }; if (oldPath) removeFile(oldPath); if (oldThumb) removeFile(oldThumb);
       toast("Rotated");
     }
   } catch (err) { console.error(err); toast("Couldn't rotate that one. Try again.", 3500); }
@@ -1598,6 +1622,7 @@ document.addEventListener("click", e => {
   else if (t.dataset.sview) { S.showView = t.dataset.sview; try { localStorage.setItem("pitlog.showView", S.showView); } catch (_) {} renderShows(); window.scrollTo(0, 0); }
   else if (t.dataset.year) { S.year = t.dataset.year; renderTab(); }
   else if (t.dataset.lyear) { S.listYear = t.dataset.lyear; renderShows(); }
+  else if (t.hasAttribute("data-listmore")) { const y = window.scrollY; S.listN = (S.listN || 80) + 120; renderShows(); window.scrollTo(0, y); }
   else if (t.dataset.caly) { S.cal.y = Number(t.dataset.caly); renderCal(); }
   else if (t.dataset.calm) { S.cal.m = Number(t.dataset.calm); renderCal(); }
   else if (t.dataset.calnav) { let m = S.cal.m + Number(t.dataset.calnav), y = S.cal.y; if (m < 0) { m = 11; y--; } if (m > 11) { m = 0; y++; } S.cal = { y, m }; renderCal(); }
@@ -1634,6 +1659,8 @@ document.addEventListener("click", e => {
   else if (t.hasAttribute("data-homearea2")) homeAreaModal();
   else if (t.dataset.pymkadd) { sendRequest(t.dataset.pymkadd).then(() => { const b = $("#pymk"); if (b) b.innerHTML = pymkBlock(); }); }
   else if (t.dataset.pymkx) pymkHide(t.dataset.pymkx);
+  else if (t.dataset.tipx) tipHide(t.dataset.tipx);
+  else if (t.hasAttribute("data-install")) { const ev = INSTALL_EVT; if (ev) { ev.prompt(); ev.userChoice.then(c => { INSTALL_EVT = null; if (c && c.outcome === "accepted") tipHide("install"); else if (S.tab === "inbox") renderInbox(); }).catch(() => {}); } }
   else if (t.hasAttribute("data-traffic")) { S.tab = "traffic"; renderTab(); window.scrollTo(0, 0); }
   else if (namesClick(t)) {}
   else if (t.id === "bellBtn") { S.tab = "inbox"; renderTab(); window.scrollTo(0, 0); }
@@ -1735,13 +1762,19 @@ function sameShow(a, b){
   if (a.venue && b.venue && ieq(a.venue, b.venue)) return true;
   return lineup(a).some(x => lineup(b).some(y => ieq(x, y)));
 }
-const togetherWith = s => friendList().filter(f => (f.shows||[]).some(o => sameShow(s, o)));
+// Friend shows indexed by date (rebuilt only when that friend's show list changes).
+const BYDATE = new WeakMap();
+function showsOn(list, date){ if (!Array.isArray(list)) return []; let m = BYDATE.get(list);
+  if (!m) { m = new Map(); for (const o of list) { if (!o || !o.date) continue; (m.get(o.date) || m.set(o.date, []).get(o.date)).push(o); } BYDATE.set(list, m); }
+  return m.get(date) || []; }
+const sameAny = (s, list) => showsOn(list, s.date).some(o => sameShow(s, o));
+const togetherWith = s => friendList().filter(f => sameAny(s, f.shows));
 function togetherChips(s, opts){
   let h = "";
   if (s.addedBy && ME && s.addedBy !== ME.uid && !(opts && opts.friend)) h += `<span class="chip fam">Added by @${esc((FR[s.addedBy] && FR[s.addedBy].handle) || "family")}</span>`;
   if (opts && opts.friend) {
     if (S.tab !== "crew" && FR[opts.friend]) h += `<span class="chip crewtag">@${esc(FR[opts.friend].handle)}</span>`;
-    return h + (S.shows.some(o => sameShow(s, o)) ? `<span class="chip tog">You were there</span>` : "");
+    return h + (sameAny(s, S.shows) ? `<span class="chip tog">You were there</span>` : "");
   }
   if (!S.crewOn && S.tab !== "crew") return h;
   return h + togetherWith(s).filter(f => !f.family).map(f => `<span class="chip tog">w/ @${esc(f.handle)}</span>`).join("");
@@ -1756,7 +1789,7 @@ function crewToggle(){
 function crewOverlay(){
   const out = [];
   for (const f of friendList()) for (const s of (f.shows || [])) {
-    if (S.shows.some(o => sameShow(o, s))) continue;
+    if (sameAny(s, S.shows)) continue;
     out.push({ ...s, _f: f.uid });
   }
   return out;
@@ -1766,7 +1799,7 @@ function crewStats(){
   const mine = S.shows.filter(s => inY(s) && !isUpcoming(s));
   const rows = [{ name: "You", n: mine.length, t: null, me: true }].concat(friendList().filter(f => f.loaded && !f.err && !f.statsHidden).map(f => {
     const theirs = (f.shows || []).filter(s => inY(s) && !isUpcoming(s));
-    return { name: "@" + f.handle, n: theirs.length, t: mine.filter(s => theirs.some(o => sameShow(s, o))).length, family: f.family };
+    return { name: "@" + f.handle, n: theirs.length, t: mine.filter(s => sameAny(s, theirs)).length, family: f.family };
   })).sort((a, b) => b.n - a.n);
   const max = Math.max(1, ...rows.map(r => r.n));
   const top = rows.filter(r => !r.me && !r.family && r.t).sort((a, b) => b.t - a.t)[0];
@@ -1936,35 +1969,43 @@ function publicPayload(sh, set){
     date: sh.date || "", lineup: lineup(sh), bandKeys: [...new Set(lineup(sh).map(normBand).filter(Boolean))], venue: sh.venue || "", city: sh.city || "", tour: sh.tour || "", tourWords: tourWords(sh.tour), unsure: !!sh.unsure, coHead: !!sh.coHead };
   for (const [k, fields] of Object.entries(PUBLIC_FIELDS)) if (set[k] === "public") for (const fld of fields) {
     let v = sh[fld]; if (v === undefined) v = null;
-    if (fld === "photos" || fld === "merch") v = items(sh, fld).map(m => ({ url: m.url, type: m.type || "image", bands: m.bands || [] }));
+    if (fld === "photos" || fld === "merch") v = items(sh, fld).map(m => ({ url: m.url, type: m.type || "image", bands: m.bands || [], ...(m.thumb && m.type !== "video" ? { thumb: m.thumb } : {}) }));
     if (fld === "poster") v = sh.poster ? { url: pid(sh.poster) } : null;
     o[fld] = v;
   }
   return o;
 }
 const stable = v => Array.isArray(v) ? "[" + v.map(stable).join(",") + "]" : v && typeof v === "object" ? "{" + Object.keys(v).sort().map(k => JSON.stringify(k) + ":" + stable(v[k])).join(",") + "}" : JSON.stringify(v ?? null);
-let pubTimer = null, pubBusy = false, pubAgain = false, pubForce = false;
+let pubTimer = null, pubBusy = false, pubAgain = false, pubForce = false, PUBH = null;
+const PUBMEMO = new WeakMap();
+const fnv = str => { let h = 0x811c9dc5; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(36) + str.length.toString(36); };
 function schedulePublish(force){ if (force) pubForce = true; clearTimeout(pubTimer); pubTimer = setTimeout(publishAll, 2500); }
 async function publishAll(){
   if (!ME || !PROFILE || !S.loaded) return;
   if (pubBusy) { pubAgain = true; return; }
   pubBusy = true;
   try {
-    const set = MY();
+    // What's already published is remembered (as small hashes) on this device, so an edit no longer
+    // re-reads every public show from the database; a full re-check happens at most once a week.
+    const set = MY(), sig = stable(set) + "|" + (PROFILE.handle || "") + "|" + (PROFILE.name || "") + "|" + (PROFILE.photoURL || "");
     const want = new Map();
     if (set.publicShows === "public") for (const sh of S.shows) {
       if (isUpcoming(sh) && set.upcoming !== "public") continue;
-      want.set(ME.uid + "_" + sh.id, publicPayload(sh, set));
+      let c = PUBMEMO.get(sh); if (!c || c.sig !== sig) { const data = publicPayload(sh, set); c = { sig, data, h: fnv(stable(data)) }; PUBMEMO.set(sh, c); }
+      want.set(ME.uid + "_" + sh.id, c);
     }
-    const have = new Map((await getDocs(query(collection(fdb, "publicShows"), where("ownerUid", "==", ME.uid)))).docs.map(d => [d.id, d.data()]));
+    if (!PUBH) { try { const c = JSON.parse(localStorage.getItem("pitlog.pub." + ME.uid) || "null"); if (c && c.h && Date.now() - c.at < 7 * 864e5) { PUBH = new Map(Object.entries(c.h)); PUBH.at = c.at; } } catch (_) {} }
+    if (!PUBH || pubForce) { const snap = await getDocs(query(collection(fdb, "publicShows"), where("ownerUid", "==", ME.uid))); PUBH = new Map(snap.docs.map(d => [d.id, fnv(stable(d.data()))])); PUBH.at = Date.now(); }
     const ops = [];
-    for (const [id, data] of want) if (pubForce || !have.has(id) || stable(have.get(id)) !== stable(data)) ops.push(["set", id, data]);
-    for (const id of have.keys()) if (!want.has(id)) ops.push(["del", id]);
+    for (const [id, c] of want) if (pubForce || PUBH.get(id) !== c.h) ops.push(["set", id, c]);
+    for (const id of PUBH.keys()) if (!want.has(id)) ops.push(["del", id]);
     for (let i = 0; i < ops.length; i += 400) {
-      const b = writeBatch(fdb);
-      for (const [op, id, data] of ops.slice(i, i + 400)) op === "set" ? b.set(doc(fdb, "publicShows", id), data) : b.delete(doc(fdb, "publicShows", id));
+      const b = writeBatch(fdb), chunk = ops.slice(i, i + 400);
+      for (const [op, id, c] of chunk) op === "set" ? b.set(doc(fdb, "publicShows", id), c.data) : b.delete(doc(fdb, "publicShows", id));
       await b.commit();
+      for (const [op, id, c] of chunk) op === "set" ? PUBH.set(id, c.h) : PUBH.delete(id);
     }
+    try { localStorage.setItem("pitlog.pub." + ME.uid, JSON.stringify({ at: PUBH.at || Date.now(), h: Object.fromEntries(PUBH) })); } catch (_) {}
     pubForce = false;
   } catch (e) { console.warn("public profile sync", e.code || e); }
   pubBusy = false;
@@ -2178,7 +2219,7 @@ function pubTicket(sh){
     <div class="tbody"><div class="head">${esc(lu[0] || "Show")}</div>${lu.length > 1 ? `<div class="sup"><b>w/</b> ${esc(lu.slice(1).join(" · "))}</div>` : ""}
       <div class="venue">${esc([sh.venue, sh.city].filter(Boolean).join(" — ") || "Venue unknown")}</div>
       <div class="chips">${up ? `<span class="chip up">Upcoming</span>` : ""}${!up && r ? `<span class="skulls">${[1,2,3,4,5].map(i => SKULLV(r, i)).join("")}</span>` : ""}
-        ${S.shows.some(o => sameShow(o, sh)) ? `<span class="chip tog">You were there</span>` : ""}${sh.spot ? `<span class="chip">${esc(sh.spot)}</span>` : ""}</div>
+        ${sameAny(sh, S.shows) ? `<span class="chip tog">You were there</span>` : ""}${sh.spot ? `<span class="chip">${esc(sh.spot)}</span>` : ""}</div>
       ${sh.notes ? `<div class="ro" style="margin-top:6px">${esc(sh.notes)}</div>` : ""}
       ${thumbs.length ? `<div class="thumbs">${thumbs.map(x => `<img src="${esc(x)}" alt="" loading="lazy" onerror="this.remove()">`).join("")}</div>` : ""}</div></div>`;
 }
@@ -2250,7 +2291,10 @@ function scrollToContent(){
   window.scrollTo({ top: Math.max(0, target.getBoundingClientRect().top + window.scrollY - (fixed ? 10 : 6)), behavior: "smooth" });
 }
 /* ---------- Tab bar: ‹ › arrows appear only when the tabs don't fit ---------- */
-function navArrows(){
+// Reading tab widths forces a layout, so it waits for the next frame and runs once per frame.
+let navRaf = 0;
+function navArrows(){ if (!navRaf) navRaf = requestAnimationFrame(() => { navRaf = 0; navArrowsNow(); }); }
+function navArrowsNow(){
   const sc = $("#tabScroll"), L = $("#navL"), R = $("#navR"); if (!sc || !L || !R) return;
   const over = sc.scrollWidth > sc.clientWidth + 2;
   L.hidden = !over || sc.scrollLeft < 4;
@@ -2310,7 +2354,7 @@ function renderHome(){
     `<div class="hrow">${big(bands.length, "bands · " + lbl)}${big(venues.length, "venues")}${big(avg, "avg skulls")}</div>` +
     (bands[0] ? `<div class="ro">Most seen: <b class="bone">${esc(bands[0].name)}</b>${bands[0].n > 1 ? ` (${bands[0].n}×)` : ""}${venues[0] ? ` · Home turf: <b class="bone">${esc(venues[0].name)}</b>` : ""}</div>` : `<div class="ro">Log a show to start the numbers.</div>`), "All stats");
   // Vault
-  const media = []; for (const sh of [...past].reverse()) { if (sh.poster) media.push(pid(sh.poster)); for (const m of [...items(sh, "photos"), ...items(sh, "merch")]) if (m.type !== "video") media.push(m.url || m.id); }
+  const media = []; for (const sh of [...past].reverse()) { if (sh.poster) media.push(pid(sh.poster)); for (const m of [...items(sh, "photos"), ...items(sh, "merch")]) if (m.type !== "video") media.push(m.thumb || m.url || m.id); }
   const vcount = past.reduce((n, sh) => n + (sh.poster ? 1 : 0) + items(sh, "photos").length + items(sh, "merch").length, 0);
   const vault = card("vault", "Vault",
     (media.length ? `<div class="hthumbs">${media.slice(0, 4).map(u => `<img src="${esc(src(u))}" alt="" loading="lazy" onerror="this.remove()">`).join("")}</div>` : "") +
@@ -2606,12 +2650,12 @@ function feedBlock(){
   const all = feedItems(), n = S.feedN || 15, list = all.slice(0, n);
   const skull = r => r ? `<span class="skulls">${[1,2,3,4,5].map(i => SKULLV(r, i)).join("")}</span>` : "";
   const rows = list.map(({ s, f, who, at }) => {
-    const up = isUpcoming(s) || s.date === todayISO, mine = S.shows.some(o => sameShow(o, s));
+    const up = isUpcoming(s) || s.date === todayISO, mine = sameAny(s, S.shows);
     const tagged = Array.isArray(s.taggedUids) && ME && s.taggedUids.includes(ME.uid);
     const names = who.map(w => esc(personLabel(w.uid, "@" + w.handle)));
     const whoTxt = names.length > 2 ? `${names[0]}, ${names[1]} +${names.length - 2}` : names.join(" and ");
     const verb = at ? (up ? (names.length > 1 ? "are going to" : "is going to") : "logged") : (up ? "going to" : "saw");
-    const thumb = s.poster ? pid(s.poster) : (items(s, "photos").find(m => m.type !== "video") || {}).url;
+    const thumb = s.poster ? pid(s.poster) : (m0 => m0.thumb || m0.url)(items(s, "photos").find(m => m.type !== "video") || {});
     const chips = [];
     if (mine) chips.push(`<span class="chip tog">${up ? "You're going too" : "You were there too"}</span>`);
     else if (tagged) chips.push(`<span class="chip up">You're tagged</span>`);
@@ -3348,13 +3392,20 @@ function pastTagSuggestBlock(){
 
 // Tags on friends' shows. Each one waits for you: "I was there" (then optionally add it to your log) or "Not me".
 // Shows already in your log count as a yes. tagYes / tagNo / tagSeen live on your profile, so friends see a "Not me".
+let TAGC = null;
 function tagInbox(){
+  if (!PROFILE || !ME) return [];
+  const fl = friendList(), refs = [S.shows, PROFILE, PROFILE.settings, ...["tagYes", "tagNo", "tagSeen", "mediaYes", "mediaNo"].map(k => (PROFILE[k] || []).length), fl.length, ...fl.map(f => f.shows)];
+  if (TAGC && TAGC.refs.length === refs.length && TAGC.refs.every((r, i) => r === refs[i])) return TAGC.out;
+  const out = tagInboxNow(); TAGC = { refs, out }; return out;
+}
+function tagInboxNow(){
   const L = k => new Set((PROFILE && PROFILE[k]) || []), yes = L("tagYes"), no = L("tagNo"), seen = L("tagSeen"), out = [];
   for (const f of friendList()) for (const s of (f.shows || [])) {
     if (!(Array.isArray(s.taggedUids) && s.taggedUids.includes(ME.uid))) continue;
     if (!canSee(MY(), "tagMe", f)) continue;
     const key = f.uid + "|" + s.id;
-    if (no.has(key) || seen.has(key) || S.shows.some(o => sameShow(o, s))) continue;
+    if (no.has(key) || seen.has(key) || sameAny(s, S.shows)) continue;
     out.push({ f, s, key, stage: yes.has(key) ? "add" : "ask" });
   }
   // Photos/videos you're tagged in (one prompt per show).
@@ -3397,7 +3448,7 @@ function tagInboxBlock(){
     <div class="plist">${list.map(({ f, s, key, stage, kind, media }) => {
     const k = esc(key);
     if (kind === "media") { const m = media;
-      return `<div class="tagin ask">${showRow(s, f.uid, `@${f.handle} tagged you in ${m.length} ${m.length > 1 ? "photos/videos" : m[0].type === "video" ? "video" : "photo"}`)}<div class="tagthumbs">${m.slice(0, 4).map(x => `<img src="${esc(src(x.type === "video" ? (x.thumb || "") : x.url || x.id))}" alt="" onerror="this.remove()">`).join("")}</div>
+      return `<div class="tagin ask">${showRow(s, f.uid, `@${f.handle} tagged you in ${m.length} ${m.length > 1 ? "photos/videos" : m[0].type === "video" ? "video" : "photo"}`)}<div class="tagthumbs">${m.slice(0, 4).map(x => `<img src="${esc(src(x.thumb || (x.type === "video" ? "" : x.url || x.id)))}" alt="" onerror="this.remove()">`).join("")}</div>
         <div class="tagact"><button class="btn red" data-mtyes="${k}">Add to my show</button><button class="btn ghost" data-mtno="${k}">Not me</button></div></div>`; }
     return `<div class="tagin${stage === "ask" ? " ask" : ""}">${showRow(s, f.uid, "@" + f.handle + " tagged you")}<div class="tagact">${stage === "ask"
       ? `<button class="btn red" data-tagyes="${k}">${isUpcoming(s) ? "I'm going too" : "I was there"}</button><button class="btn ghost" data-tagno="${k}">${isUpcoming(s) ? "Not going" : "Not me"}</button>`
@@ -3441,9 +3492,31 @@ function actLine(a){
     default: return ["•", `${who}${sh}`];
   }
 }
+// Small reminders at the top of Activity: phone notifications (if this phone doesn't have them on) and
+// adding Pit Log to the home screen (phones only, when it isn't opened that way already).
+let INSTALL_EVT = null;
+window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); INSTALL_EVT = e; if (S.tab === "inbox") renderInbox(); });
+window.addEventListener("appinstalled", () => { INSTALL_EVT = null; tipHide("install"); });
+const tipHidden = k => { try { return Number(localStorage.getItem("pitlog.tip." + k) || 0) > Date.now(); } catch (_) { return false; } };
+function tipHide(k){ try { localStorage.setItem("pitlog.tip." + k, String(Date.now() + 14 * 864e5)); } catch (_) {} if (S.tab === "inbox") renderInbox(); }
+function alertTips(){
+  const ua = navigator.userAgent, ios = /iPhone|iPad|iPod/i.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1), android = /Android/i.test(ua), installed = STANDALONE;
+  const out = [];
+  if (pushSupported() && !pushOnHere() && !tipHidden("push"))
+    out.push(`<div class="tipcard"><span class="tipic" aria-hidden="true">🔔</span><div class="tipt"><b>Get alerts on your phone</b><span class="ro">Crew requests, tags, comments and show day reminders, even when Pit Log is closed. You pick which ones in Settings.</span>
+      <div class="tipbtns"><button class="btn red sm" data-pushon>Turn on notifications</button><button class="linkbtn" data-tipx="push">Not now</button></div></div></div>`);
+  if ((ios || android) && !installed && !tipHidden("install")) {
+    const how = INSTALL_EVT ? `<button class="btn red sm" data-install>Add to home screen</button>`
+      : ios ? `<span class="ro">In <b>Safari</b>, tap <b>Share</b> (the square with the arrow), then <b>Add to Home Screen</b>.${pushSupported() ? "" : " On iPhone, notifications only work once Pit Log is added this way."}</span>`
+      : `<span class="ro">In <b>Chrome</b>, tap <b>⋮</b> (top right), then <b>Add to Home screen</b> or <b>Install app</b>.</span>`;
+    out.push(`<div class="tipcard"><span class="tipic" aria-hidden="true">📲</span><div class="tipt"><b>Put Pit Log on your home screen</b><span class="ro">It opens full screen like an app, loads faster, and updates itself.</span>${how}
+      <div class="tipbtns"><button class="linkbtn" data-tipx="install">Not now</button></div></div></div>`);
+  }
+  return out.length ? `<div class="tips">${out.join("")}</div>` : "";
+}
 function renderInbox(){
   const { inc, fam, tags } = needsYou();
-  let html = `<div class="crew inbox"><h2 class="seth">Activity</h2>`;
+  let html = `<div class="crew inbox"><h2 class="seth">Activity</h2>${alertTips()}`;
   if (inc.length) html += `<section class="sect"><h3>Crew requests <span class="lbl">${inc.length}</span></h3><div class="plist">${inc.map(r => { const q = person(r.from, r.fromName, r.fromHandle, r.fromPhoto); return `
       <div class="prow">${avatar(q.photo, q.name)}<div class="pt"><div class="nm">${esc(q.name || q.handle)}</div><div class="hd">@${esc(q.handle)}</div></div>
       <button class="btn red" data-accept="${esc(r.id)}">Accept</button><button class="btn ghost" data-decline="${esc(r.id)}">Decline</button></div>`; }).join("")}</div></section>`;
@@ -3493,7 +3566,7 @@ async function copyMedia(m, showId, kind, owner){
 }
 async function addTaggedShow(uid, id, full){
   const f = FR[uid]; const s = f && (f.shows || []).find(x => x.id === id); if (!s || busy) return;
-  if (S.shows.some(o => sameShow(o, s))) { toast("That show is already in your log"); return; }
+  if (sameAny(s, S.shows)) { toast("That show is already in your log"); return; }
   const tagged = [{ name: firstName(f), uid }];
   for (const t of tagsOf(s)) if (t.uid !== ME.uid && FR[t.uid] && !tagged.some(x => x.uid === t.uid)) tagged.push({ name: firstName(FR[t.uid]), uid: t.uid });
   const names = tagged.map(t => t.name);
@@ -3569,7 +3642,7 @@ function renderCrew(){
   html += pastTagSuggestBlock();
   html += `<section class="sect"><h3>The crew <span class="lbl">${fl.length}</span></h3>`;
   if (!fl.length) html += `<div class="empty"><h3>No crew yet</h3><div>Send a friend your username, or add theirs above. Once they accept, you can see each other's shows and the ones you hit together.</div></div>`;
-  else html += `<div class="plist">${fl.map(f => { const tog = S.shows.filter(s => (f.shows||[]).some(o => sameShow(s,o))).length;
+  else html += `<div class="plist">${fl.map(f => { const tog = S.shows.filter(s => sameAny(s, f.shows)).length;
       return `<button class="prow tap" data-friend="${esc(f.uid)}">${avatar(f.photo, f.name)}<div class="pt"><div class="nm">${esc(f.name || f.handle)}</div><div class="hd">@${esc(f.handle)}${f.family ? ` <span class="chip fam">Family</span>` : f.famState === "pending" ? ` <span class="chip unsure">Family pending</span>` : ""}</div>
         <div class="ro">${f.err ? esc(f.err) : !f.loaded ? "Loading…" : f.family ? `${f.shows.filter(s=>!isUpcoming(s)).length} shows · logs linked` : `${f.shows.filter(s=>!isUpcoming(s)).length} shows · ${tog} together`}</div></div><span class="ct">${tog || ""}</span></button>`; }).join("")}</div>`;
   html += `</section>`;
@@ -3684,7 +3757,7 @@ function bucketOnSale(){
         .sort((a, b) => a.date.localeCompare(b.date)); });
   return BK.p;
 }
-const haveShow = sh => S.shows.some(s => s.date === sh.date && lineup(s).some(b => lineup(sh).some(x => normBand(x) === normBand(b))));
+const haveShow = sh => showsOn(S.shows, sh.date).some(s => lineup(s).some(b => lineup(sh).some(x => normBand(x) === normBand(b))));
 function onSaleRows(list, attr){
   return list.map((sh, i) => { const p = parse(sh.date), sup = support(sh), mine = haveShow(sh);
     return `<div class="bandhit"><button class="prow tap prow-show" ${mine ? "" : `${attr}="${i}"`}><span class="pdate"><b class="num">${p.d}</b>${MONTHS[(p.m||1)-1]} ${p.y}</span>
@@ -3880,7 +3953,7 @@ async function renderTraffic(){
     <section><h2>Devices · 30 days</h2>${list(tot("dev"), k => ({ phone: "Phone", desktop: "Desktop", app: "Opened as installed app" })[k] || k)}</section>
     <section><h2>By day</h2><div class="ttable"><div class="tr th"><span>Day</span><span>Visitors</span><span>Signed in</span><span>Opens</span><span>Views</span><span>Sign-ups</span></div>${D.slice().reverse().filter(d => d.opens || d.signups || d.views).map(d => `<div class="tr"><span>${esc(shortDate(d.day))}</span><span>${d.uniques}</span><span>${d.uniquesIn}</span><span>${d.opens}</span><span>${d.views}</span><span>${d.signups}</span></div>`).join("") || `<div class="ro">No visits counted yet.</div>`}</div></section></div></section></div>`;
 }
-const rerenderSettingsish = () => { if (S.tab === "me") renderMe(); else if (S.tab === "settings") renderSettings(); };
+const rerenderSettingsish = () => { if (S.tab === "me") renderMe(); else if (S.tab === "settings") renderSettings(); else if (S.tab === "inbox") renderInbox(); };
 async function saveSetting(key, val){
   PROFILE.settings = { ...(PROFILE.settings || {}), [key]: val }; cacheProfile();
   if (key === "defaultView") { S.showView = val; try { localStorage.setItem("pitlog.showView", val); } catch (_) {} }
@@ -4128,7 +4201,7 @@ function ratingVs(together, theirs, f){
 function renderFriend(f){
   const theirs = [...(f.shows||[])].sort((a,b) => (b.date||"").localeCompare(a.date||""));
   const done = theirs.filter(s => !isUpcoming(s));
-  const together = S.shows.filter(s => theirs.some(o => sameShow(s, o))).sort((a,b) => (b.date||"").localeCompare(a.date||""));
+  const together = S.shows.filter(s => sameAny(s, theirs)).sort((a,b) => (b.date||"").localeCompare(a.date||""));
   const mine = new Set(S.shows.filter(s=>!isUpcoming(s)).flatMap(lineup).map(b => b.toLowerCase()));
   const shared = counts(done.flatMap(lineup)).filter(b => mine.has(b.name.toLowerCase()));
   const v = S.crewView || "shows";
@@ -4320,7 +4393,7 @@ async function saveProfile(){
 function resetState(){
   UNSUBS.forEach(u => { try { u(); } catch(_){} }); UNSUBS = [];
   for (const uid of Object.keys(FR)) dropFriend(uid);
-  REQ = { in: [], out: [] }; ACT = []; S.home = null; S.shows = []; S.loaded = false; S.tab = "home"; S.crewSel = null;
+  REQ = { in: [], out: [] }; ACT = []; S.home = null; PUBH = null; S.shows = []; S.loaded = false; S.tab = "home"; S.crewSel = null;
   closeLightbox(); if (S.open) closeSheet(); $("#modalRoot").innerHTML = "";
   ME = null; PROFILE = null; db = null; assets = null;
 }
@@ -4643,6 +4716,9 @@ function pushClick(t){
    than the feature it fixes (same-day polish is part of the feature). b = the build it shipped in.
    Every build, user-facing or not (including removals), also gets an entry in version-history.html. */
 const WHATS_NEW = [
+  { b: 78, date: "2026-11-23", icon: "📊", t: "Stats: see it all", d: "A new All view shows every stat on one page, and Bands now counts the bands you've seen more than once.", go: "stats" },
+  { b: 78, date: "2026-11-23", icon: "📲", t: "Alerts and home screen tips", d: "Activity reminds you to turn on phone alerts and shows how to add Pit Log to your home screen." },
+  { b: 78, date: "2026-11-23", icon: "⚡", t: "Faster all around", d: "Quicker start-up, faster lists and screens, and smaller photo downloads." },
   { b: 77, date: "2026-11-23", icon: "📍", t: "Tours near you", d: "Set your ZIP and how far you'll travel. Discover shows tours in that radius, with the distance on each date.", go: "disc" },
   { b: 77, date: "2026-11-23", icon: "🤘", t: "Show day mode", d: "On the day of a show: start time, directions, your crew, and quick ratings for each band as the night goes." },
   { b: 77, date: "2026-11-23", icon: "👥", t: "People you may know", d: "Crew suggestions on the Crew tab: friends of your crew and people who were at your shows.", go: "crew" },
@@ -4745,13 +4821,13 @@ if (STANDALONE && IOS) {
   }, { passive: true });
 }
 // Newer build on the server? Reload quietly if nothing is open, otherwise offer it.
-const MY_BUILD = Number(((document.querySelector('script[src*="app.js?v="]') || {}).src || "").split("v=")[1]) || 0;
+const MY_BUILD = Number(((document.querySelector('script[src*="app.min.js?v="], script[src*="app.js?v="]') || {}).src || "").split("v=")[1]) || 0;
 let lastCheck = 0;
 async function checkForUpdate(){
   if (!MY_BUILD || Date.now() - lastCheck < 60000) return; lastCheck = Date.now();
   try {
     const html = await (await fetch("./?u=" + Date.now(), { cache: "no-store" })).text();
-    const v = Number((html.match(/app\.js\?v=(\d+)/) || [])[1]) || 0;
+    const v = Number((html.match(/app(?:\.min)?\.js\?v=(\d+)/) || [])[1]) || 0;
     if (v <= MY_BUILD) return;
     const busyNow = S.open || $("#modalRoot")?.innerHTML || $(".sharemodal") || $(".cropmodal") || document.activeElement?.matches?.("input,textarea");
     if (!busyNow) { location.reload(); return; }

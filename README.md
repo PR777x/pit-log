@@ -52,3 +52,11 @@ listings in PA, NJ, DE and NY for the next 15 months from the Ticketmaster Disco
   setlist.fm setlists + history import (needs the `SETLISTFM_API_KEY` repo secret; free key at setlist.fm → API).
 - Emails go out at 6 PM / Sunday 10 AM in each person's own time zone. A daily 7:37 AM check emails support
   about app errors or a Discover catalog that didn't refresh.
+
+## Releasing a build
+
+The site loads `app.min.js`, a minified copy of `app.js`. Edit `app.js` only, then run:
+
+    tools/release.sh <build number>
+
+That bumps the version strings in `index.html`, `app.js` and `sw.js` and rebuilds `app.min.js`. Commit both files.
