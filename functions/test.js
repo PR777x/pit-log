@@ -10,7 +10,7 @@ const clone = v => JSON.parse(JSON.stringify(v));
 function docRef(path){
   return { path, id: path.split("/").pop(),
     get: async () => ({ exists: store.has(path), id: path.split("/").pop(), ref: docRef(path), data: () => clone(store.get(path)) }),
-    set: async (v, o) => { const cur = store.get(path) || {}, nv = clean(v);
+    set: async (v, o) => { const cur = store.get(path) || {}, incs = (base, x) => { for (const [k, y] of Object.entries(x)) { if (y && y.__inc !== undefined) x[k] = ((base || {})[k] || 0) + y.__inc; else if (y && typeof y === "object" && !Array.isArray(y)) incs((base || {})[k], y); } return x; }, nv = clean(incs(cur, { ...v }));
       if (o && o.merge) { for (const [k, x] of Object.entries(nv)) cur[k] = x && typeof x === "object" && !Array.isArray(x) ? { ...(cur[k] || {}), ...x } : x; store.set(path, cur); } else store.set(path, nv); },
     update: async v => { const cur = store.get(path) || {}; for (const [k, val] of Object.entries(v)) { if (k.includes(".")) { const [a, b] = k.split("."); cur[a] = { ...(cur[a] || {}), [b]: val }; } else cur[k] = val; } store.set(path, cur); },
     delete: async () => { store.delete(path); } };
@@ -24,7 +24,8 @@ function coll(path, filters = [], lim = 1e9){
         return op === "array-contains-any" ? Array.isArray(x) && x.some(y => v.includes(y)) : op === "array-contains" ? Array.isArray(x) && x.includes(v)
           : op === ">=" ? x !== undefined && x >= v : op === "<=" ? x !== undefined && x <= v : op === "<" ? x !== undefined && x < v : x === v; })).slice(0, lim).map(k => ({ id: k.split("/").pop(), ref: docRef(k), data: () => clone(store.get(k)) })) }) };
 }
-const fakeDb = { doc: docRef, collection: p => coll(p), batch: () => { const ops = []; return { set: (r, v) => ops.push(() => r.set(v)), delete: r => ops.push(() => r.delete()), commit: async () => { for (const o of ops) await o(); } }; } };
+const fakeDb = { doc: docRef, collection: p => coll(p),
+  collectionGroup: name => ({ get: async () => ({ docs: [...store.keys()].filter(k => k.split("/").slice(-2, -1)[0] === name).map(k => ({ id: k.split("/").pop(), ref: docRef(k), data: () => clone(store.get(k)) })) }) }), batch: () => { const ops = []; return { set: (r, v) => ops.push(() => r.set(v)), delete: r => ops.push(() => r.delete()), commit: async () => { for (const o of ops) await o(); } }; } };
 const fakes = {
   "firebase-functions/v2/firestore": { onDocumentCreated: (o, h) => h, onDocumentUpdated: (o, h) => h, onDocumentWritten: (o, h) => h },
   "firebase-functions/v2/scheduler": { onSchedule: (o, h) => h },
@@ -38,7 +39,7 @@ const fakes = {
     generateEmailVerificationLink: async (email, s) => `https://pit-log.firebaseapp.com/__/auth/action?mode=verifyEmail&oobCode=CODE-${encodeURIComponent(email)}&continueUrl=${encodeURIComponent(s.url)}`,
     deleteUser: async uid => { DELETED_USERS.push(uid); },
     verifyIdToken: async t => { if (!t.startsWith("tok-")) throw new Error("bad"); return { uid: t.slice(4) }; } }) },
-  "firebase-admin/firestore": { getFirestore: id => { assert.strictEqual(id, "pit-log"); return fakeDb; }, FieldValue: { serverTimestamp: () => ({ __ts: 1 }) } },
+  "firebase-admin/firestore": { getFirestore: id => { assert.strictEqual(id, "pit-log"); return fakeDb; }, FieldValue: { serverTimestamp: () => ({ __ts: 1 }), increment: n => ({ __inc: n }) } },
 };
 const PUSHES = [];
 const orig = Module._load;
@@ -200,7 +201,7 @@ const sentTo = who => emails.filter(e => e.to[0] === who + "@example.com");
   const C = require("./catalog");
   const ev = (id, date, name, bands, venue, city = "Philadelphia", st = "PA", status = "onsale") => ({ id, name, url: "https://tm.example/" + id,
     dates: { start: { localDate: date, localTime: "19:00:00" }, status: { code: status } }, classifications: [{ genre: { name: "Metal" } }],
-    _embedded: { venues: [{ name: venue, city: { name: city }, state: { stateCode: st } }], attractions: bands.map(n => ({ name: n })) } });
+    _embedded: { venues: [{ name: venue, city: { name: city }, state: { stateCode: st }, location: { latitude: "39.9526", longitude: "-75.1652" } }], attractions: bands.map(n => ({ name: n })) } });
   const g = C.fromTM(ev("a", L.addDays(today, 30), "Gojira & Mastodon: Mega Monsters Tour", ["Gojira", "Mastodon", "Lorna Shore"], "Xfinity Mobile Arena"));
   assert.strictEqual(g.tour, "Mega Monsters Tour"); assert.strictEqual(g.coHead, true); assert.deepStrictEqual(g.bandKeys, ["gojira", "mastodon", "lornashore"]);
   assert.strictEqual(C.fromTM(ev("p", L.addDays(today, 30), "PARKING: Gojira", ["Gojira"], "Xfinity Mobile Arena")), null, "parking passes skipped");
@@ -226,6 +227,18 @@ const sentTo = who => emails.filter(e => e.to[0] === who + "@example.com");
   const ml = store.get("catalogMeta/months").list; assert.ok(ml.length >= 1);
   const allUp = ml.flatMap(x => JSON.parse(store.get(`catalogMonths/${x.m}`).data));
   assert.strictEqual(allUp.length, 3); assert.ok(allUp.every(x => x.d >= today && x.u && x.l.length));
+  // per-state shards carry venue coordinates; the months list says which states each month has
+  const pa = ml.flatMap(x => Object.keys(x.st || {}).map(st => JSON.parse(store.get(`catalogMonths/${x.m}_${st}`).data))).flat();
+  assert.strictEqual(pa.length, 3); assert.ok(pa.every(x => x.a === 39.953 && x.n === -75.165), "lat/lng on each row");
+  // someone in Ohio with a 100 mile radius: Ohio and its neighbors get fetched too; base region stays first
+  assert.deepStrictEqual(C.statesFor([{ state: "OH", radius: 100 }]).slice(0, 5), ["PA", "NJ", "DE", "NY", "OH"]);
+  assert.ok(C.statesFor([{ state: "OH", radius: 100 }]).includes("KY")); assert.ok(!C.statesFor([{ state: "OH", radius: 25 }]).includes("KY"));
+  assert.ok(C.statesFor(Array.from({ length: 30 }, (_, i) => ({ state: Object.keys(C.NEIGHBORS)[i], radius: 200 }))).length <= C.MAX_STATES);
+  store.set("users/ohio/prefs/home", { state: "OH", radius: 25, lat: 40, lng: -83 });
+  calls.length = 0; const seenStates = new Set(); const tm2 = async url => { seenStates.add(new URL(url).searchParams.get("stateCode")); return tmFetch(url); };
+  await F.runCatalog({ apiKey: "k", fetchImpl: tm2, pause: nop, now: new Date(Date.now() + 864e5) });
+  assert.ok(seenStates.has("OH") && seenStates.has("PA") && !seenStates.has("KY")); assert.ok(store.get("catalogMeta/months").states.includes("OH"));
+  store.delete("users/ohio/prefs/home");
   // second day, nothing changed: no writes
   let c2 = await F.runCatalog({ apiKey: "k", fetchImpl: tmFetch, pause: nop, now: new Date(Date.now() + 864e5) });
   assert.strictEqual(c2.added + c2.updated + c2.removed, 0, "unchanged shows aren't rewritten");
@@ -467,6 +480,35 @@ const sentTo = who => emails.filter(e => e.to[0] === who + "@example.com");
   const b156 = await A23.bandInfo("156/Silence", { fetchImpl: fake23b });
   assert.match(b156.about, /metalcore band/); assert.strictEqual(b156.formed, "2015", "origin/years from the article's Wikidata entry"); assert.strictEqual(b156.image, "https://e-cdns-images.dzcdn.net/images/artist/abc/1000x1000.jpg"); assert.strictEqual(b156.imageCredit, "Deezer");
   const sl = await A23.lookup("Insomnium", { fetchImpl: fake23, pause: async () => {} }); assert.strictEqual(sl.spotify, "https://open.spotify.com/artist/sp9", "Spotify from Wikidata, no MusicBrainz needed");
+
+  // 24. Traffic counter: opens, unique visitors, screens, referrers; report is owner-only
+  { const day = L.todayET(new Date());
+    await F.recordHit({ t: "open", v: "visitor-aaaa", u: false, m: true, r: "www.google.com", s: {} });
+    await F.recordHit({ t: "open", v: "visitor-aaaa", u: true, m: true, r: "" });
+    await F.recordHit({ t: "open", v: "visitor-bbbb", u: false, m: false, r: "instagram.com" });
+    await F.recordHit({ t: "screens", v: "visitor-aaaa", s: { home: 3, disc: 2, "../evil": 4 } });
+    await F.recordHit({ t: "open", v: "x" });
+    const tr = store.get(`traffic/${day}`);
+    assert.strictEqual(tr.opens, 3); assert.strictEqual(tr.uniques, 2); assert.strictEqual(tr.uniquesIn, 1);
+    assert.deepStrictEqual(tr.refs, { google_com: 1, direct: 1, instagram_com: 1 }); assert.deepStrictEqual(tr.dev, { phone: 2, desktop: 1 });
+    assert.deepStrictEqual(tr.screens, { home: 3, disc: 2, other: 4 }); assert.strictEqual(tr.views, 9);
+    assert.ok(![...store.keys()].some(k => k.includes("visitor-aaaa")), "visitor IDs stored hashed");
+    const rep = await F.trafficReport(); assert.strictEqual(rep.days.length, 30); assert.strictEqual(rep.days[29].opens, 3); assert.ok(rep.users > 0); }
+  // 25. People you may know: friend of a friend, and someone public at the same show
+  { const put = (id, v) => store.set(id, v);
+    put("users/pmA", { name: "A", handle: "pma" }); put("users/pmB", { name: "B", handle: "pmb" }); put("users/pmC", { name: "C", handle: "pmc" }); put("users/pmD", { name: "D", handle: "pmd" });
+    put("users/pmE", { name: "E", handle: "pme", settings: { suggestMe: "off" } }); put("users/pmF", { name: "F", handle: "pmf", blocked: ["pmA"] });
+    put("friendRequests/pmA_pmB", { from: "pmA", to: "pmB", status: "accepted" }); put("friendRequests/pmB_pmC", { from: "pmB", to: "pmC", status: "accepted" });
+    put("friendRequests/pmB_pmE", { from: "pmB", to: "pmE", status: "accepted" }); put("friendRequests/pmF_pmB", { from: "pmF", to: "pmB", status: "accepted" });
+    put("users/pmA/shows/s1", { date: "2026-03-03", venue: "The Fillmore Philadelphia", lineup: ["Knocked Loose"] });
+    put("publicShows/pmD_x", { ownerUid: "pmD", date: "2026-03-03", venue: "Fillmore Philadelphia", lineup: ["Knocked Loose"] });
+    put("publicShows/pmC_y", { ownerUid: "pmC", date: "2026-03-03", venue: "Union Transfer", lineup: ["Other"] });
+    const r = await F.suggestPeople("pmA", { fresh: true });
+    assert.deepStrictEqual(r.list.map(x => x.handle).sort(), ["pmc", "pmd"], "friend-of-friend + same show; skips opted-out and people who blocked you");
+    assert.strictEqual(r.list.find(x => x.handle === "pmc").mutual, 1); assert.deepStrictEqual(r.list.find(x => x.handle === "pmc").mutualNames, ["@pmb"]);
+    assert.strictEqual(r.list.find(x => x.handle === "pmd").shows[0].band, "Knocked Loose");
+    put("friendRequests/pmA_pmD", { from: "pmA", to: "pmD", status: "pending" });
+    assert.ok(!(await F.suggestPeople("pmA", { fresh: true })).list.some(x => x.handle === "pmd"), "pending requests skipped"); }
 
   console.log("All email function tests passed.");
 })().catch(e => { console.error(e); process.exit(1); });

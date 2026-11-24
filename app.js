@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile, applyActionCode } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=76";
+import { VENUES } from "./venues.js?v=77";
 import { getStorage, ref as sref, uploadBytes, uploadBytesResumable, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -177,8 +177,9 @@ function tile(it, opts){
   return `<button class="mt" data-lbi="${opts.i}" aria-label="View image"><img src="${src(it.id)}" alt="" loading="lazy">${kind}${tag}</button>`;
 }
 
-document.addEventListener("click", e => { const n = e.target.closest && e.target.closest("#next"); if (n && n.dataset.nextid && S.shows.some(x => x.id === n.dataset.nextid)) openSheet(n.dataset.nextid); });
-document.addEventListener("keydown", e => { if ((e.key === "Enter" || e.key === " ") && e.target.id === "next" && e.target.dataset.nextid) { e.preventDefault(); openSheet(e.target.dataset.nextid); } });
+const openNext = id => { if (showsToday().some(x => x.id === id)) { S.showDayId = id; S.tab = "showday"; renderTab(); window.scrollTo(0, 0); } else openSheet(id); };
+document.addEventListener("click", e => { const n = e.target.closest && e.target.closest("#next"); if (n && n.dataset.nextid && S.shows.some(x => x.id === n.dataset.nextid)) openNext(n.dataset.nextid); });
+document.addEventListener("keydown", e => { if ((e.key === "Enter" || e.key === " ") && e.target.id === "next" && e.target.dataset.nextid) { e.preventDefault(); openNext(e.target.dataset.nextid); } });
 function renderNext(){
   const ys = S.shows.map(s=>parse(s.date).y).filter(Boolean);
   if (ys.length) $("#yearLabel").textContent = `EST. ${Math.min(...ys)} · ${S.shows.filter(s=>!isUpcoming(s)).length} SHOWS DEEP`;
@@ -602,10 +603,11 @@ function renderTab(){
   if (cur && sc) { const l = cur.offsetLeft - sc.offsetLeft, r = l + cur.offsetWidth; if (l < sc.scrollLeft || r > sc.scrollLeft + sc.clientWidth) sc.scrollTo({ left: l - 12, behavior: "smooth" }); }
   navArrows();
   navScreen();
+  trackScreen(S.tab === "disc" && S.disc && S.disc.view && S.disc.view !== "up" ? "disc-" + S.disc.view : S.tab === "crew" && S.crewSel ? "friend" : S.tab);
   if (S.tab === "band") renderBand();
   else if (S.tab === "home") renderHome();
   else if (S.tab === "disc") renderDiscover();
-  else if (S.tab === "search") renderSearch(); else if (S.tab === "me") renderMe(); else if (S.tab === "settings") renderSettings(); else if (S.tab === "inbox") renderInbox(); else if (S.tab === "crew") renderCrew(); else if (S.tab === "shows") renderShows(); else if (S.tab === "cal") renderCal(); else if (S.tab === "vault") renderVault(); else renderStats();
+  else if (S.tab === "search") renderSearch(); else if (S.tab === "me") renderMe(); else if (S.tab === "settings") renderSettings(); else if (S.tab === "inbox") renderInbox(); else if (S.tab === "traffic") renderTraffic(); else if (S.tab === "showday") renderShowDay(); else if (S.tab === "crew") renderCrew(); else if (S.tab === "shows") renderShows(); else if (S.tab === "cal") renderCal(); else if (S.tab === "vault") renderVault(); else renderStats();
 }
 function render(){ renderNext(); renderTab(); if (S.open) renderSheet(); }
 
@@ -1086,7 +1088,7 @@ function openSheet(id){
   const s = id === "__new" ? { id:"__new", date: todayISO, lineup: [], wentWith: [], photos: [], merch: [] } : S.shows.find(x=>x.id===id);
   if (!s) return;
   closeLightbox();
-  S.open = id; draft = JSON.parse(JSON.stringify(s)); confirmDel = false; S.editing = id === "__new"; S.formOpen = new Map();
+  S.open = id; draft = JSON.parse(JSON.stringify(s)); confirmDel = false; S.editing = id === "__new"; S.formOpen = new Map(); trackScreen(id === "__new" ? "add" : "show");
   renderSheet(true);
   document.body.style.overflow = "hidden";
 }
@@ -1578,7 +1580,8 @@ document.addEventListener("click", e => {
     else if (t.hasAttribute("data-lbrot")) rotateMedia();
     return;
   }
-  if (t.id === "tab-shows") { S.tab = "shows"; renderTab(); }
+  if (showDayClick(t)) {}
+  else if (t.id === "tab-shows") { S.tab = "shows"; renderTab(); }
   else if (t.id === "tab-vault") { S.tab = "vault"; renderTab(); }
   else if (t.id === "tab-disc") { S.tab = "disc"; renderTab(); }
   else if (t.id === "homeBtn" || t.id === "navHome") { S.tab = "home"; S.search.profile = null; renderTab(); window.scrollTo({ top: 0, behavior: "smooth" }); }
@@ -1628,6 +1631,11 @@ document.addEventListener("click", e => {
   else if (t.dataset.setsec !== undefined) { S.setSec = t.dataset.setsec; renderTab(); window.scrollTo(0, 0); }
   else if (t.hasAttribute("data-signout2")) { try { localStorage.removeItem(profKey(ME.uid)); } catch (_) {} signOut(auth); }
   else if (t.hasAttribute("data-whatsnew2")) showWhatsNew(true);
+  else if (t.hasAttribute("data-homearea2")) homeAreaModal();
+  else if (t.dataset.pymkadd) { sendRequest(t.dataset.pymkadd).then(() => { const b = $("#pymk"); if (b) b.innerHTML = pymkBlock(); }); }
+  else if (t.dataset.pymkx) pymkHide(t.dataset.pymkx);
+  else if (t.hasAttribute("data-traffic")) { S.tab = "traffic"; renderTab(); window.scrollTo(0, 0); }
+  else if (namesClick(t)) {}
   else if (t.id === "bellBtn") { S.tab = "inbox"; renderTab(); window.scrollTo(0, 0); }
   else if (t.dataset.actgo) actGo(t.dataset.actgo);
   else if (t.dataset.gs) gsGo(t.dataset.gs);
@@ -2322,7 +2330,7 @@ function renderHome(){
   const kpis = `<div class="kpis">${kpi(up.length, "coming up", "shows")}${kpi(thisYear.length, "seen in " + yr, "shows")}${kpi(counts(thisYear.flatMap(lineup)).length, "bands in " + yr, "stats")}${pending ? kpi(pending, "waiting on you", "inbox") : kpi(crew.length, "in your crew", "crew")}</div>`;
   const open = !!S.recapOpen;
   $("#view").innerHTML = `<div class="home"><p class="kick">${hello}, ${esc((PROFILE.name || PROFILE.handle || "").split(" ")[0])}</p>
-    ${startChecklist()}
+    ${showDayCta()}${startChecklist()}
     <div class="rechead"><h2 class="hh2">Your recap</h2><button class="btn ghost sm" data-recap aria-expanded="${open}">${open ? "Hide details ▴" : "Details ▾"}</button></div>
     ${kpis}
     ${open ? `<div class="hgrid">${shows}${disc}${stats}${vault}${crewCard}</div>` : ""}
@@ -2336,6 +2344,65 @@ function renderHome(){
     <div class="hgrid">${shows}${disc}${stats}${vault}${crewCard}</div></div>`;
   fillHomeDiscover();
 }
+/* ---------- Show day mode: everything for tonight on one screen ---------- */
+const showsToday = () => S.shows.filter(x => x.date === todayISO || (x.endDate && x.date <= todayISO && x.endDate >= todayISO)).sort((a, b) => (a.time || "").localeCompare(b.time || ""));
+function showDayCta(){
+  const t = showsToday()[0]; if (!t) return "";
+  return `<button class="sdcta" data-showday="${esc(t.id)}"><span class="sdk">🤘 It's show day</span><b>${esc(headline(t))}</b><span class="ro">${esc([t.venue, t.city].filter(Boolean).join(" · "))}</span><span class="sdgo">Open show day mode ›</span></button>`;
+}
+function catalogFor(x){
+  const vk = venueKey(x.venue), lk = normBand(lineup(x)[0]);
+  return discRows("").find(r => r.d === x.date && (venueKey(r.v) === vk || (r.l || []).some(b => normBand(b) === lk))) || null;
+}
+const SD_LOADED = new Set();
+function renderShowDay(){
+  const list = showsToday(), x = list.find(y => y.id === S.showDayId) || list[0];
+  if (!x) { $("#view").innerHTML = `<div class="crew"><button class="backlink" data-gotab="home">‹ Home</button><div class="empty"><h3>No show today</h3><div>Show day mode opens on the day of a show in your log.</div></div></div>`; return; }
+  S.showDayId = x.id;
+  const cat = catalogFor(x), time = x.time || (cat && cat.h) || "", url = x.url || (cat && cat.u) || "";
+  if (!cat && !SD_LOADED.has(x.date)) { SD_LOADED.add(x.date); loadDiscover("").then(() => { if (S.tab === "showday" && catalogFor(x)) renderShowDay(); }); }
+  let when = "";
+  if (time) { const [h, m] = time.split(":").map(Number), start = new Date(); start.setHours(h, m || 0, 0, 0); const mins = Math.round((start - Date.now()) / 60000);
+    when = mins > 0 ? `Starts ${fmtTime(time)} · in ${mins >= 60 ? Math.floor(mins / 60) + "h " : ""}${mins % 60}m` : mins > -240 ? `Started ${fmtTime(time)}. You should be in there 🤘` : `Started ${fmtTime(time)}`; }
+  const crew = togetherWith(x), tags = tagsOf(x).filter(tg => !crew.some(f => f.uid === tg.uid));
+  const order = lineup(x).slice().reverse(), br = x.bandRatings || {}, rating = Number(x.rating) || 0, pit = Number(x.pit) || 0;
+  const skulls = (attr, val, n) => `<span class="picker sm" role="group">${[1, 2, 3, 4, 5].map(i => `<button data-${attr}="${n !== undefined ? esc(n) + "|" : ""}${i}" aria-pressed="${val >= i - 0.5}" aria-label="${i} skull${i > 1 ? "s" : ""}">${SKULLV(val, i)}</button>`).join("")}</span>`;
+  const maps = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([x.venue, x.city].filter(Boolean).join(", "))}`;
+  $("#view").innerHTML = `<div class="showday">
+    ${list.length > 1 ? `<div class="seg" role="group" aria-label="Today's shows">${list.map(y => `<button data-sdpick="${esc(y.id)}" aria-pressed="${y.id === x.id}">${esc(headline(y))}</button>`).join("")}</div>` : ""}
+    <div class="sdhero"><span class="lbl">Tonight</span><h2>${esc(headline(x))}</h2>${support(x).length ? `<div class="sdsup">w/ ${esc(support(x).join(" · "))}</div>` : ""}
+      <div class="ro">${esc([x.venue, x.city].filter(Boolean).join(" · "))}${x.tour ? ` · ${esc(x.tour)}` : ""}</div>
+      ${when ? `<div class="sdwhen">${esc(when)}</div>` : `<div class="ro sdwhen">Start time not listed. Check your ticket.</div>`}</div>
+    <div class="sdbtns"><a class="btn red" href="${esc(maps)}" target="_blank" rel="noopener">Directions</a>${url ? `<a class="btn" href="${esc(url)}" target="_blank" rel="noopener">Tickets</a>` : ""}<button class="btn" data-sdphotos>Add photos</button><button class="btn" data-sdshare>Share</button></div>
+    ${crew.length || tags.length ? `<section class="sect"><h3>Your crew tonight</h3><div class="chips">${crew.map(f => `<span class="chip tog">@${esc(f.handle)}</span>`).join("")}${tags.map(tg => `<span class="chip">${esc(personLabel(tg.uid, tg.name))}</span>`).join("")}</div></section>` : ""}
+    <section class="sect"><h3>The lineup</h3><div class="ro">Rate each band when their set ends. It saves right away.</div>
+      <div class="sdlu">${order.map((b, i) => `<div class="sdband"><div><span class="sdpos lbl">${i === order.length - 1 ? "Headliner" : i === 0 ? "Opener" : "&nbsp;"}</span><button class="n bandlink" data-bandp="${esc(b)}">${esc(b)}</button></div>${skulls("sdband", Number(br[b]) || 0, b)}</div>`).join("")}</div></section>
+    <section class="sect"><h3>The night</h3>
+      <div class="sdrate"><span class="lbl">Overall</span>${skulls("sdall", rating)}</div>
+      <div class="sdrate"><span class="lbl">Pit</span><span class="picker sm meter" role="group">${[1, 2, 3, 4, 5].map(i => `<button data-sdpit="${i}" aria-pressed="${pit >= i - 0.5}" aria-label="Pit ${i}"><i style="background:${pit >= i ? "var(--blood)" : pit >= i - 0.5 ? "linear-gradient(90deg,var(--blood) 50%,var(--slab) 50%)" : "var(--slab)"}"></i></button>`).join("")}</span></div>
+      <label class="field"><span class="lbl">Moment to remember</span><input id="sdHigh" value="${esc(x.highlight || "")}" placeholder="Ex: Wall of death during the last song"></label>
+      <button class="btn ghost" data-open="${esc(x.id)}">Open the full show</button></section>
+  </div>`;
+}
+async function sdSave(patch, quiet){
+  const x = S.shows.find(y => y.id === S.showDayId); if (!x) return;
+  if (Object.entries(patch).every(([k, v]) => JSON.stringify(x[k]) === JSON.stringify(v))) return;
+  Object.assign(x, patch); if (!quiet) renderShowDay(); else toast("Saved");
+  try { await updateDoc(myShow(x.id), patch); } catch (e) { handleWriteErr(e); }
+}
+function showDayClick(t){
+  if (t.dataset.showday !== undefined) { S.showDayId = t.dataset.showday; S.tab = "showday"; renderTab(); window.scrollTo(0, 0); return true; }
+  if (S.tab !== "showday" || S.open) return false;
+  const x = S.shows.find(y => y.id === S.showDayId); if (!x) return false;
+  if (t.dataset.sdpick) { S.showDayId = t.dataset.sdpick; renderShowDay(); return true; }
+  if (t.dataset.sdband) { const i = t.dataset.sdband.lastIndexOf("|"), b = t.dataset.sdband.slice(0, i), v = Number(t.dataset.sdband.slice(i + 1)); const r = { ...(x.bandRatings || {}) }; const nv = stepRating(Number(r[b]) || 0, v); if (nv) r[b] = nv; else delete r[b]; sdSave({ bandRatings: r }); return true; }
+  if (t.dataset.sdall) { sdSave({ rating: stepRating(Number(x.rating) || 0, Number(t.dataset.sdall)) }); return true; }
+  if (t.dataset.sdpit) { sdSave({ pit: stepRating(Number(x.pit) || 0, Number(t.dataset.sdpit)) }); return true; }
+  if (t.hasAttribute("data-sdphotos")) { openSheet(x.id); S.editing = true; renderSheet(true); setTimeout(() => { const g = document.querySelector('#sheetRoot input[data-upkind="photos"]'); if (g) g.closest(".sect")?.scrollIntoView({ block: "start" }); }, 80); return true; }
+  if (t.hasAttribute("data-sdshare")) { shareShow(x); return true; }
+  return false;
+}
+document.addEventListener("change", e => { if (e.target.id === "sdHigh" && S.tab === "showday") sdSave({ highlight: e.target.value.trim() }, true); });
 /* ---------- Get started: a short checklist for new accounts, until it's done or hidden ---------- */
 function gsSteps(){
   const st = [
@@ -2389,7 +2456,7 @@ function renderBand(){
   const crewGoing = friendList().filter(f => (f.shows || []).some(s => isUpcoming(s) && has(s)));
   const inBucket = (PROFILE.bucket || []).some(b => normBand(b) === k);
   // Upcoming dates from the Discover catalog (Ticketmaster, PA/NJ/DE/NY).
-  const dates = []; for (const m of DISC.months || []) for (const r of (DISC.data && DISC.data.get(m.m)) || []) if (r.d >= todayISO && (r.l || []).some(b => normBand(b) === k)) dates.push(r);
+  const dates = []; for (const r of discRows()) if (r.d >= todayISO && (r.l || []).some(b => normBand(b) === k)) dates.push(r);
   dates.sort((a, b) => a.d.localeCompare(b.d));
   const tours = [...new Set(dates.map(r => r.t).filter(Boolean))];
   const myV = new Set(S.shows.map(x => vkey(x.venue)).filter(Boolean));
@@ -2434,7 +2501,7 @@ function bandDirectory(){
   for (const s of S.shows) for (const b of lineup(s)) add(b, e => isUpcoming(s) ? e.up++ : e.seen++);
   for (const b of (PROFILE.bucket || [])) add(b, e => { e.bucket = true; });
   for (const f of friendList()) for (const s of (f.shows || [])) for (const b of lineup(s)) add(b, e => e.crew.add(f.uid));
-  for (const mo of DISC.months || []) for (const r of (DISC.data && DISC.data.get(mo.m)) || []) if (r.d >= todayISO) for (const b of (r.l || []).slice(0, 4)) add(b, e => { e.dates++; });
+  for (const r of discRows()) if (r.d >= todayISO) for (const b of (r.l || []).slice(0, 4)) add(b, e => { e.dates++; });
   return [...m.values()];
 }
 function renderBands(){
@@ -2569,10 +2636,10 @@ function feedBlock(){
     ${all.length > n ? `<button class="btn ghost dmore" data-feedmore>Show more</button>` : ""}</section>`;
 }
 async function fillHomeDiscover(){
-  await loadDiscover();
+  await loadDiscover(S.home ? "near" : "");
   const box = $("#hdisc"); if (!box || S.tab !== "home") return;
   if (!DISC.months || !DISC.months.length) { box.innerHTML = `<div class="ro">Tour dates load every morning.</div>`; return; }
-  const keep = S.disc; S.disc = { ...keep, mode: "foryou", q: "", st: "", g: "", minDates: 1, sameTour: false, showHidden: false, sort: "soon" };
+  const keep = S.disc; S.disc = { ...keep, mode: "foryou", q: "", st: S.home ? "near" : "", g: "", minDates: 1, sameTour: false, showHidden: false, sort: "soon" };
   let res; try { res = buildGroups(); } finally { S.disc = keep; }
   const list = res.shown, bk = list.filter(g => g.bk), fresh = list.filter(g => g.isNew), pv = list.filter(g => g.pv.length);
   const nums = `<div class="hrow">${[[list.length, "tours for you"], [bk.length, "bucket list"], [fresh.length, "just announced"]].map(([n, l]) => `<div class="hnum"><b class="num">${n}</b><span>${l}</span></div>`).join("")}</div>`;
@@ -2585,7 +2652,7 @@ async function fillHomeDiscover(){
    A card is flagged when the tour plays a venue you've been to; expanding it lists the dates with
    those venues first. Tours you already have a date for are hidden by default, and any tour can be
    hidden for good ("Don't show this tour"), which is saved to your profile so it sticks after refreshes. */
-const DISC = { months: null, data: new Map(), loading: null, groups: [], open: new Set(), limit: 60 };
+const DISC = { months: null, data: new Map(), meta: null, split: false, states: null, groups: [], open: new Set(), limit: 60 };
 S.disc = { mode: "foryou", q: "", st: "", g: "", sort: "listed", minDates: 1, sameTour: false, showHidden: false };
 const DMODES = [["all", "All bands"], ["foryou", "For you"], ["mine", "My bands"], ["seen", "Seen"], ["bucket", "Bucket list"]];
 try {
@@ -2595,19 +2662,98 @@ try {
   const md = Number(localStorage.getItem("pitlog.discMin")); if (md > 1) S.disc.minDates = md;
   const so = localStorage.getItem("pitlog.discSort"); if (so) S.disc.sort = so;
   S.disc.sameTour = localStorage.getItem("pitlog.discTour") === "1";
-  const dst = localStorage.getItem("pitlog.discSt"); if (["", "PA", "NJ", "DE", "NY"].includes(dst)) S.disc.st = dst;
+  const dst = localStorage.getItem("pitlog.discSt"); if (dst === "near" || dst === "" || /^[A-Z]{2}$/.test(dst || "")) { S.disc.st = dst; S.disc.stSet = true; }
   const dg = localStorage.getItem("pitlog.discG"); if (["", "Metal", "Rock", "Alternative", "Punk"].includes(dg)) S.disc.g = dg;
 } catch (_) {}
 const DSORTS = [["listed", "Recently listed"], ["soon", "Earliest show date"], ["late", "Latest show date"], ["band", "Band A–Z"], ["tour", "Tour name A–Z"], ["genre", "Genre"]];
 // Load every month at once so each tour card has all its dates (a handful of small reads per visit).
-function loadDiscover(){
-  if (DISC.loading) return DISC.loading;
-  DISC.loading = (async () => {
+/* Catalog: "2026-12" docs hold the original region; "2026-12_PA" docs hold one state each (newer catalog).
+   Only the states the current filter needs are downloaded. */
+const NEIGHBORS = { AL:"FL GA MS TN", AZ:"CA CO NM NV UT", AR:"LA MO MS OK TN TX", CA:"AZ NV OR", CO:"AZ KS NE NM OK UT WY", CT:"MA NY RI", DE:"MD NJ PA", DC:"MD VA",
+  FL:"AL GA", GA:"AL FL NC SC TN", ID:"MT NV OR UT WA WY", IL:"IA IN KY MO WI", IN:"IL KY MI OH", IA:"IL MN MO NE SD WI", KS:"CO MO NE OK", KY:"IL IN MO OH TN VA WV",
+  LA:"AR MS TX", ME:"NH", MD:"DE PA VA WV DC", MA:"CT NH NY RI VT", MI:"IN OH WI", MN:"IA ND SD WI", MS:"AL AR LA TN", MO:"AR IA IL KS KY NE OK TN", MT:"ID ND SD WY",
+  NE:"CO IA KS MO SD WY", NV:"AZ CA ID OR UT", NH:"MA ME VT", NJ:"DE NY PA", NM:"AZ CO OK TX UT", NY:"CT MA NJ PA VT", NC:"GA SC TN VA", ND:"MN MT SD", OH:"IN KY MI PA WV",
+  OK:"AR CO KS MO NM TX", OR:"CA ID NV WA", PA:"DE MD NJ NY OH WV", RI:"CT MA", SC:"GA NC", SD:"IA MN MT ND NE WY", TN:"AL AR GA KY MO MS NC VA", TX:"AR LA NM OK",
+  UT:"AZ CO ID NM NV WY", VT:"MA NH NY", VA:"KY MD NC TN WV DC", WA:"ID OR", WV:"KY MD OH PA VA", WI:"IA IL MI MN", WY:"CO ID MT NE SD UT" };
+const nearStates = (st, miles) => [st, ...(Number(miles) >= 40 && NEIGHBORS[st] ? NEIGHBORS[st].split(" ") : [])];
+const BASE_STATES = ["PA", "NJ", "DE", "NY"];
+function discStates(st){
+  const avail = DISC.states && DISC.states.length ? DISC.states : BASE_STATES; st = st === undefined ? S.disc.st : st;
+  if (st === "near" && S.home && S.home.state) { const w = nearStates(S.home.state, S.home.radius); return avail.filter(x => w.includes(x)); }
+  if (st && st !== "near") return [st];
+  return avail;
+}
+function discKeys(st){
+  if (!DISC.split) return (DISC.months || []).map(x => x.m);
+  const want = discStates(st); return (DISC.months || []).flatMap(x => want.filter(w => x.st && x.st[w]).map(w => `${x.m}_${w}`));
+}
+const discRows = st => discKeys(st).flatMap(k => DISC.data.get(k) || []);
+function loadDiscover(st){
+  if (!DISC.meta) DISC.meta = (async () => {
     const d = await getDoc(doc(fdb, "catalogMeta", "months"));
-    DISC.months = d.exists() ? (d.data().list || []).filter(x => x.m >= todayISO.slice(0, 7)) : [];
-    await Promise.all(DISC.months.map(async x => { try { const md = await getDoc(doc(fdb, "catalogMonths", x.m)); DISC.data.set(x.m, md.exists() ? JSON.parse(md.data().data || "[]") : []); } catch (e) { console.warn(e); DISC.data.set(x.m, []); } }));
-  })().catch(e => { console.warn("discover", e); DISC.months = DISC.months || []; DISC.loading = null; });
-  return DISC.loading;
+    const list = d.exists() ? (d.data().list || []).filter(x => x.m >= todayISO.slice(0, 7)) : [];
+    DISC.split = list.some(x => x.st && Object.keys(x.st).length);
+    DISC.states = [...new Set(list.flatMap(x => Object.keys(x.st || {})))].filter(x => x !== "XX").sort();
+    DISC.months = list;
+  })().catch(e => { console.warn("discover", e); DISC.months = DISC.months || []; DISC.meta = null; });
+  return DISC.meta.then(() => Promise.all(discKeys(st).filter(k => !DISC.data.has(k)).map(async k => {
+    try { const md = await getDoc(doc(fdb, "catalogMonths", k)); DISC.data.set(k, md.exists() ? JSON.parse(md.data().data || "[]") : []); } catch (e) { console.warn(e); DISC.data.set(k, []); } })));
+}
+/* ---------- Discover area: where you live and how far you'll travel ----------
+   Saved to users/{uid}/prefs/home, which only you can read. A ZIP gives a town-centre point (not your address). */
+const RADII = [25, 50, 100, 150, 250];
+const radiusLabel = mi => KM() ? `${Math.round(Number(mi) * 1.609344)} km` : `${Math.round(Number(mi))} mi`;
+const homeKey = () => "pitlog.home." + (ME && ME.uid);
+async function loadHome(){
+  try { const c = JSON.parse(localStorage.getItem(homeKey()) || "null"); if (c && c.state) S.home = c; } catch (_) {}
+  try { const d = await getDoc(doc(fdb, "users", ME.uid, "prefs", "home")); S.home = d.exists() && d.data().state ? d.data() : null; try { localStorage.setItem(homeKey(), JSON.stringify(S.home)); } catch (_) {} } catch (e) { console.warn("home", e); }
+  if (S.home && !S.disc.stSet) S.disc.st = "near";
+  if (S.tab === "disc" && S.disc.view !== "past" && S.disc.view !== "bands") renderDiscover();
+}
+async function saveHome(h){
+  S.home = h; try { localStorage.setItem(homeKey(), JSON.stringify(h)); } catch (_) {}
+  try { if (h) await setDoc(doc(fdb, "users", ME.uid, "prefs", "home"), { ...h, at: new Date().toISOString() }); else await deleteDoc(doc(fdb, "users", ME.uid, "prefs", "home")); }
+  catch (e) { handleWriteErr(e); return; }
+  S.disc.st = h ? "near" : ""; S.disc.stSet = true; try { localStorage.setItem("pitlog.discSt", S.disc.st); } catch (_) {}
+  if (S.tab === "disc") renderDiscover(); else if (S.tab === "settings") renderSettings();
+}
+function homeAreaModal(){
+  const h = S.home || {}, root = $("#modalRoot"), states = Object.keys(NEIGHBORS).sort();
+  root.innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-label="Your area"><div class="mbox">
+    <h3>Your area</h3>
+    <div class="ro">Discover shows tours within the distance you'll travel. We only keep the rough location of your ZIP code, and only you can see it.</div>
+    <label class="field"><span class="lbl">ZIP code</span><input id="haZip" inputmode="numeric" maxlength="5" value="${esc(h.zip || "")}" placeholder="Ex: 19446" autocomplete="postal-code"></label>
+    <label class="field"><span class="lbl">How far will you go?</span><select id="haRad">${RADII.map(r => `<option value="${r}" ${Number(h.radius || 100) === r ? "selected" : ""}>${radiusLabel(r)}</option>`).join("")}</select></label>
+    <div class="ro" id="haMsg" role="status"></div>
+    <details class="hastate"><summary class="ro">No ZIP? Pick a state instead</summary><select id="haState" aria-label="State"><option value="">Choose a state</option>${states.map(x => `<option ${h.state === x && !h.zip ? "selected" : ""}>${x}</option>`).join("")}</select></details>
+    <div class="mbtns">${S.home ? `<button class="btn ghost" data-haclear>Clear</button>` : ""}<button class="btn ghost" data-hax>Cancel</button><button class="btn red" data-hasave>Save</button></div>
+  </div></div>`;
+  root.onclick = async e => {
+    const b = e.target.closest("button"); if (!b) return;
+    if (b.hasAttribute("data-hax")) { root.innerHTML = ""; root.onclick = null; }
+    else if (b.hasAttribute("data-haclear")) { root.innerHTML = ""; root.onclick = null; await saveHome(null); toast("Area cleared"); }
+    else if (b.hasAttribute("data-hasave")) {
+      const zip = $("#haZip").value.trim(), radius = Number($("#haRad").value), st = $("#haState").value, msg = $("#haMsg");
+      if (zip) {
+        if (!/^\d{5}$/.test(zip)) { msg.textContent = "Enter a 5-digit ZIP code."; return; }
+        b.disabled = true; msg.textContent = "Finding it…";
+        try { const g = await callAccount("geoZip", { zip }); if (!g.state) throw new Error("We couldn't find that ZIP code");
+          root.innerHTML = ""; root.onclick = null; await saveHome({ zip, lat: g.lat, lng: g.lng, state: g.state, place: g.place || "", radius }); toast(`Showing tours within ${radiusLabel(radius)} of ${g.place || zip}`, 3200); }
+        catch (err) { b.disabled = false; msg.textContent = (err && err.message) || "Couldn't look that up. Try again, or pick a state."; }
+      } else if (st) { root.innerHTML = ""; root.onclick = null; await saveHome({ state: st, radius: 0, lat: null, lng: null, zip: "", place: "" }); toast(`Showing tours in ${st}`); }
+      else msg.textContent = "Enter a ZIP code or pick a state.";
+    }
+  };
+  setTimeout(() => $("#haZip")?.focus(), 50);
+}
+// Distance in miles between two points (great-circle).
+function milesBetween(a1, o1, a2, o2){ const R = 3958.8, r = x => x * Math.PI / 180, da = r(a2 - a1), dn = r(o2 - o1);
+  const h = Math.sin(da / 2) ** 2 + Math.cos(r(a1)) * Math.cos(r(a2)) * Math.sin(dn / 2) ** 2; return 2 * R * Math.asin(Math.min(1, Math.sqrt(h))); }
+const rowMiles = r => S.home && S.home.lat != null && r.a != null ? milesBetween(S.home.lat, S.home.lng, r.a, r.n) : null;
+function inRadius(r){
+  const h = S.home; if (!h) return true; const m = rowMiles(r);
+  if (m != null && h.radius) return m <= Number(h.radius);
+  return nearStates(h.state, h.radius).includes((String(r.y || "").match(/, ([A-Z]{2})$/) || [])[1]) && (!h.radius || (String(r.y || "").endsWith(", " + h.state)));
 }
 const tourGroupKey = (lu, co) => { const k = lu.map(normBand); return co && k[1] ? "c:" + [k[0], k[1]].sort().join("+") : "h:" + (k[0] || ""); };
 const hiddenTours = () => (PROFILE && Array.isArray(PROFILE.hiddenTours) ? PROFILE.hiddenTours : []);
@@ -2625,7 +2771,7 @@ const pastVenue = (C, v) => { const k = venueKey(v); if (k.length < 3) return 0;
   for (const [pk, n] of C.venues) if (pk.length >= 5 && (pk.includes(k) || k.includes(pk))) return n; return 0; };
 function buildGroups(){
   const C = discContext(), d = S.disc, q = d.q.trim().toLowerCase(), groups = new Map();
-  for (const m of DISC.months || []) for (const r of DISC.data.get(m.m) || []) {
+  for (const r of discRows()) {
     if (r.d < todayISO) continue;
     const key = tourGroupKey(r.l, r.c);
     const g = groups.get(key) || { key, dates: [], all: 0, tours: new Map(), genres: new Map() }; groups.set(key, g);
@@ -2634,11 +2780,12 @@ function buildGroups(){
     if (!g.rep || r.l.length > g.rep.l.length || (r.l.length === g.rep.l.length && r.t && !g.rep.t)) g.rep = r;
     if (r.t) g.tours.set(r.t, (g.tours.get(r.t) || 0) + 1);
     if (r.g) g.genres.set(r.g, (g.genres.get(r.g) || 0) + 1);
-    if (d.st && !(r.y || "").endsWith(", " + d.st)) continue;
+    if (d.st === "near") { if (!inRadius(r)) continue; }
+    else if (d.st && !(r.y || "").endsWith(", " + d.st)) continue;
     if (d.g && r.g !== d.g) continue;
     if (q && ![...r.l, r.v, r.y, r.t].join(" ").toLowerCase().includes(q)) continue;
     const sh = catShow({ id: r.i, date: r.d, lineup: r.l, coHead: !!r.c, venue: r.v, city: r.y, tour: r.t, url: r.u, time: r.h, status: r.s });
-    sh.firstSeen = r.f || ""; sh.pv = pastVenue(C, r.v); sh.mine = haveShow(sh); sh.genre = r.g || ""; sh.onsale = r.o || "";
+    sh.firstSeen = r.f || ""; sh.mi = rowMiles(r); sh.pv = pastVenue(C, r.v); sh.mine = haveShow(sh); sh.genre = r.g || ""; sh.onsale = r.o || "";
     g.dates.push(sh);
   }
   const out = { shown: [], hiddenByMe: 0, hiddenGoing: 0, C };
@@ -2691,7 +2838,7 @@ function renderDiscover(){
   $("#view").innerHTML = `<div class="disc">${dviewSeg()}
     <div class="tagrow dmodes" role="group" aria-label="Which bands">${DMODES.map(([v, l]) => `<button class="tagbtn${d.mode === v ? " on" : ""}" data-dmode="${v}" aria-pressed="${d.mode === v}">${l}</button>`).join("")}</div>
     <input class="search" id="dq" value="${esc(d.q)}" placeholder="Band, tour, venue or city" autocapitalize="none" spellcheck="false" aria-label="Filter tours">
-    <div class="tagrow" role="group" aria-label="State">${["", "PA", "NJ", "DE", "NY"].map(x => `<button class="tagbtn${d.st === x ? " on" : ""}" data-dst="${x}" aria-pressed="${d.st === x}">${x || "All states"}</button>`).join("")}</div>
+    <div class="tagrow" role="group" aria-label="Where">${S.home ? `<button class="tagbtn${d.st === "near" ? " on" : ""}" data-dst="near" aria-pressed="${d.st === "near"}">📍 ${S.home.radius ? `Within ${esc(radiusLabel(S.home.radius))}` : `Near ${esc(S.home.state)}`}</button>` : ""}${["", ...(DISC.states && DISC.states.length ? DISC.states : BASE_STATES)].map(x => `<button class="tagbtn${d.st === x ? " on" : ""}" data-dst="${x}" aria-pressed="${d.st === x}">${x || "All states"}</button>`).join("")}<button class="tagbtn ghostish" data-homearea>${S.home ? "Change area" : "📍 Set your area"}</button></div>
     <div class="dfil">
       <label class="dsel"><span class="lbl">Sort</span><select id="dsort">${DSORTS.map(([v, l]) => `<option value="${v}" ${d.sort === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>
       <label class="dsel"><span class="lbl">Dates</span><select id="dmin">${[[1, "Any"], [2, "2+"], [3, "3+"], [5, "5+"], [10, "10+"]].map(([v, l]) => `<option value="${v}" ${Number(d.minDates || 1) === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>
@@ -2705,7 +2852,7 @@ const rangeText = g => g.first === g.last ? fmtDate(g.first) : `${shortDate(g.fi
 function dateRow(sh, gi, di){
   const p = parse(sh.date);
   return `<div class="ddate${sh.pv ? " pv" : ""}"><span class="pdate"><b class="num">${p.d}</b>${MONTHS[p.m - 1]} · ${DAYS[p.dt.getDay()]}${sh.time ? " " + esc(fmtTime(sh.time)) : ""}</span>
-    <div class="pt"><div class="dv">${esc(sh.venue)}</div>${sh.pv ? `<div class="pvline">★ You've been here${sh.pv > 1 ? ` (${sh.pv} shows)` : ""}</div>` : ""}<div class="ro">${esc(sh.city)}${sh.status ? ` · ${esc(sh.status === "offsale" ? "off sale" : sh.status)}` : ""}</div>
+    <div class="pt"><div class="dv">${esc(sh.venue)}</div>${sh.pv ? `<div class="pvline">★ You've been here${sh.pv > 1 ? ` (${sh.pv} shows)` : ""}</div>` : ""}<div class="ro">${esc(sh.city)}${sh.mi != null ? ` · ${esc(radiusLabel(Math.round(sh.mi)))}` : ""}${sh.status ? ` · ${esc(sh.status === "offsale" ? "off sale" : sh.status)}` : ""}</div>
       <div class="tagrow">${sh.mine ? `<span class="chip tog">In your log</span>` : `${ticketLink(sh.url)}<button class="chip catadd" data-dadd="${gi}:${di}">+ Add to my shows</button>`}</div></div></div>`;
 }
 function drawDiscover(){
@@ -2773,9 +2920,10 @@ async function setHiddenTour(g, hide){
   try { await updateDoc(doc(fdb, "users", ME.uid), { hiddenTours: list }); } catch (e) { console.warn(e); toast("Couldn't save that. Check your connection."); }
 }
 document.addEventListener("click", e => {
-  const t = e.target.closest && e.target.closest("[data-dmode],[data-dst],[data-dmore],[data-dadd],[data-dtoggle],[data-dhide],[data-dunhide],[data-dint]"); if (!t || S.tab !== "disc") return;
+  const t = e.target.closest && e.target.closest("[data-dmode],[data-dst],[data-homearea],[data-dmore],[data-dadd],[data-dtoggle],[data-dhide],[data-dunhide],[data-dint]"); if (!t || S.tab !== "disc") return;
   if (t.dataset.dmode) { S.disc.mode = t.dataset.dmode; try { localStorage.setItem("pitlog.discMode", S.disc.mode); } catch (_) {} document.querySelectorAll("[data-dmode]").forEach(b => { b.classList.toggle("on", b === t); b.setAttribute("aria-pressed", b === t); }); DISC.limit = 60; drawDiscover(); }
-  else if (t.dataset.dst !== undefined) { S.disc.st = t.dataset.dst; try { localStorage.setItem("pitlog.discSt", S.disc.st); } catch (_) {} document.querySelectorAll("[data-dst]").forEach(b => { b.classList.toggle("on", b === t); b.setAttribute("aria-pressed", b === t); }); drawDiscover(); }
+  else if (t.hasAttribute("data-homearea")) homeAreaModal();
+  else if (t.dataset.dst !== undefined) { S.disc.st = t.dataset.dst; S.disc.stSet = true; try { localStorage.setItem("pitlog.discSt", S.disc.st); } catch (_) {} document.querySelectorAll("[data-dst]").forEach(b => { b.classList.toggle("on", b === t); b.setAttribute("aria-pressed", b === t); }); const box = $("#dres"); if (box && discKeys().some(k => !DISC.data.has(k))) box.innerHTML = `<div class="ro">Loading tours…</div>`; loadDiscover().then(drawDiscover); }
   else if (t.hasAttribute("data-dmore")) { DISC.limit += 60; drawDiscover(); }
   else if (t.dataset.dtoggle !== undefined) { const g = DISC.groups[Number(t.dataset.dtoggle)]; if (!g) return; DISC.open.has(g.key) ? DISC.open.delete(g.key) : DISC.open.add(g.key); drawDiscover(); }
   else if (t.dataset.dint !== undefined) { const g = DISC.groups[Number(t.dataset.dint)]; if (g) toggleInterested(g); }
@@ -3406,7 +3554,8 @@ function renderCrew(){
       <form class="addrow" id="addForm" autocomplete="off"><input class="search" id="addHandle" placeholder="@username" value="${esc(S.crewAdd||"")}" autocapitalize="none" spellcheck="false" aria-label="Friend's username"><button class="btn red" type="submit">Send</button></form></section>
     <section class="sect invite"><h3>Invite a friend</h3>
       <div class="ro">Not on Pit Log yet? Send them a text. When they sign up from your link, a crew request comes to you automatically.</div>
-      <button class="btn red" data-invite>Invite a friend</button></section>`;
+      <button class="btn red" data-invite>Invite a friend</button></section>
+    <div id="pymk">${pymkBlock()}</div>`;
   if (inc.length) html += `<section class="sect"><h3>Requests <span class="lbl">${inc.length}</span></h3><div class="plist">${inc.map(r => { const q = person(r.from, r.fromName, r.fromHandle, r.fromPhoto); return `
       <div class="prow">${avatar(q.photo, q.name)}<div class="pt"><div class="nm">${esc(q.name || q.handle)}</div><div class="hd">@${esc(q.handle)}</div></div>
       <button class="btn red" data-accept="${esc(r.id)}">Accept</button><button class="btn ghost" data-decline="${esc(r.id)}">Decline</button></div>`; }).join("")}</div></section>`;
@@ -3434,6 +3583,22 @@ function renderCrew(){
   $("#view").innerHTML = html + `</div>`;
 }
 
+/* ---------- People you may know (server picks; cached 12 h there, once per visit here) ---------- */
+const PYMK = { list: null, loading: false };
+function pymkList(){ const skip = new Set((PROFILE && PROFILE.pymkSkip) || []), out = new Set(REQ.out.map(r => r.to)), inn = new Set(REQ.in.map(r => r.from));
+  return (PYMK.list || []).filter(p => !skip.has(p.uid) && !FR[p.uid] && !out.has(p.uid) && !inn.has(p.uid) && !myBlocks().includes(p.uid)); }
+function pymkBlock(){
+  if (PYMK.list === null) { if (!PYMK.loading) { PYMK.loading = true; callAccount("suggestPeople").then(j => { PYMK.list = j.list || []; }).catch(() => { PYMK.list = []; }).finally(() => { PYMK.loading = false; const b = $("#pymk"); if (b) b.innerHTML = pymkBlock(); }); } return ""; }
+  const list = pymkList().slice(0, 6); if (!list.length) return "";
+  return `<section class="sect pymk"><h3>People you may know</h3><div class="plist">${list.map(p => {
+    const why = p.mutual ? `${p.mutual} mutual crew${p.mutualNames && p.mutualNames.length ? ": " + p.mutualNames.join(", ") : ""}` : p.shows && p.shows[0] ? `Also at ${p.shows[0].band || p.shows[0].venue} · ${shortDate(p.shows[0].date)}${p.shows.length > 1 ? ` (+${p.shows.length - 1} more)` : ""}` : "";
+    return `<div class="prow">${avatar(p.photo, p.name || p.handle)}<div class="pt"><div class="nm">${esc(p.name || p.handle)}</div><div class="hd">@${esc(p.handle)}</div>${why ? `<div class="ro">${esc(why)}</div>` : ""}</div>
+      <button class="btn red sm" data-pymkadd="${esc(p.handle)}">Add</button><button class="btn ghost sm" data-pymkx="${esc(p.uid)}" aria-label="Hide ${esc(p.handle)}">✕</button></div>`; }).join("")}</div></section>`;
+}
+async function pymkHide(uid){
+  PROFILE.pymkSkip = [...new Set([...(PROFILE.pymkSkip || []), uid])]; cacheProfile(); const b = $("#pymk"); if (b) b.innerHTML = pymkBlock();
+  try { await updateDoc(doc(fdb, "users", ME.uid), { pymkSkip: arrayUnion(uid) }); } catch (_) {}
+}
 function familyBlock(f){
   const h = esc(f.handle);
   if (f.family) return `<section class="famcard on"><div><div class="ft">Crew Family</div><div class="ro">Your logs are linked with @${h}. New shows and changes to date, bands or venue sync both ways.</div></div>
@@ -3570,11 +3735,12 @@ const selectRow = (key, label, help, opts, val) => `<label class="setrow"><span 
   <select data-setting="${key}" aria-label="${esc(label)}">${opts.map(([v, l]) => `<option value="${v}" ${val === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`;
 // Settings live on their own screen: a short menu, and one section at a time.
 const SET_SECS = [["privacy", "Privacy", "Who sees each part of your log"], ["push", "Phone notifications", "Tags, comments, show day and more"], ["notify", "Email", "Daily digest and Sunday recap"],
-  ["display", "Display", "Default views, currency, distance"], ["data", "Your data", "Download, import, delete account"], ["help", "Help and legal", "Support, privacy policy, terms"]];
+  ["display", "Display", "Default views, area, currency, distance"], ["names", "Band and venue names", "Merge duplicates and fix spellings"], ["data", "Your data", "Download, import, delete account"], ["help", "Help and legal", "Support, privacy policy, terms"]];
 function settingsBody(id){
   const set = MY();
   if (id === "privacy") return `<div class="ro" style="margin:4px 0 10px">Choose who sees each part of your log. Family only means people you've linked with Crew Family. Public covers your whole crew today, and anyone on Pit Log if public profiles are added later.</div>
-      ${PRIVACY.map(([k, l, h]) => selectRow(k, l, h, LEVELS, set[k])).join("")}`;
+      ${PRIVACY.map(([k, l, h]) => selectRow(k, l, h, LEVELS, set[k])).join("")}
+      ${selectRow("suggestMe", "Suggest me to others", "Show you under People you may know for friends of your crew and people who logged the same show.", [["on", "On"], ["off", "Off"]], set.suggestMe || "on")}`;
   if (id === "push") return pushBlock() + [
       selectRow("pushRequests", "Crew requests", "Crew requests and Crew Family invites.", [["on", "On"], ["off", "Off"]], set.pushRequests),
       selectRow("pushTags", "Tags", "When someone tags you on a show.", [["on", "On"], ["off", "Off"]], set.pushTags),
@@ -3596,6 +3762,7 @@ function settingsBody(id){
       selectRow("weekStart", "Week starts on", "", [["sun", "Sunday"], ["mon", "Monday"]], set.weekStart),
       selectRow("currency", "Currency", "", [["$", "$ Dollar"], ["€", "€ Euro"], ["£", "£ Pound"]], set.currency),
       selectRow("distance", "Distance", "", [["mi", "Miles"], ["km", "Kilometers"]], set.distance)].join("")
+      + `<div class="setrow"><span class="st"><b>Discover area</b><span class="ro">${S.home ? esc(S.home.zip ? `${S.home.place || S.home.zip}, ${S.home.state} · within ${radiusLabel(S.home.radius)}` : `${S.home.state}`) : "Not set. Discover shows every state we cover."}</span></span><button class="btn sm" data-homearea2>${S.home ? "Change" : "Set"}</button></div>`
       + `<div class="ro" style="margin-top:12px">How your name shows on tags is under <button class="linkbtn" data-editprofile>Edit profile</button>.</div>`;
   if (id === "data") return `<div class="ro" style="margin:4px 0 10px">Download a backup of every show you've logged.</div>
       <button class="btn" data-backup>Download my data</button>
@@ -3606,6 +3773,7 @@ function settingsBody(id){
       <div class="ro" id="slImportMsg"></div>
       <div class="ro" style="margin:18px 0 8px"><b class="bone">Delete my account.</b> Permanently removes your profile, shows, photos and crew links. Shows you shared with Crew Family stay in their log.</div>
       <button class="btn warn" data-delacct>Delete my account</button>`;
+  if (id === "names") return namesBody();
   if (id === "help") return `<div class="support"><b>Need a hand?</b> Questions, bugs, ideas, or a show that won't save: email <a href="mailto:support@thepitlog.com?subject=Pit%20Log%20help%20(%40${encodeURIComponent(PROFILE.handle || "")})">support@thepitlog.com</a>. A real person reads every one.</div>
       <div class="setlinks"><button class="btn" data-whatsnew2>What's new in Pit Log</button><a class="btn" href="version-history.html">Full version history</a><a class="btn" href="privacy.html">Privacy policy</a><a class="btn" href="terms.html">Terms</a></div>`;
   return "";
@@ -3616,7 +3784,101 @@ function renderSettings(){
   if (sec) { $("#view").innerHTML = `<div class="crew setscreen"><button class="backlink" data-setsec="">‹ Settings</button><section class="sect settings"><h2 class="seth">${esc(sec[1])}</h2>${settingsBody(sec[0])}</section></div>`; return; }
   $("#view").innerHTML = `<div class="crew setscreen"><button class="backlink" data-myprofile2>‹ Profile</button><section class="sect settings"><h2 class="seth">Settings</h2>
     <div class="setmenu">${SET_SECS.map(([id, t, sub]) => `<button class="setmi" data-setsec="${id}"><span><b>${esc(t)}</b><span class="ro">${esc(sub)}</span></span><span class="chev" aria-hidden="true">›</span></button>`).join("")}</div>
+    ${FEAT.admin ? `<button class="setmi" data-traffic><span><b>Site traffic</b><span class="ro">Only you can see this</span></span><span class="chev" aria-hidden="true">›</span></button>` : ""}
     <button class="btn warn setout" data-signout2>Sign out</button></section></div>`;
+}
+/* ---------- Band and venue name clean-up ----------
+   Finds names in your log that are probably the same thing spelled differently ("The Acacia Strain" /
+   "Acacia Strain", "TLA" / "TLA (Theatre of Living Arts)", one-letter typos) and merges them across every
+   show: lineup, best band, band ratings, setlists and photo tags, or the venue. Undo puts it all back. */
+function lev(a, b){ if (a === b) return 0; if (Math.abs(a.length - b.length) > 2) return 9; let p = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) { const c = [i]; for (let j = 1; j <= b.length; j++) c[j] = Math.min(p[j] + 1, c[j - 1] + 1, p[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)); p = c; } return p[b.length]; }
+function nameCounts(kind){ const m = new Map(); for (const x of S.shows) for (const n of (kind === "band" ? lineup(x) : [x.venue]).filter(Boolean)) m.set(n, (m.get(n) || 0) + 1); return m; }
+function nameGroups(kind){
+  const counts = nameCounts(kind), names = [...counts.keys()], key = kind === "band" ? normBand : venueKey;
+  const parent = new Map(names.map(n => [n, n])), find = n => { while (parent.get(n) !== n) n = parent.get(n); return n; }, join = (a, b) => parent.set(find(a), find(b));
+  const ks = names.map(n => [n, key(n)]);
+  for (let i = 0; i < ks.length; i++) for (let j = i + 1; j < ks.length; j++) {
+    const [a, ka] = ks[i], [b, kb] = ks[j]; if (!ka || !kb) continue;
+    const same = ka === kb || (ka.length >= 6 && kb.length >= 6 && lev(ka, kb) <= (Math.min(ka.length, kb.length) >= 10 ? 2 : 1))
+      || (kind === "venue" && Math.min(ka.length, kb.length) >= 5 && (ka.startsWith(kb) || kb.startsWith(ka)));
+    if (same) join(a, b);
+  }
+  const by = new Map(); for (const n of names) { const r = find(n); (by.get(r) || by.set(r, []).get(r)).push(n); }
+  const skip = new Set((PROFILE && PROFILE.mergeSkip) || []);
+  return [...by.values()].filter(g => g.length > 1).map(g => g.sort((a, b) => counts.get(b) - counts.get(a) || b.length - a.length))
+    .filter(g => !skip.has(kind + ":" + [...g].sort().join("|"))).map(g => ({ names: g, counts: g.map(n => counts.get(n)) }));
+}
+let NAMEG = { band: [], venue: [] };
+function namesBody(){
+  NAMEG = { band: nameGroups("band"), venue: nameGroups("venue") };
+  const grp = (kind, g, gi) => `<div class="mgroup"><div class="ro">Pick the name to keep:</div>${g.names.map((n, i) => `<label class="mopt"><input type="radio" name="mg-${kind}-${gi}" value="${i}" ${i === 0 ? "checked" : ""}> <span>${esc(n)}</span> <span class="ro">${g.counts[i]} show${g.counts[i] > 1 ? "s" : ""}</span></label>`).join("")}
+    <div class="tagrow"><button class="btn red sm" data-mg="${kind}|${gi}">Merge</button><button class="btn ghost sm" data-mgskip="${kind}|${gi}">Not the same</button></div></div>`;
+  const list = (kind, label) => `<h3 class="mh">${label}</h3>${NAMEG[kind].length ? NAMEG[kind].map((g, gi) => grp(kind, g, gi)).join("") : `<div class="ro">No look-alike ${kind} names found.</div>`}`;
+  const all = kind => [...nameCounts(kind).keys()].sort((a, b) => a.localeCompare(b));
+  return `<div class="ro" style="margin:4px 0 10px">Names that look like the same ${"band or venue"} spelled differently. Merging updates every show that uses them, including ratings, best band, setlists and photo tags.</div>
+    ${list("band", "Bands")}${list("venue", "Venues")}
+    <h3 class="mh">Rename one yourself</h3>
+    <div class="renrow"><select id="rnKind" aria-label="Band or venue"><option value="band">Band</option><option value="venue">Venue</option></select>
+      <input id="rnFrom" list="rnFromList" placeholder="Name in your log" aria-label="Current name"><datalist id="rnFromList">${[...all("band"), ...all("venue")].map(n => `<option value="${esc(n)}">`).join("")}</datalist>
+      <input id="rnTo" placeholder="Change it to" aria-label="New name"><button class="btn red" data-rename>Rename</button></div>`;
+}
+async function renameNames(kind, from, to){
+  const fromSet = new Set(from.filter(n => n && n !== to)); if (!fromSet.size || !to) return 0;
+  const fix = n => fromSet.has(n) ? to : n, undo = [], b = writeBatch(fdb); let n = 0;
+  for (const x of S.shows) {
+    const patch = {};
+    if (kind === "venue") { if (fromSet.has(x.venue)) patch.venue = to; }
+    else {
+      const lu = lineup(x); if (!lu.some(b => fromSet.has(b)) && !fromSet.has(x.best) && !Object.keys(x.bandRatings || {}).some(k => fromSet.has(k))) continue;
+      patch.lineup = [...new Set(lu.map(fix))];
+      if (fromSet.has(x.best)) patch.best = to;
+      if (x.bandRatings && Object.keys(x.bandRatings).some(k => fromSet.has(k))) { const r = {}; for (const [k, v] of Object.entries(x.bandRatings)) r[fix(k)] = Math.max(Number(r[fix(k)]) || 0, Number(v) || 0); patch.bandRatings = r; }
+      if (x.songs && Object.keys(x.songs).some(k => fromSet.has(k))) { const r = {}; for (const [k, v] of Object.entries(x.songs)) r[fix(k)] = [...(r[fix(k)] || []), ...(Array.isArray(v) ? v : [])]; patch.songs = r; }
+      for (const kd of ["photos", "merch"]) if (items(x, kd).some(m => (m.bands || []).some(b => fromSet.has(b)))) patch[kd] = items(x, kd).map(m => ({ ...m, bands: [...new Set((m.bands || []).map(fix))] }));
+    }
+    if (!Object.keys(patch).length) continue;
+    undo.push([x.id, Object.fromEntries(Object.keys(patch).map(k => [k, x[k] === undefined ? null : JSON.parse(JSON.stringify(x[k]))]))]);
+    b.update(myShow(x.id), patch); n++;
+    if (n >= 450) break;
+  }
+  if (!n) return 0;
+  try { await b.commit(); } catch (e) { handleWriteErr(e); return 0; }
+  toastUndo(`${[...fromSet].join(", ")} → ${to} on ${n} show${n > 1 ? "s" : ""}`, async () => { const u = writeBatch(fdb); for (const [id, old] of undo) u.update(myShow(id), old); await u.commit(); toast("Names put back"); if (S.tab === "settings") renderSettings(); });
+  if (S.tab === "settings") renderSettings();
+  return n;
+}
+async function mergeSkip(kind, g){
+  const sig = kind + ":" + [...g.names].sort().join("|");
+  PROFILE.mergeSkip = [...new Set([...(PROFILE.mergeSkip || []), sig])]; cacheProfile(); renderSettings();
+  try { await updateDoc(doc(fdb, "users", ME.uid), { mergeSkip: arrayUnion(sig) }); } catch (_) {}
+}
+function namesClick(t){
+  if (t.dataset.mg) { const [kind, gi] = t.dataset.mg.split("|"), g = NAMEG[kind][Number(gi)]; if (!g) return true;
+    const pick = Number((document.querySelector(`input[name="mg-${kind}-${gi}"]:checked`) || {}).value || 0); renameNames(kind, g.names, g.names[pick]); return true; }
+  if (t.dataset.mgskip) { const [kind, gi] = t.dataset.mgskip.split("|"), g = NAMEG[kind][Number(gi)]; if (g) mergeSkip(kind, g); return true; }
+  if (t.hasAttribute("data-rename")) { const kind = $("#rnKind").value, from = $("#rnFrom").value.trim(), to = $("#rnTo").value.trim();
+    const have = nameCounts(kind); if (!have.has(from)) { toast(`No ${kind} called "${from}" in your log`); return true; } if (!to) { toast("Type the new name"); return true; }
+    renameNames(kind, [from], to); return true; }
+  return false;
+}
+/* ---------- Site traffic (owner only; the server checks) ---------- */
+async function renderTraffic(){
+  $("#view").innerHTML = `<div class="crew setscreen"><button class="backlink" data-settings>‹ Settings</button><section class="sect"><h2 class="seth">Site traffic</h2><div class="ro">Loading…</div></section></div>`;
+  let r; try { r = await callAccount("traffic"); } catch (e) { if (S.tab === "traffic") $("#view .ro").textContent = "Couldn't load traffic: " + (e.message || e); return; }
+  if (S.tab !== "traffic") return;
+  const D = r.days || [], sum = (k, n) => D.slice(-n).reduce((a, d) => a + (d[k] || 0), 0), max = Math.max(1, ...D.map(d => d.uniques));
+  const tot = key => { const m = {}; for (const d of D) for (const [k, v] of Object.entries(d[key] || {})) m[k] = (m[k] || 0) + v; return Object.entries(m).sort((a, b) => b[1] - a[1]); };
+  const tile = (l, v) => `<div class="tile"><div class="lbl">${l}</div><div class="v num">${v}</div></div>`;
+  const list = (rows, fmt) => rows.length ? `<div class="rank">${rows.slice(0, 10).map(([k, v]) => `<div class="row"><span class="n">${esc(fmt ? fmt(k) : k)}</span><span class="num lbl" style="color:var(--bone)">${v}</span><div class="track"><i style="width:${(v / rows[0][1] * 100).toFixed(1)}%"></i></div></div>`).join("")}</div>` : `<div class="ro">Nothing yet.</div>`;
+  $("#view").innerHTML = `<div class="crew setscreen traffic"><button class="backlink" data-settings>‹ Settings</button><section class="sect"><h2 class="seth">Site traffic</h2>
+    <div class="ro">Counted from today on. Visitors are browsers, not accounts. Days are Eastern time.</div>
+    <div class="stats" style="margin-top:10px"><div class="tiles">${tile("Visitors today", D.length ? D[D.length - 1].uniques : 0)}${tile("Visitors · 7 days", sum("uniques", 7))}${tile("Visitors · 30 days", sum("uniques", 30))}${tile("Signed-in · 7 days", sum("uniquesIn", 7))}${tile("Sign-ups · 30 days", sum("signups", 30))}${tile("Screen views · 7 days", sum("views", 7))}${r.users != null ? tile("Accounts", r.users) : ""}${r.shows != null ? tile("Shows logged", r.shows) : ""}</div>
+    <section><h2>Visitors per day</h2><div class="bars tbars">${D.map(d => `<div class="bar" title="${esc(d.day)}: ${d.uniques}">${d.uniques ? `<span>${d.uniques}</span>` : ""}<i style="height:${d.uniques / max * 100}%"></i></div>`).join("")}</div>
+      <div class="barx tbx"><span>${esc(fmtDate(D[0] && D[0].day))}</span><span>Today</span></div></section>
+    <div class="two"><section><h2>Screens · 30 days</h2>${list(tot("screens"))}</section><section><h2>Came from · 30 days</h2>${list(tot("refs"), k => k.replace(/_/g, "."))}</section></div>
+    <section><h2>Devices · 30 days</h2>${list(tot("dev"), k => ({ phone: "Phone", desktop: "Desktop", app: "Opened as installed app" })[k] || k)}</section>
+    <section><h2>By day</h2><div class="ttable"><div class="tr th"><span>Day</span><span>Visitors</span><span>Signed in</span><span>Opens</span><span>Views</span><span>Sign-ups</span></div>${D.slice().reverse().filter(d => d.opens || d.signups || d.views).map(d => `<div class="tr"><span>${esc(shortDate(d.day))}</span><span>${d.uniques}</span><span>${d.uniquesIn}</span><span>${d.opens}</span><span>${d.views}</span><span>${d.signups}</span></div>`).join("") || `<div class="ro">No visits counted yet.</div>`}</div></section></div></section></div>`;
 }
 const rerenderSettingsish = () => { if (S.tab === "me") renderMe(); else if (S.tab === "settings") renderSettings(); };
 async function saveSetting(key, val){
@@ -4058,7 +4320,7 @@ async function saveProfile(){
 function resetState(){
   UNSUBS.forEach(u => { try { u(); } catch(_){} }); UNSUBS = [];
   for (const uid of Object.keys(FR)) dropFriend(uid);
-  REQ = { in: [], out: [] }; ACT = []; S.shows = []; S.loaded = false; S.tab = "home"; S.crewSel = null;
+  REQ = { in: [], out: [] }; ACT = []; S.home = null; S.shows = []; S.loaded = false; S.tab = "home"; S.crewSel = null;
   closeLightbox(); if (S.open) closeSheet(); $("#modalRoot").innerHTML = "";
   ME = null; PROFILE = null; db = null; assets = null;
 }
@@ -4095,7 +4357,7 @@ const verifyDone = !VERIFY_LINK ? Promise.resolve(null) : applyActionCode(auth, 
     else if (r) $("#signinMsg").textContent = r === "expired" ? "That confirm link has expired or was already used. Sign in and tap Resend for a new one." : "Couldn't confirm that link. Sign in and tap Resend."; return r; });
 // Which server features are switched on (setlist.fm needs its API key). Asked once per launch.
 const FEAT = { setlist: null };
-async function loadFeatures(){ if (FEAT.setlist !== null) return FEAT; try { const j = await callAccount("features"); FEAT.setlist = !!j.setlist; } catch (_) { FEAT.setlist = false; } if (S.tab !== "home" || S.open) { try { if (S.open) renderSheet(); else renderTab(); } catch (_) {} } return FEAT; }
+async function loadFeatures(){ if (FEAT.setlist !== null) return FEAT; try { const j = await callAccount("features"); FEAT.setlist = !!j.setlist; FEAT.admin = !!j.admin; } catch (_) { FEAT.setlist = false; } if (S.tab !== "home" || S.open) { try { if (S.open) renderSheet(); else renderTab(); } catch (_) {} } return FEAT; }
 const SOON_SETLIST = `<div class="soon"><b>Coming soon:</b> setlists from setlist.fm. We're finishing the connection, so this will switch on by itself shortly.</div>`;
 async function callAccount(action, extra){
   const tok = await ME.getIdToken();
@@ -4181,7 +4443,7 @@ function startApp(){
     REQ[key] = snap.docs.map(d => ({ id: d.id, ...d.data() })); syncFriends(); updateCrewBadge();
   }, err => console.error("requests", err));
   UNSUBS.push(reqs("to", "in"), reqs("from", "out"));
-  watchActivity();
+  watchActivity(); loadHome();
   setTimeout(claimInvite, 3000); setTimeout(loadFeatures, 1200);
   if (START_GO) setTimeout(() => goTo(START_GO), 1800);
 }
@@ -4252,7 +4514,31 @@ $("#forgotBtn").addEventListener("click", async () => {
 });
 if (/; wv\)|FBAN|FBAV|Instagram|Line\/|GSA\//.test(navigator.userAgent) || (document.referrer && !document.referrer.includes(location.host) && window.matchMedia("(display-mode: browser)").matches && /Android/.test(navigator.userAgent) && !window.chrome)) $("#inapp").hidden = false;
 getRedirectResult(auth).catch(e => { if ($("#signinMsg")) $("#signinMsg").textContent = "Sign-in failed: " + (e.code || e.message); });
+/* ---------- Usage counter (private) ----------
+   One ping when the app opens and one when it's put away: a random ID for this browser (not your account),
+   which screens were opened, the site that linked here, and phone or desktop. Only the site owner sees totals. */
+const HIT_URL = "https://us-central1-pit-log.cloudfunctions.net/hit";
+const TRK = { s: {}, opened: false, last: "" };
+function visitorId(){ try { let v = localStorage.getItem("pitlog.vid"); if (!v) { v = (rid() + rid()).replace(/[^\w]/g, ""); localStorage.setItem("pitlog.vid", v); } return v; } catch (_) { return TRK.vid || (TRK.vid = (rid() + rid()).replace(/[^\w]/g, "")); } }
+function hitSend(body){
+  if (!/^https:/.test(location.protocol) && !/^localhost$/.test(location.hostname)) return;
+  const b = JSON.stringify({ v: visitorId(), ...body });
+  try { if (navigator.sendBeacon && navigator.sendBeacon(HIT_URL, new Blob([b], { type: "text/plain" }))) return; } catch (_) {}
+  try { fetch(HIT_URL, { method: "POST", body: b, keepalive: true, headers: { "Content-Type": "text/plain" } }).catch(() => {}); } catch (_) {}
+}
+function trackOpen(signedIn){
+  if (TRK.opened) return; TRK.opened = true;
+  let ref = ""; try { const r = document.referrer && new URL(document.referrer); if (r && r.hostname !== location.hostname) ref = r.hostname; } catch (_) {}
+  const pwa = (window.matchMedia && matchMedia("(display-mode: standalone)").matches) || navigator.standalone === true;
+  hitSend({ t: "open", u: !!signedIn, m: /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent), pwa, r: ref });
+}
+function trackScreen(name){ if (!name || name === TRK.last) return; TRK.last = name; TRK.s[name] = (TRK.s[name] || 0) + 1; }
+function flushScreens(){ if (!Object.keys(TRK.s).length) return; const s = TRK.s; TRK.s = {}; hitSend({ t: "screens", s }); }
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flushScreens(); });
+window.addEventListener("pagehide", flushScreens);
+
 onAuthStateChanged(auth, async user => {
+  trackOpen(!!user); if (!user) trackScreen("landing");
   let wasRedirect = false; try { wasRedirect = sessionStorage.getItem("pitlog.redirect") === "1"; sessionStorage.removeItem("pitlog.redirect"); } catch(_){}
   if (!user) {
     resetState(); showOnly("gate");
@@ -4340,7 +4626,8 @@ function goTo(url){
   const go = q.get("go"); if (!go || !ME || !PROFILE) return;
   if (go === "tags" || go === "inbox") { S.tab = "inbox"; renderTab(); window.scrollTo(0, 0); }
   else if (go === "crew" || go === "disc") { S.tab = go; renderTab(); }
-  else if (go === "show") { const o = q.get("o"), id = q.get("s"); if (o === ME.uid) { if (S.shows.some(x => x.id === id)) { S.tab = "shows"; renderTab(); openSheet(id); } } else if (FR[o]) openFriendSheet(o, id); }
+  else if (go === "showday") { S.tab = "showday"; renderTab(); window.scrollTo(0, 0); }
+  else if (go === "show") { const o = q.get("o"), id = q.get("s"); if (o === ME.uid && showsToday().some(x => x.id === id)) { S.showDayId = id; S.tab = "showday"; renderTab(); return; } if (o === ME.uid) { if (S.shows.some(x => x.id === id)) { S.tab = "shows"; renderTab(); openSheet(id); } } else if (FR[o]) openFriendSheet(o, id); }
 }
 if ("serviceWorker" in navigator) navigator.serviceWorker.addEventListener("message", e => { if (e.data && e.data.go) goTo(e.data.go); });
 const START_GO = (() => { try { const q = new URLSearchParams(location.search); if (!q.get("go")) return ""; const u = location.href; q.delete("go"); q.delete("o"); q.delete("s"); history.replaceState(null, "", location.pathname + (q.toString() ? "?" + q : "") + location.hash); return u; } catch (_) { return ""; } })();
@@ -4356,6 +4643,10 @@ function pushClick(t){
    than the feature it fixes (same-day polish is part of the feature). b = the build it shipped in.
    Every build, user-facing or not (including removals), also gets an entry in version-history.html. */
 const WHATS_NEW = [
+  { b: 77, date: "2026-11-23", icon: "📍", t: "Tours near you", d: "Set your ZIP and how far you'll travel. Discover shows tours in that radius, with the distance on each date.", go: "disc" },
+  { b: 77, date: "2026-11-23", icon: "🤘", t: "Show day mode", d: "On the day of a show: start time, directions, your crew, and quick ratings for each band as the night goes." },
+  { b: 77, date: "2026-11-23", icon: "👥", t: "People you may know", d: "Crew suggestions on the Crew tab: friends of your crew and people who were at your shows.", go: "crew" },
+  { b: 77, date: "2026-11-23", icon: "🧹", t: "Clean up names", d: "Merge bands or venues spelled two ways in Settings → Band and venue names." },
   { b: 76, date: "2026-11-23", icon: "🔔", t: "Activity inbox", d: "Tap the bell for crew requests, tags, comments and 🤘s in one place.", go: "inbox" },
   { b: 76, date: "2026-11-23", icon: "✍️", t: "Shorter show forms", d: "Upcoming shows ask only for plans. Rating and memories wait until after the night." },
   { b: 76, date: "2026-11-23", icon: "⚙️", t: "Settings has its own screen", d: "Open it from your account menu or the bottom of your profile." },

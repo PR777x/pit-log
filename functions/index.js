@@ -63,6 +63,92 @@ async function friendsOf(uid){
   return [...a.docs, ...b.docs].map(d => { const r = d.data(); return { uid: r.from === uid ? r.to : r.from, family: r.family === "active" }; });
 }
 
+/* ---------- Traffic counter (private, for the site owner) ----------
+   The app sends one tiny ping when it opens and one when it's put away, with a random per-browser ID
+   (not tied to an account), the screens opened, the referring site and phone/desktop. Each day is one doc
+   in traffic/{date}; visitor IDs are stored hashed, only to count unique visitors. Nobody else can read it. */
+const ADMIN_EMAIL_SHA = ["756dc8d665670c2e7b9550374dd0faca59ca1638be06ec438737d87fb810eae3"];
+const isAdmin = au => !!(au && au.email && au.emailVerified !== false && ADMIN_EMAIL_SHA.includes(crypto.createHash("sha256").update(String(au.email).trim().toLowerCase()).digest("hex")));
+const SCREENS = new Set(["landing", "home", "shows", "cal", "disc", "disc-bands", "disc-past", "vault", "stats", "crew", "friend", "me", "search", "profile", "band", "inbox", "settings", "showday", "show", "add", "traffic", "other"]);
+const clip = (x, n) => String(x || "").replace(/[^\w.\-]/g, "").slice(0, n);
+async function recordHit(body, now = new Date()){
+  const day = L.todayET(now), ref = db.doc(`traffic/${day}`), inc = FieldValue.increment;
+  const vid = clip(body.v, 40); if (vid.length < 8) return { ok: false };
+  // set(..., { merge: true }) needs nested objects (dotted keys would become literal field names).
+  const patch = { day }, add = (grp, key, n) => { (patch[grp] = patch[grp] || {})[key] = inc(n); };
+  if (body.t === "open") {
+    patch.opens = inc(1); patch[body.u ? "opensIn" : "opensOut"] = inc(1);
+    add("dev", body.m ? "phone" : "desktop", 1); if (body.pwa) add("dev", "app", 1);
+    const host = clip(String(body.r || "").replace(/^www\./, ""), 60).replace(/\./g, "_");
+    add("refs", host || "direct", 1);
+    const vh = crypto.createHash("sha256").update(day + "|" + vid).digest("hex").slice(0, 24), vref = db.doc(`traffic/${day}/v/${vh}`);
+    const seen = await vref.get();
+    if (!seen.exists) { await vref.set({ u: !!body.u }); patch.uniques = inc(1); if (body.u) patch.uniquesIn = inc(1); }
+    else if (body.u && !seen.data().u) { await vref.set({ u: true }); patch.uniquesIn = inc(1); }
+  }
+  const sc = body.s && typeof body.s === "object" ? body.s : {}, tally = {};
+  for (const [k, v] of Object.entries(sc).slice(0, 30)) { const key = SCREENS.has(k) ? k : "other", c = Math.max(0, Math.min(200, Math.round(Number(v) || 0))); if (c) tally[key] = (tally[key] || 0) + c; }
+  let views = 0; for (const [k, c] of Object.entries(tally)) { add("screens", k, c); views += c; }
+  if (views) patch.views = inc(views);
+  await ref.set(patch, { merge: true });
+  return { ok: true };
+}
+exports.hit = onRequest({ cors: [/thepitlog\.com$/, /localhost/, /pr777x\.github\.io$/], timeoutSeconds: 20, memory: "256MiB", maxInstances: 5 }, async (req, res) => {
+  if (req.method !== "POST") return res.status(405).end();
+  let body = req.body; if (Buffer.isBuffer(body)) body = body.toString("utf8"); if (typeof body === "string") { try { body = JSON.parse(body); } catch (_) { body = {}; } }
+  try { await recordHit(body || {}); } catch (e) { logger.warn("hit", e.message); }
+  res.status(204).end();
+});
+module.exports.recordHit = recordHit;
+async function trafficReport(now = new Date()){
+  const days = []; for (let i = 29; i >= 0; i--) days.push(L.addDays(L.todayET(now), -i));
+  const docs = await Promise.all(days.map(d => db.doc(`traffic/${d}`).get()));
+  const rows = docs.map((d, i) => ({ day: days[i], ...(d.exists ? d.data() : {}) }));
+  let users = null, signups = {};
+  try { const c = await db.collection("users").count().get(); users = c.data().count; } catch (_) {}
+  try { const all = await db.collection("users").get(); for (const u of all.docs) { const t = u.createTime && u.createTime.toDate ? u.createTime.toDate() : null; if (t) { const k = L.todayET(t); if (k >= days[0]) signups[k] = (signups[k] || 0) + 1; } } if (users == null) users = all.docs.length; } catch (_) {}
+  let shows = null; try { const c = await db.collectionGroup("shows").count().get(); shows = c.data().count; } catch (_) {}
+  return { days: rows.map(r => ({ day: r.day, opens: r.opens || 0, uniques: r.uniques || 0, uniquesIn: r.uniquesIn || 0, views: r.views || 0, signups: signups[r.day] || 0, screens: r.screens || {}, refs: r.refs || {}, dev: r.dev || {} })), users, shows };
+}
+module.exports.trafficReport = trafficReport;
+
+/* ---------- People you may know ----------
+   Friends of your crew ("2 mutual crew") and people with a public show on the same night at the same
+   venue as one of yours. Skips your crew, anyone with a request either way, blocks in either direction,
+   and people who turned off "Suggest me to others". Cached for 12 hours per person. */
+const vKey = v => String(v || "").toLowerCase().replace(/\(.*?\)/g, "").replace(/^the\s+/, "").replace(/[^a-z0-9]+/g, "");
+async function suggestPeople(uid, { now = Date.now(), fresh = false } = {}){
+  const cref = db.doc(`users/${uid}/prefs/suggest`), cached = await cref.get();
+  if (!fresh && cached.exists && now - (cached.data().at || 0) < 12 * 36e5) return { list: cached.data().list || [] };
+  const me = await userDoc(uid) || {}, myBlocks = new Set(me.blocked || []);
+  const [rf, rt] = await Promise.all([db.collection("friendRequests").where("from", "==", uid).get(), db.collection("friendRequests").where("to", "==", uid).get()]);
+  const known = new Set([uid]), friends = [];
+  for (const d of [...rf.docs, ...rt.docs]) { const r = d.data(), o = r.from === uid ? r.to : r.from; known.add(o); if (r.status === "accepted") friends.push(o); }
+  const cand = new Map(), bump = (o, k, label) => { if (known.has(o) || myBlocks.has(o)) return; const c = cand.get(o) || { mutual: new Set(), shows: [] }; if (k === "m") c.mutual.add(label); else if (c.shows.length < 3) c.shows.push(label); cand.set(o, c); };
+  for (const f of friends.slice(0, 60)) for (const ff of await friendsOf(f)) bump(ff.uid, "m", f);
+  const mine = await db.collection(`users/${uid}/shows`).get();
+  const byDate = new Map(); for (const d of mine.docs) { const x = d.data(); if (!x.date || !x.venue) continue; (byDate.get(x.date) || byDate.set(x.date, []).get(x.date)).push(x); }
+  const dates = [...byDate.keys()].sort().reverse().slice(0, 40);
+  for (const dt of dates) {
+    const pub = await db.collection("publicShows").where("date", "==", dt).limit(200).get();
+    for (const p of pub.docs) { const x = p.data(); if (!x.ownerUid || x.ownerUid === uid) continue;
+      const hit = byDate.get(dt).find(m => vKey(m.venue) && vKey(m.venue) === vKey(x.venue)); if (hit) bump(x.ownerUid, "s", { date: dt, band: (x.lineup || [])[0] || "", venue: x.venue || "" }); }
+  }
+  const scored = [...cand.entries()].map(([o, c]) => ({ o, c, score: c.mutual.size * 2 + c.shows.length * 3 })).sort((a, b) => b.score - a.score).slice(0, 25);
+  const list = [];
+  for (const { o, c } of scored) {
+    const u = await userDoc(o); if (!u || !u.handle) continue;
+    if ((u.blocked || []).includes(uid) || ((u.settings || {}).suggestMe === "off")) continue;
+    const mutualNames = [];
+    for (const m of [...c.mutual].slice(0, 2)) { const mu = await userDoc(m); if (mu) mutualNames.push("@" + handleOf(mu)); }
+    list.push({ uid: o, handle: u.handle, name: u.name || "", photo: u.photoURL || "", mutual: c.mutual.size, mutualNames, shows: c.shows });
+    if (list.length >= 8) break;
+  }
+  await cref.set({ at: now, list });
+  return { list };
+}
+module.exports.suggestPeople = suggestPeople;
+
 /* ---------- sending ---------- */
 const KIND_PREF = { requests: "emailRequests", tags: "emailTags", digest: "emailDigest", weekly: "emailWeekly" };
 async function send(uid, kind, { subject, title, intro, body, button }){
@@ -360,7 +446,11 @@ async function runCatalog({ apiKey, now = new Date(), fetchImpl, pause } = {}){
   let index = {}, recent = [];
   try { index = JSON.parse((idxDoc.exists && idxDoc.data().data) || "{}"); } catch (_) {}
   try { recent = JSON.parse((recDoc.exists && recDoc.data().data) || "[]"); } catch (_) {}
-  const { shows, calls } = await C.fetchAll({ apiKey: key, today, fetchImpl, pause, log: m => logger.warn(m) });
+  // States: the base region plus wherever people have set their area (Settings → Discover area).
+  let homes = [];
+  try { const hs = await db.collectionGroup("prefs").get(); homes = hs.docs.filter(d => d.id === "home").map(d => d.data()); } catch (e) { logger.warn("homes", e.message); }
+  const states = C.statesFor(homes);
+  const { shows, calls } = await C.fetchAll({ apiKey: key, today, states, fetchImpl, pause, log: m => logger.warn(m) });
   // If Ticketmaster hiccups and returns nothing, don't treat that as "every show was cancelled".
   if (!shows.length && Object.keys(index).length) { logger.error(`show catalog: 0 shows from ${calls} calls; leaving the catalog alone`); return { aborted: true }; }
   const p = C.plan({ shows, index, recent, today });
@@ -373,13 +463,18 @@ async function runCatalog({ apiKey, now = new Date(), fetchImpl, pause } = {}){
   }
   await db.doc("catalogMeta/index").set({ data: JSON.stringify(p.nextIndex), count: Object.keys(p.nextIndex).length, updated: today });
   // Discover page: one doc per month of upcoming shows, plus the list of months.
-  const shards = C.monthShards(shows, p.nextIndex, today), months = Object.keys(shards).sort();
+  // "2026-12" keeps the original region in one doc (older app versions read it); "2026-12_PA" docs
+  // hold every fetched state separately, and the months list says which exist.
+  const shards = C.monthShards(shows, p.nextIndex, today, { only: C.STATES }), byState = C.stateShards(shows, p.nextIndex, today);
+  const months = [...new Set([...Object.keys(shards), ...Object.keys(byState).map(k => k.split("_")[0])])].sort();
   const oldMonths = await db.doc("catalogMeta/months").get();
-  const prev = (oldMonths.exists && oldMonths.data().list || []).map(x => x.m);
+  const prevList = (oldMonths.exists && oldMonths.data().list) || [];
+  const prev = new Set([...prevList.map(x => x.m), ...prevList.flatMap(x => Object.keys(x.st || {}).map(st => `${x.m}_${st}`))]);
+  const docs = { ...Object.fromEntries(Object.entries(shards)), ...byState }, ids = Object.keys(docs);
+  for (let i = 0; i < ids.length; i += 400) { const b = db.batch(); for (const id of ids.slice(i, i + 400)) b.set(db.doc(`catalogMonths/${id}`), { data: JSON.stringify(docs[id]), count: docs[id].length, updated: today }); await b.commit(); }
   const mb = db.batch();
-  for (const m of months) mb.set(db.doc(`catalogMonths/${m}`), { data: JSON.stringify(shards[m]), count: shards[m].length, updated: today });
-  for (const m of prev) if (!shards[m]) mb.delete(db.doc(`catalogMonths/${m}`));
-  mb.set(db.doc("catalogMeta/months"), { list: months.map(m => ({ m, n: shards[m].length })), updated: today });
+  for (const id of prev) if (!docs[id]) mb.delete(db.doc(`catalogMonths/${id}`));
+  mb.set(db.doc("catalogMeta/months"), { list: months.map(m => ({ m, n: (shards[m] || []).length, st: Object.fromEntries(Object.keys(byState).filter(k => k.startsWith(m + "_")).map(k => [k.split("_")[1], byState[k].length])) })), states, updated: today });
   await mb.commit();
   await db.doc("catalogMeta/recent").set({ data: JSON.stringify(p.nextRecent), count: p.nextRecent.length, updated: today });
   logger.info(`show catalog: ${shows.length} listings from ${calls} calls; ${p.added} added${p.backfill ? " (first load, not counted as announcements)" : ""}, ${p.writes.length - p.added} updated, ${p.deletes.length} removed`);
@@ -503,7 +598,18 @@ exports.account = onRequest({ cors: [/thepitlog\.com$/, /localhost/, /pr777x\.gi
     await deleteAccount(uid);
     return res.json({ result: "deleted" });
   }
-  if (action === "features") { const k = SETLISTFM_API_KEY.value(); return res.json({ setlist: !!k && k !== "none" }); }
+  // Discover area: ZIP code -> rough location (town centre), for the travel radius. Nothing is stored here.
+  if (action === "geoZip") {
+    const zip = String((req.body || {}).zip || "").trim().slice(0, 5); if (!/^\d{5}$/.test(zip)) return res.status(400).json({ error: "Enter a 5-digit ZIP code" });
+    try { const r = await fetch(`https://api.zippopotam.us/us/${zip}`); if (!r.ok) return res.status(404).json({ error: "We couldn't find that ZIP code" });
+      const j = await r.json(), pl = (j.places || [])[0] || {};
+      return res.json({ zip, lat: Math.round(Number(pl.latitude) * 100) / 100, lng: Math.round(Number(pl.longitude) * 100) / 100, state: pl["state abbreviation"] || "", place: pl["place name"] || "" });
+    } catch (e) { logger.warn("geoZip", e.message); return res.status(502).json({ error: "Location lookup is down. Try again later." }); }
+  }
+  // People you may know: friends of your crew, and people who logged the same shows as you.
+  if (action === "suggestPeople") return res.json(await suggestPeople(uid));
+  if (action === "features") { const k = SETLISTFM_API_KEY.value(); return res.json({ setlist: !!k && k !== "none", admin: isAdmin(au) }); }
+  if (action === "traffic") { if (!isAdmin(au)) return res.status(403).json({ error: "not allowed" }); return res.json(await trafficReport()); }
   if (action === "bandInfo") {
     const band = String((req.body && req.body.band) || "").trim().slice(0, 80); if (!band) return res.status(400).json({ error: "which band?" });
     const key = "b3_" + A.norm(band).slice(0, 80); if (key.length < 3) return res.json({ found: false, name: band });

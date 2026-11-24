@@ -22,6 +22,11 @@ service cloud.firestore {
         allow read, write: if signedIn() && me() == uid;
       }
 
+      // Private preferences (Discover area): only the owner.
+      match /prefs/{id} {
+        allow read, write: if signedIn() && me() == uid;
+      }
+
       // Activity inbox: written by the server, the owner can read it, mark it read, or clear it.
       match /activity/{id} {
         allow read, delete: if signedIn() && me() == uid;

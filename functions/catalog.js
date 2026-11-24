@@ -4,7 +4,25 @@
 // announcements for bands people have seen.
 const crypto = require("crypto");
 
-const STATES = ["PA", "NJ", "DE", "NY"];
+const STATES = ["PA", "NJ", "DE", "NY"];       // always fetched; more are added for where people say they live
+const MAX_STATES = 16;                          // keeps the daily run well under Ticketmaster's 5,000 calls/day
+// Bordering states (lower 48 + DC), used to cover a travel radius that crosses a state line.
+const NEIGHBORS = { AL:"FL GA MS TN", AZ:"CA CO NM NV UT", AR:"LA MO MS OK TN TX", CA:"AZ NV OR", CO:"AZ KS NE NM OK UT WY", CT:"MA NY RI", DE:"MD NJ PA", DC:"MD VA",
+  FL:"AL GA", GA:"AL FL NC SC TN", ID:"MT NV OR UT WA WY", IL:"IA IN KY MO WI", IN:"IL KY MI OH", IA:"IL MN MO NE SD WI", KS:"CO MO NE OK", KY:"IL IN MO OH TN VA WV",
+  LA:"AR MS TX", ME:"NH", MD:"DE PA VA WV DC", MA:"CT NH NY RI VT", MI:"IN OH WI", MN:"IA ND SD WI", MS:"AL AR LA TN", MO:"AR IA IL KS KY NE OK TN", MT:"ID ND SD WY",
+  NE:"CO IA KS MO SD WY", NV:"AZ CA ID OR UT", NH:"MA ME VT", NJ:"DE NY PA", NM:"AZ CO OK TX UT", NY:"CT MA NJ PA VT", NC:"GA SC TN VA", ND:"MN MT SD", OH:"IN KY MI PA WV",
+  OK:"AR CO KS MO NM TX", OR:"CA ID NV WA", PA:"DE MD NJ NY OH WV", RI:"CT MA", SC:"GA NC", SD:"IA MN MT ND NE WY", TN:"AL AR GA KY MO MS NC VA", TX:"AR LA NM OK",
+  UT:"AZ CO ID NM NV WY", VT:"MA NH NY", VA:"KY MD NC TN WV DC", WA:"ID OR", WV:"KY MD OH PA VA", WI:"IA IL MI MN", WY:"CO ID MT NE SD UT" };
+const near = (st, miles) => [st, ...(Number(miles) >= 40 && NEIGHBORS[st] ? NEIGHBORS[st].split(" ") : [])];
+// Which states to fetch: the base region, then each person's home state (and its neighbors when their
+// radius reaches past the line), most-requested first, capped.
+function statesFor(homes){
+  const score = new Map();
+  for (const h of homes || []) { const st = String(h && h.state || "").toUpperCase(); if (!NEIGHBORS[st]) continue;
+    near(st, h.radius).forEach((x, i) => score.set(x, (score.get(x) || 0) + (i ? 1 : 3))); }
+  const extra = [...score.entries()].filter(([x]) => !STATES.includes(x)).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([x]) => x);
+  return [...STATES, ...extra].slice(0, MAX_STATES);
+}
 const GENRES = "Metal,Rock,Alternative,Punk";   // Ticketmaster classification names
 const MONTHS_AHEAD = 15;
 const KEEP_PAST_DAYS = 400;                      // keep past shows ~a year so people can log them after the fact
@@ -39,6 +57,7 @@ function fromTM(ev){
     date: ev.dates.start.localDate, time: ev.dates.start.localTime ? ev.dates.start.localTime.slice(0, 5) : "",
     lineup: lineup.slice(0, 8), coHead: co, title: name, tour, venue, city,
     url: ev.url || "", status, tmId: ev.id || "",
+    lat: (v.location && Math.round(Number(v.location.latitude) * 1000) / 1000) || null, lng: (v.location && Math.round(Number(v.location.longitude) * 1000) / 1000) || null,
     onsale: (ev.sales && ev.sales.public && ev.sales.public.startDateTime) || "",
     genre: (ev.classifications && ev.classifications[0] && ev.classifications[0].genre && ev.classifications[0].genre.name) || "",
     bandKeys: [...new Set(lineup.map(normBand).filter(Boolean))], tourWords: tourWords(tour || name),
@@ -68,9 +87,9 @@ function windows(todayISO, months){
   return out;
 }
 
-async function fetchAll({ apiKey, today, fetchImpl = fetch, pause = ms => new Promise(r => setTimeout(r, ms)), log = () => {} }){
+async function fetchAll({ apiKey, today, states = STATES, fetchImpl = fetch, pause = ms => new Promise(r => setTimeout(r, ms)), log = () => {} }){
   const found = []; let calls = 0;
-  for (const st of STATES) for (const [from, to] of windows(today, MONTHS_AHEAD)) {
+  for (const st of states) for (const [from, to] of windows(today, MONTHS_AHEAD)) {
     for (let page = 0; page < 5; page++) {
       const q = new URLSearchParams({ apikey: apiKey, countryCode: "US", stateCode: st, classificationName: GENRES, segmentName: "Music",
         startDateTime: from, endDateTime: to, size: "200", page: String(page), sort: "date,asc", includeTBA: "no", includeTBD: "no" });
@@ -122,15 +141,25 @@ function plan({ shows, index, recent, today }){
 
 // Upcoming shows split into one small document per month, for the app's Discover page
 // (a few reads per visit instead of one per show).
-function monthShards(shows, nextIndex, today){
+const stateOf = city => (String(city || "").match(/, ([A-Z]{2})$/) || [])[1] || "";
+function monthShards(shows, nextIndex, today, { only } = {}){
   const by = {};
   for (const s of shows) {
     if (s.date < today || s.status === "cancelled") continue;
+    if (only && !only.includes(stateOf(s.city))) continue;
     const m = s.date.slice(0, 7), ix = nextIndex[s.id] || {};
-    (by[m] = by[m] || []).push({ i: s.id, d: s.date, h: s.time || "", l: s.lineup, c: s.coHead ? 1 : 0, v: s.venue, y: s.city, t: s.tour, u: s.url, g: s.genre || "", s: s.status === "onsale" ? "" : s.status, f: ix.f || "", o: s.onsale || "" });
+    const row = { i: s.id, d: s.date, h: s.time || "", l: s.lineup, c: s.coHead ? 1 : 0, v: s.venue, y: s.city, t: s.tour, u: s.url, g: s.genre || "", s: s.status === "onsale" ? "" : s.status, f: ix.f || "", o: s.onsale || "" };
+    if (s.lat && s.lng) { row.a = s.lat; row.n = s.lng; }
+    (by[m] = by[m] || []).push(row);
   }
   for (const m of Object.keys(by)) by[m].sort((a, b) => a.d.localeCompare(b.d) || a.h.localeCompare(b.h) || a.v.localeCompare(b.v));
   return by;
 }
+// The same shows split by month AND state ("2026-12_PA"), so the app loads only the states it needs.
+function stateShards(shows, nextIndex, today){
+  const all = monthShards(shows, nextIndex, today), out = {};
+  for (const [m, rows] of Object.entries(all)) for (const r of rows) { const k = `${m}_${stateOf(r.y) || "XX"}`; (out[k] = out[k] || []).push(r); }
+  return out;
+}
 
-module.exports = { monthShards, fromTM, fingerprint, mergeShows, windows, fetchAll, plan, normBand, tourWords, STATES, GENRES, RECENT_DAYS };
+module.exports = { stateShards, statesFor, NEIGHBORS, near, stateOf, MAX_STATES, monthShards, fromTM, fingerprint, mergeShows, windows, fetchAll, plan, normBand, tourWords, STATES, GENRES, RECENT_DAYS };

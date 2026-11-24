@@ -927,3 +927,33 @@ details.fsec .fbody>.sect{margin-top:0;border:0;padding:0}
 .toast.undo{left:max(16px,env(safe-area-inset-left,0px));transform:none;max-width:min(440px,calc(100% - 112px))}
 .toast.undo span{flex:1;min-width:0}
 details.fsec>summary h3{font-family:var(--f-body);font-weight:600;font-size:17px;letter-spacing:0}
+/* Build 77 */
+.tagbtn.ghostish{border-style:dashed;color:var(--ash)}
+details.hastate{margin-top:4px}details.hastate select{margin-top:8px;width:100%}
+.setrow .btn.sm{flex:0 0 auto}
+.mh{font-family:var(--f-label)!important;font-size:15px!important;letter-spacing:.12em;text-transform:uppercase;color:var(--ash);margin:18px 0 8px!important}
+.mgroup{border:1px solid var(--iron);background:var(--crypt);padding:10px 12px;margin-bottom:10px;display:grid;gap:6px}
+.mopt{display:flex;align-items:center;gap:8px}.mopt span:nth-child(2){flex:1}
+.renrow{display:grid;gap:8px;grid-template-columns:1fr}
+.renrow input,.renrow select{width:100%;padding:10px;background:var(--void);border:1px solid var(--iron);color:var(--bone)}
+.tbars{gap:2px}.tbars .bar span{font-size:9px}
+.tbx{display:flex;justify-content:space-between}
+.ttable{display:grid;font-size:14px}.ttable .tr{display:grid;grid-template-columns:1.2fr repeat(5,1fr);gap:6px;padding:6px 0;border-bottom:1px solid var(--iron)}
+.ttable .th{color:var(--ash);font-family:var(--f-label);text-transform:uppercase;letter-spacing:.06em;font-size:11px}
+/* Show day mode */
+.sdcta{display:grid;gap:2px;width:100%;text-align:left;margin:4px 0 16px;padding:14px 16px;border:2px solid var(--blood);background:linear-gradient(135deg,rgba(181,18,27,.35),rgba(181,18,27,.06));color:var(--bone)}
+.sdcta .sdk{font-family:var(--f-label);letter-spacing:.14em;text-transform:uppercase;color:var(--blood-hi);font-weight:700;font-size:13px}
+.sdcta b{font-family:var(--f-display);font-weight:400;font-size:30px;line-height:1.05}
+.sdcta .sdgo{font-family:var(--f-label);letter-spacing:.08em;text-transform:uppercase;font-size:13px;margin-top:4px}
+.showday{display:grid;gap:4px;padding-top:6px}
+.sdhero{padding:18px 16px;border-left:4px solid var(--blood);background:linear-gradient(90deg,rgba(181,18,27,.22),transparent)}
+.sdhero .lbl{color:var(--blood-hi);letter-spacing:.3em}
+.sdhero h2{font-family:var(--f-display);font-weight:400;font-size:clamp(40px,11vw,64px);line-height:.95;margin:6px 0 4px}
+.sdsup{font-family:var(--f-label);text-transform:uppercase;letter-spacing:.08em;color:var(--bone);margin-bottom:4px}
+.sdwhen{margin-top:10px;font-family:var(--f-label);font-size:18px;letter-spacing:.06em;color:var(--bone)}
+.sdbtns{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin:12px 0 4px}.sdbtns .btn{text-align:center;text-decoration:none}
+.sdlu{display:grid;border-top:1px solid var(--iron)}
+.sdband{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid var(--iron);flex-wrap:wrap}
+.sdband>div{display:grid;min-width:0}.sdband .n{font-size:18px;font-weight:600;text-align:left;background:none;border:0;padding:0;color:var(--bone)}
+.sdpos{font-size:11px}
+.sdrate{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 0}
