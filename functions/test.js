@@ -334,6 +334,10 @@ const sentTo = who => emails.filter(e => e.to[0] === who + "@example.com");
   await F.onComment({ params: { key: "east__c1" }, data: { data: () => ({ uid: "west", text: "That pit was unreal" }) } });
   await F.onComment({ params: { key: "east__c1" }, data: { data: () => ({ uid: "east", text: "own comment" }) } });
   emails.length = 0; await F.runDigest(sixET, { hourly: true });
+  { const act = [...store.keys()].filter(k => k.startsWith("users/east/activity/")).map(k => store.get(k));
+    assert.ok(act.some(x => x.type === "comment" && x.text === "That pit was unreal" && x.read === false && x.show.id === "c1"), "comment lands in the bell inbox");
+    assert.ok(!act.some(x => x.text === "own comment"), "own comments don't"); }
+  assert.ok(store.has("users/stacie/activity/req_pat"), "crew request lands in the bell inbox");
   assert.match(sentTo("east")[0].html, /New comments/); assert.match(sentTo("east")[0].html, /That pit was unreal/); assert.ok(!/own comment/.test(sentTo("east")[0].html));
   // 14. Reports go to support
   emails.length = 0;

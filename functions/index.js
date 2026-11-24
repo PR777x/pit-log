@@ -111,6 +111,12 @@ async function pushTo(uid, kind, { title, body, url = "./", tag = "" }, u){
 }
 module.exports._setMessaging = m => { messaging = m; };
 const nameOf = u => (u && (u.name || u.handle)) || "Someone";
+// Activity inbox (the bell in the app). One doc per event; the id keeps repeats from piling up.
+async function activity(uid, id, item){
+  try { await db.doc(`users/${uid}/activity/${String(id).replace(/\//g, "_").slice(0, 300)}`).set({ ...item, read: false, at: FieldValue.serverTimestamp() }); }
+  catch (e) { logger.warn("activity", e.message); }
+}
+module.exports._activity = activity;
 
 /* ---------- crew requests and Crew Family ----------
    Nothing is emailed right away. Each event is queued and goes out in the next daily digest
@@ -125,6 +131,7 @@ async function queue(uid, kind, item){
 }
 exports.onCrewRequest = onDocumentCreated({ document: "friendRequests/{id}", database: DB_ID }, async event => {
   const r = event.data && event.data.data(); if (!r || r.status !== "pending") return;
+  { const fu = await userDoc(r.from); await activity(r.to, `req_${r.from}`, { type: "request", from: r.from, fromHandle: handleOf(fu), fromName: nameOf(fu) }); }
   if (!(await cooldownOk(r.to, `req_${r.from}`, 24 * 60))) return; // re-sent/cancelled requests only count once a day
   const from = await userDoc(r.from);
   await queue(r.to, "requests", { type: "request", from: r.from, fromHandle: handleOf(from), fromName: nameOf(from) });
@@ -135,15 +142,18 @@ exports.onCrewRequestChange = onDocumentUpdated({ document: "friendRequests/{id}
   const b = event.data.before.data(), a = event.data.after.data();
   if (b.status === "pending" && a.status === "accepted") {
     const to = await userDoc(a.to);
+    await activity(a.from, `acc_${a.to}`, { type: "accepted", from: a.to, fromHandle: handleOf(to), fromName: nameOf(to) });
     await queue(a.from, "requests", { type: "accepted", from: a.to, fromHandle: handleOf(to), fromName: nameOf(to) });
   }
   if (a.family === "pending" && b.family !== "pending" && a.familyBy && await cooldownOk(a.familyBy === a.from ? a.to : a.from, `fam_${a.familyBy}`, 24 * 60)) {
     const other = a.familyBy === a.from ? a.to : a.from, by = await userDoc(a.familyBy);
+    await activity(other, `fam_${a.familyBy}`, { type: "familyInvite", from: a.familyBy, fromHandle: handleOf(by), fromName: nameOf(by) });
     await queue(other, "requests", { type: "familyInvite", from: a.familyBy, fromHandle: handleOf(by), fromName: nameOf(by) });
     await pushTo(other, "requests", { title: "Crew Family invite", body: `@${handleOf(by)} wants to link logs with you`, url: "./?go=crew", tag: "fam-" + a.familyBy });
   }
   if (a.family === "active" && b.family === "pending" && a.familyBy) {
     const other = a.familyBy === a.from ? a.to : a.from, o = await userDoc(other);
+    await activity(a.familyBy, `famok_${other}`, { type: "familyApproved", from: other, fromHandle: handleOf(o), fromName: nameOf(o) });
     await queue(a.familyBy, "requests", { type: "familyApproved", from: other, fromHandle: handleOf(o), fromName: nameOf(o) });
   }
 });
@@ -164,6 +174,7 @@ exports.onShowWrite = onDocumentWritten({ document: "users/{uid}/shows/{showId}"
     if (t === uid || was.has(t)) continue;
     const rel = await relation(uid, t); if (!rel.friends) continue;
     const tagged = await userDoc(t); if (!L.canSee(L.prefs(tagged), "tagMe", rel.family)) continue;
+    await activity(t, `tag_${uid}_${showId}`, { type: "tagged", from: uid, owner: uid, fromHandle: handleOf(owner), fromName: nameOf(owner), show });
     await queue(t, "tags", { type: "tagged", from: uid, fromHandle: handleOf(owner), show });
     await pushTo(t, "tags", { title: `@${handleOf(owner)} tagged you`, body: `${L.showLine(show)} · ${L.placeLine(show)}. Were you there?`, url: "./?go=tags", tag: "tag-" + showId }, tagged);
   }
@@ -174,6 +185,7 @@ exports.onShowWrite = onDocumentWritten({ document: "users/{uid}/shows/{showId}"
     if (t === uid || hadP.has(t)) continue;
     const rel = await relation(uid, t); if (!rel.friends) continue;
     const tu = await userDoc(t); if (!tu || !L.canSee(L.prefs(tu), "tagMe", rel.family)) continue;
+    await activity(t, `ptag_${uid}_${showId}`, { type: "photoTag", from: uid, owner: uid, fromHandle: handleOf(owner), fromName: nameOf(owner), show });
     await pushTo(t, "tags", { title: `@${handleOf(owner)} tagged you in a photo`, body: `${L.showLine(show)} · ${L.placeLine(show)}. Add it to your log of the show?`, url: "./?go=tags", tag: "ptag-" + showId }, tu);
   }
 
@@ -445,6 +457,8 @@ async function deleteAccount(uid){
   const wipe = async q => { for (;;) { const snap = await q.limit(400).get(); if (!snap.docs.length) return; const b = db.batch(); snap.docs.forEach(d => b.delete(d.ref)); await b.commit(); if (snap.docs.length < 400) return; } };
   await wipe(db.collection(`users/${uid}/shows`));
   await wipe(db.collection(`users/${uid}/inbox`));
+  await wipe(db.collection(`users/${uid}/activity`));
+  await wipe(db.collection(`users/${uid}/push`));
   await wipe(db.collection("publicShows").where("ownerUid", "==", uid));
   await wipe(db.collection("handles").where("uid", "==", uid));
   await wipe(db.collection("friendRequests").where("from", "==", uid));
@@ -539,6 +553,7 @@ exports.onComment = onDocumentCreated({ document: "showComments/{key}/c/{id}", d
   const show = await db.doc(`users/${owner}/shows/${showId}`).get(); if (!show.exists) return;
   const ou = await userDoc(owner); if (!ou) return;
   const by = await userDoc(c.uid);
+  await activity(owner, `cmt_${event.params.id}`, { type: "comment", from: c.uid, owner, fromHandle: handleOf(by), fromName: nameOf(by), show: L.showSummary(show.data(), showId), text: String(c.text || "").slice(0, 300) });
   await pushTo(owner, "comments", { title: `@${handleOf(by)} commented`, body: `${String(c.text || "").slice(0, 140)} · ${L.showLine(L.showSummary(show.data(), showId))}`, url: `./?go=show&o=${owner}&s=${showId}`, tag: "cmt-" + showId }, ou);
   if (L.prefs(ou).emailDigest === "off") return;
   await db.collection(`users/${owner}/inbox`).add({ type: "comment", from: c.uid, owner, fromHandle: handleOf(by), show: L.showSummary(show.data(), showId), text: String(c.text || "").slice(0, 300), sent: false, at: FieldValue.serverTimestamp() });
@@ -550,6 +565,7 @@ exports.onLike = onDocumentCreated({ document: "showLikes/{key}/u/{uid}", databa
   const show = await db.doc(`users/${owner}/shows/${showId}`).get(); if (!show.exists) return;
   const ou = await userDoc(owner); if (!ou) return;
   const by = await userDoc(uid);
+  await activity(owner, `like_${showId}_${uid}`, { type: "like", from: uid, owner, fromHandle: handleOf(by), fromName: nameOf(by), show: L.showSummary(show.data(), showId) });
   await pushTo(owner, "likes", { title: `🤘 from @${handleOf(by)}`, body: L.showLine(L.showSummary(show.data(), showId)), url: `./?go=show&o=${owner}&s=${showId}`, tag: "like-" + showId }, ou);
   if (L.prefs(ou).emailDigest === "off") return;
   await db.collection(`users/${owner}/inbox`).add({ type: "like", from: uid, owner, fromHandle: handleOf(by), show: L.showSummary(show.data(), showId), sent: false, at: FieldValue.serverTimestamp() });

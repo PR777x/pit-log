@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile, applyActionCode } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=75";
+import { VENUES } from "./venues.js?v=76";
 import { getStorage, ref as sref, uploadBytes, uploadBytesResumable, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -42,7 +42,7 @@ const stepRating = (cur, i) => cur === i ? i - 0.5 : cur === i - 0.5 ? 0 : i;
 
 let S = { shows: [], loaded: false, slow: false, error: "", tab: "home", filter: "all", q: "",
   open: null, canWrite: true, year: "all", listYear: String(new Date().getFullYear()), sort: (()=>{ try { const v = localStorage.getItem("pitlog.sort"); return ["newest","oldest","rating","venue","band"].includes(v) ? v : "newest"; } catch(_) { return "newest"; } })(), vault: { by: "band", sel: null, type: "all", q: "" },
-  cal: { y: new Date().getFullYear(), m: new Date().getMonth() } };
+  cal: { y: new Date().getFullYear(), m: new Date().getMonth() }, statView: (() => { try { return localStorage.getItem("pitlog.statView") || "overview"; } catch (_) { return "overview"; } })() };
 let db = null, assets = null;
 let ME = null, PROFILE = null;
 // Shows tab: list or calendar view (remembered on this device)
@@ -147,7 +147,22 @@ const pid = p => p ? (p.url || p) : null;
 const items = (s, kind) => (Array.isArray(s?.[kind]) ? s[kind] : []).filter(Boolean).map(norm);
 const src = u => u || "";
 
-function toast(msg, ms){ const r = $("#toastRoot"); r.innerHTML = `<div class="toast" role="status">${esc(msg)}</div>`; clearTimeout(toast.t); toast.t = setTimeout(()=> r.innerHTML="", ms || 2400); }
+// Undo toasts: the change happens right away; the cleanup that can't be taken back (deleting files) waits
+// until the toast goes away. Undo puts everything back.
+const UNDO = { cur: null };
+function toastUndo(msg, undo, commit, ms){
+  flushUndo();
+  const r = $("#toastRoot"); clearTimeout(toast.t);
+  r.innerHTML = `<div class="toast undo" role="status"><span>${esc(msg)}</span><button type="button" data-undo>Undo</button></div>`;
+  const job = { done: false };
+  const fin = async undone => { if (job.done) return; job.done = true; clearTimeout(job.t); if (UNDO.cur === job) UNDO.cur = null; if (r.querySelector(".toast.undo")) r.innerHTML = "";
+    try { if (undone) await undo(); else if (commit) await commit(); } catch (e) { console.warn("undo", e); if (undone) toast("Couldn't undo that. Check your connection."); } };
+  job.fin = fin; job.t = setTimeout(() => fin(false), ms || 7000); UNDO.cur = job;
+  r.querySelector("[data-undo]").onclick = ev => { ev.stopPropagation(); fin(true); };
+}
+function flushUndo(){ if (UNDO.cur) UNDO.cur.fin(false); }
+window.addEventListener("pagehide", flushUndo);
+function toast(msg, ms){ if (UNDO.cur) flushUndo(); const r = $("#toastRoot"); r.innerHTML = `<div class="toast" role="status">${esc(msg)}</div>`; clearTimeout(toast.t); toast.t = setTimeout(()=> r.innerHTML="", ms || 2400); }
 
 function firstSightings(){
   const seen = new Set(), firsts = {};
@@ -505,39 +520,36 @@ function renderStats(){
   const dates = new Set(done.map(s=>s.date));
   const backToBack = done.some(s=>{ const d = parse(s.date).dt; d.setDate(d.getDate()+1); const k = d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); return dates.has(k); });
   const rank = (rows, max, band) => rows.length ? `<div class="rank">${rows.slice(0,8).map(r=>`<div class="row">${band ? `<button class="n bandlink" data-bandp="${esc(r.name)}">${esc(r.name)}</button>` : `<span class="n">${esc(r.name)}</span>`}<span class="num lbl" style="color:var(--bone)">${r.n}×</span><div class="track"><i style="width:${(r.n/max*100).toFixed(1)}%"></i></div></div>`).join("")}</div>` : `<div class="ro">Nothing logged yet.</div>`;
-  $("#view").innerHTML = `<div class="filters">${yearSeg()}${crewToggle()}</div>
+  // Lighter Stats: one view at a time instead of everything in one long scroll.
+  const V = ["overview", "bands", "money", "patches"].includes(S.statView) ? S.statView : "overview";
+  const seg = `<div class="seg big statseg" role="group" aria-label="Stats view">${[["overview", "Overview"], ["bands", "Bands"], ["money", "Spend"], ["patches", "Patches"]].map(([k, l]) => `<button data-statv="${k}" aria-pressed="${V === k}">${l}</button>`).join("")}</div>`;
+  const tile = (l, v) => `<div class="tile"><div class="lbl">${l}</div><div class="v num">${v}</div></div>`;
+  const songs = done.reduce((a, s) => a + Object.values(s.songs || {}).reduce((b, l) => b + (Array.isArray(l) ? l.length : 0), 0), 0);
+  let body = "";
+  if (V === "overview") body = `
     <button class="wrapbtn" data-wrapped><span class="lbl">Your ${S.year === "all" ? parse(todayISO).y : S.year}</span><b>Year in review</b><span>Your shows, top bands and pit crew as shareable cards ›</span></button>
-    <div class="stats" style="margin-top:0">
     ${S.crewOn ? crewStats() : ""}
-    <div class="tiles">
-      <div class="tile"><div class="lbl">Shows attended</div><div class="v num">${done.length}</div></div>
-      <div class="tile"><div class="lbl">Still to come</div><div class="v num">${up.length}</div></div>
-      <div class="tile"><div class="lbl">Bands seen</div><div class="v num">${bands.length}</div></div>
-      <div class="tile"><div class="lbl">Venues</div><div class="v num">${venues.filter(v=>v.name).length}</div></div>
-      ${(() => { const n = done.reduce((a, s) => a + Object.values(s.songs || {}).reduce((b, l) => b + (Array.isArray(l) ? l.length : 0), 0), 0); return n ? `<div class="tile"><div class="lbl">Songs heard live</div><div class="v num">${n.toLocaleString()}</div></div>` : ""; })()}
-      ${miles ? `<div class="tile"><div class="lbl">Est. ${distLbl()} driven</div><div class="v num">${Math.round(dist(miles)).toLocaleString()}</div></div>` : ""}
-      <div class="tile"><div class="lbl">Avg rating</div><div class="v num">${avg}<small>/5</small></div></div>
-      <div class="tile"><div class="lbl">Ticket spend</div><div class="v num">${tix?money(tix):"–"}</div></div>
-      <div class="tile"><div class="lbl">Your seats</div><div class="v num">${share?money(share):"–"}</div></div>
-      <div class="tile"><div class="lbl">Avg per ticket</div><div class="v num">${avgTix?money2(avgTix):"–"}</div></div>
-      <div class="tile"><div class="lbl">Merch haul</div><div class="v num">${merch?money(merch):"–"}</div></div>
-      <div class="tile"><div class="lbl">Vault items</div><div class="v num">${media.length}${vids?`<small> · ${vids} vid</small>`:""}</div></div>
-    </div>
+    <div class="tiles">${tile("Shows attended", done.length)}${tile("Still to come", up.length)}${tile("Bands seen", bands.length)}${tile("Avg rating", `${avg}<small>/5</small>`)}</div>
     <section><h2>${yr} by month</h2>
       <div class="bars">${byM.map((v,i)=>{const f=byMf[i]; const t=v+f; return `<div class="bar">${t?`<span>${t}</span>`:""}${f?`<i class="fut" style="height:${f/maxM*100}%"></i>`:""}<i style="height:${v/maxM*100}%"></i></div>`}).join("")}</div>
       <div class="barx">${MONTHS.map(m=>`<span>${m[0]}</span>`).join("")}</div>
       <div class="ro" style="margin-top:6px">Solid = attended · hatched = upcoming</div>
-    </section>
+    </section>`;
+  else if (V === "bands") body = `
+    <div class="tiles">${tile("Bands seen", bands.length)}${tile("Venues", venues.filter(v=>v.name).length)}${songs ? tile("Songs heard live", songs.toLocaleString()) : ""}${tile("Vault items", `${media.length}${vids?`<small> · ${vids} vid</small>`:""}`)}</div>
     <div class="two">
-      <section><h2>Venues</h2>${rank(venues.filter(v=>v.name), venues[0]?.n||1)}</section>
       <section><h2>Repeat offenders</h2>${rank(repeats, repeats[0]?.n||1, true)}</section>
+      <section><h2>Venues</h2>${rank(venues.filter(v=>v.name), venues[0]?.n||1)}</section>
     </div>
     ${(() => { const br = new Map(); for (const s of done) for (const [b, v] of Object.entries(s.bandRatings || {})) { const e = br.get(b.toLowerCase()) || { name: b, sum: 0, n: 0 }; e.sum += Number(v) || 0; e.n++; br.set(b.toLowerCase(), e); }
       const top = [...br.values()].filter(e => e.sum).map(e => ({ name: e.name, n: Math.round(e.sum / e.n * 2) / 2 })).sort((a, b) => b.n - a.n || a.name.localeCompare(b.name)).slice(0, 8);
       return top.length ? `<section><h2>Top-rated bands</h2><div class="rank">${top.map(r => `<div class="row"><button class="n bandlink" data-bandp="${esc(r.name)}">${esc(r.name)}</button><span class="skulls">${[1,2,3,4,5].map(i => SKULLV(r.n, i)).join("")}</span></div>`).join("")}</div></section>` : ""; })()}
-    <section><h2>The crew</h2>${people.length ? rank(people, people[0].n) + `<div class="ro" style="margin-top:6px">Counts names in Went with, crew you tagged, and Crew Family shows that are in both your logs.</div>` : `<div class="ro">Add who you went with on each show and the crew leaderboard fills in.</div>`}</section>
-    ${patchesSection()}
-  </div>`;
+    <section><h2>The crew</h2>${people.length ? rank(people, people[0].n) + `<div class="ro" style="margin-top:6px">Counts names in Went with, crew you tagged, and Crew Family shows that are in both your logs.</div>` : `<div class="ro">Add who you went with on each show and the crew leaderboard fills in.</div>`}</section>`;
+  else if (V === "money") body = `
+    <div class="tiles">${tile("Ticket spend", tix?money(tix):"–")}${tile("Your seats", share?money(share):"–")}${tile("Avg per ticket", avgTix?money2(avgTix):"–")}${tile("Merch haul", merch?money(merch):"–")}${miles ? tile(`Est. ${distLbl()} driven`, Math.round(dist(miles)).toLocaleString()) : ""}${(() => { const n = done.filter(s => orderSpend(s) > 0 || Number(s.merchSpend) > 0).length; return n ? tile("Avg per show", money((tix + merch) / n)) : ""; })()}</div>
+    ${tix || merch ? "" : `<div class="ro" style="margin-top:10px">Add ticket totals and merch on your shows (under Spend and travel) and this fills in.</div>`}`;
+  else body = patchesSection();
+  $("#view").innerHTML = `<div class="filters">${yearSeg()}${crewToggle()}</div>${seg}<div class="stats" style="margin-top:0">${body}</div>`;
 }
 
 /* ---------- Calendar tab ---------- */
@@ -585,7 +597,7 @@ function renderTab(){
   updateCrewBadge();
   if (S.tab === "cal") { S.tab = "shows"; S.showView = "cal"; }
   for (const t of ["shows","disc","vault","stats","crew"]) $("#tab-"+t).setAttribute("aria-selected", S.tab===t);
-  $("#navHome")?.classList.toggle("on", S.tab === "home");
+  $("#navHome")?.classList.toggle("on", S.tab === "home"); $("#bellBtn")?.classList.toggle("on", S.tab === "inbox");
   const cur = $("#tab-" + S.tab), sc = $("#tabScroll");
   if (cur && sc) { const l = cur.offsetLeft - sc.offsetLeft, r = l + cur.offsetWidth; if (l < sc.scrollLeft || r > sc.scrollLeft + sc.clientWidth) sc.scrollTo({ left: l - 12, behavior: "smooth" }); }
   navArrows();
@@ -593,7 +605,7 @@ function renderTab(){
   if (S.tab === "band") renderBand();
   else if (S.tab === "home") renderHome();
   else if (S.tab === "disc") renderDiscover();
-  else if (S.tab === "search") renderSearch(); else if (S.tab === "me") renderMe(); else if (S.tab === "crew") renderCrew(); else if (S.tab === "shows") renderShows(); else if (S.tab === "cal") renderCal(); else if (S.tab === "vault") renderVault(); else renderStats();
+  else if (S.tab === "search") renderSearch(); else if (S.tab === "me") renderMe(); else if (S.tab === "settings") renderSettings(); else if (S.tab === "inbox") renderInbox(); else if (S.tab === "crew") renderCrew(); else if (S.tab === "shows") renderShows(); else if (S.tab === "cal") renderCal(); else if (S.tab === "vault") renderVault(); else renderStats();
 }
 function render(){ renderNext(); renderTab(); if (S.open) renderSheet(); }
 
@@ -611,7 +623,7 @@ function navSync(){
 }
 function navScreen(){
   navSync();
-  const key = JSON.stringify([S.tab, S.tab === "band" ? S.band || "" : "", S.tab === "crew" ? S.crewSel || "" : ""]);
+  const key = JSON.stringify([S.tab, S.tab === "band" ? S.band || "" : "", S.tab === "crew" ? S.crewSel || "" : "", S.tab === "settings" ? S.setSec || "" : ""]);
   if (NAV.cur && key !== NAV.cur && !NAV.popping) { NAV.stack.push(NAV.cur); if (NAV.stack.length > 40) NAV.stack.shift(); navPush("scr"); }
   NAV.cur = key;
 }
@@ -627,7 +639,7 @@ window.addEventListener("popstate", () => {
   NAV.popping = true;
   try {
     if (overlayCount()) { closeTopOverlay(); NAV.ov = overlayCount(); }
-    else if (NAV.stack.length) { const prev = JSON.parse(NAV.stack.pop()); S.tab = prev[0]; if (prev[1]) S.band = prev[1]; S.crewSel = prev[2] || null; NAV.cur = JSON.stringify(prev); renderTab(); window.scrollTo(0, 0); }
+    else if (NAV.stack.length) { const prev = JSON.parse(NAV.stack.pop()); S.tab = prev[0]; if (prev[1]) S.band = prev[1]; S.crewSel = prev[2] || null; S.setSec = prev[3] || ""; NAV.cur = JSON.stringify(prev); renderTab(); window.scrollTo(0, 0); }
   } catch (e) { console.error("back", e); }
   NAV.popping = false;
 });
@@ -1074,7 +1086,7 @@ function openSheet(id){
   const s = id === "__new" ? { id:"__new", date: todayISO, lineup: [], wentWith: [], photos: [], merch: [] } : S.shows.find(x=>x.id===id);
   if (!s) return;
   closeLightbox();
-  S.open = id; draft = JSON.parse(JSON.stringify(s)); confirmDel = false; S.editing = id === "__new";
+  S.open = id; draft = JSON.parse(JSON.stringify(s)); confirmDel = false; S.editing = id === "__new"; S.formOpen = new Map();
   renderSheet(true);
   document.body.style.overflow = "hidden";
 }
@@ -1141,6 +1153,12 @@ function renderSheet(fresh){
   SHEET_LIST = [];
   if (d.poster) SHEET_LIST.push({ it: { id: pid(d.poster), url: pid(d.poster), path: d.poster.path, type: "image", bands: [] }, show: d, kind: "poster" });
   const media = gallery("photos", "Show photos") + gallery("merch", "Merch haul");
+  // Shorter forms: an upcoming show only asks for planning details; the "after the show" fields wait in a
+  // collapsed section (still on the page, so nothing already filled in is lost). Past shows lead with the night.
+  const FO = S.formOpen || (S.formOpen = new Map());
+  const has = (...ks) => ks.some(k => { const x = d[k]; return Array.isArray(x) ? x.length : x && typeof x === "object" ? Object.keys(x).length : x !== undefined && x !== null && x !== "" && x !== 0; });
+  const fsec = (id, title, hint, def, body) => `<details class="fsec" data-fsec="${id}" ${(FO.has(id) ? FO.get(id) : def) ? "open" : ""}><summary><span class="fst"><h3>${title}</h3>${hint ? `<span class="ro">${esc(hint)}</span>` : ""}</span><span class="chev" aria-hidden="true">›</span></summary><div class="fbody">${body}</div></details>`;
+  const spendHint = () => [d.ticketTotal ? money2(Number(d.ticketTotal)) + " tickets" : "", d.merchSpend ? money2(Number(d.merchSpend)) + " merch" : "", d.miles ? Math.round(dist(Number(d.miles))) + " " + distLbl() : ""].filter(Boolean).join(" · ");
   $("#sheetRoot").innerHTML = `<div class="sheet" role="dialog" aria-modal="true" aria-label="Show details"><div class="panel">
     <div class="ptop"><button class="btn ghost" data-close>← Back</button>
       ${ro ? `<span class="ro">${S.openFriend ? esc(S.openFriend === ME.uid ? "Crew view of your show · read-only" : (FR[S.openFriend]?.name || "Friend") + "'s show · read-only") : "Read-only"}</span>` : `<span class="tagrow">${isNew ? "" : `<button class="btn ghost" data-viewmode>Cancel</button>`}<button class="btn red" data-save ${busy?"disabled":""}>${isNew?"Add show":"Save"}</button></span>`}</div>
@@ -1158,10 +1176,11 @@ function renderSheet(fresh){
         <label class="field acwrap"><span class="lbl">Venue</span><input id="f-venue" data-ac="venue" autocomplete="off" value="${esc(d.venue||"")}" placeholder="Search or type a venue" ${ro?"disabled":""}><div class="acbox" hidden></div></label>
         <label class="field"><span class="lbl">City</span><input id="f-city" value="${esc(d.city||"")}" ${ro?"disabled":""}></label>
       </div>
+      ${fsec("billmore", "More options", "Maybe, festival dates" + (up && !isNew ? ", add to calendar" : ""), d.unsure || !!d.endDate || S.multiOpen, `
       <label style="display:flex;gap:8px;align-items:center"><input id="f-unsure" type="checkbox" ${d.unsure?"checked":""} ${ro?"disabled":""}> <span class="lbl">Not confirmed / maybe</span></label>
       <label style="display:flex;gap:8px;align-items:center"><input id="f-multi" type="checkbox" ${d.endDate?"checked":""} ${ro?"disabled":""}> <span class="lbl">Multi-day (festival)</span></label>
       ${d.endDate || S.multiOpen ? `<label class="field"><span class="lbl">Last day</span><input id="f-endDate" type="date" min="${esc(d.date)}" value="${esc(d.endDate||"")}" ${ro?"disabled":""}></label>` : ""}
-      ${!isNew && d.date ? `<div class="field"><span class="lbl">Add to calendar</span><div class="tagrow"><a class="btn" href="${esc(googleCalUrl(d))}" target="_blank" rel="noopener">Google Calendar</a><button class="btn" data-ics1>Apple / other (.ics)</button></div></div>` : ""}
+      ${!isNew && d.date && up ? `<div class="field"><span class="lbl">Add to calendar</span><div class="tagrow"><a class="btn" href="${esc(googleCalUrl(d))}" target="_blank" rel="noopener">Google Calendar</a><button class="btn" data-ics1>Apple / other (.ics)</button></div></div>` : ""}`)}
     </div>
 
     <div class="sect"><h3>Went with</h3>
@@ -1169,7 +1188,17 @@ function renderSheet(fresh){
       ${tagPicker(d, ro)}
     </div>
 
-    <div class="sect"><h3>The night ${up?`<span class="chip up">Upcoming</span>`:""}</h3>
+    ${up ? `<div class="sect"><h3>Tickets and plans <span class="chip up">Upcoming</span></h3>
+      <div class="grid2">
+        <label class="field"><span class="lbl">Tickets bought</span><input id="f-ticketQty" type="number" min="0" step="1" inputmode="numeric" value="${esc(d.ticketQty??"")}" ${ro?"disabled":""}></label>
+        <label class="field"><span class="lbl">Order total ${esc(CUR())} (with fees)</span><input id="f-ticketTotal" type="number" min="0" step="0.01" inputmode="decimal" value="${esc(d.ticketTotal??(d.ticket!=null&&d.ticketQty==null?d.ticket:""))}" ${ro?"disabled":""}></label>
+        <div class="field"><span class="lbl">Per ticket</span><div class="ro num" id="f-perTicket" style="padding:10px 0;font-size:18px">${perTicket(d)!=null?money2(perTicket(d)):"–"}</div></div>
+        <label class="field"><span class="lbl">Merch ${esc(CUR())}</span><input id="f-merchSpend" type="number" min="0" step="1" inputmode="decimal" value="${esc(d.merchSpend??"")}" ${ro?"disabled":""}></label>
+        <label class="field"><span class="lbl">Round-trip ${distLbl()} (est.)</span><input id="f-miles" type="number" min="0" step="1" value="${esc(d.miles!=null&&d.miles!==""?Math.round(dist(Number(d.miles))):"")}" ${ro?"disabled":""}></label>
+      </div>
+      <label class="field"><span class="lbl">Notes</span><textarea id="f-notes" ${ro?"disabled":""}>${esc(d.notes||"")}</textarea></label>
+    </div>
+    ${fsec("night", "After the show", "Rating, pit, where you stood, setlist. Fill these in once you've been.", has("rating", "pit", "spot", "best", "highlight", "setlist", "bandRatings"), `
       <div class="grid2">
         <div class="field"><span class="lbl">Rating${Number(d.rating) ? ` · ${fmtRating(Number(d.rating))}` : ""}</span><div class="picker" role="group" aria-label="Rating">${[1,2,3,4,5].map(i=>`<button data-rate="${i}" aria-pressed="${(Number(d.rating)||0)>=i-0.5}" aria-label="${i} skull${i>1?'s':''}" ${ro?"disabled":""}>${SKULLV(Number(d.rating)||0, i)}</button>`).join("")}</div></div>
         <div class="field"><span class="lbl">Pit intensity${Number(d.pit) ? ` · ${fmtRating(Number(d.pit))}` : ""}</span><div class="picker meter" role="group" aria-label="Pit intensity">${[1,2,3,4,5].map(i=>{ const pv = Number(d.pit)||0, c = `color-mix(in srgb, var(--blood) ${40+i*12}%, var(--rust))`; return `<button data-pit="${i}" aria-pressed="${pv>=i-0.5}" aria-label="Level ${i}" ${ro?"disabled":""}><i style="background:${pv>=i ? c : pv>=i-0.5 ? `linear-gradient(90deg, ${c} 50%, var(--slab) 50%)` : 'var(--slab)'}"></i></button>`; }).join("")}</div></div>
@@ -1183,7 +1212,25 @@ function renderSheet(fresh){
         return `<div class="brate"><span class="bn">${esc(b)}</span><span class="picker sm" role="group" aria-label="Rate ${esc(b)}">${[1,2,3,4,5].map(i => `<button data-brate="${esc(b)}|${i}" aria-pressed="${r>=i-0.5}" aria-label="${esc(b)} ${i}">${SKULLV(r, i)}</button>`).join("")}</span></div>`; }).join("")}</div></div>` : ""}
       <label class="field"><span class="lbl">Highlight moment</span><input id="f-highlight" value="${esc(d.highlight||"")}" placeholder="Ex: Wall of death during…" ${ro?"disabled":""}></label>
       <label class="field"><span class="lbl">Setlist notes</span><textarea id="f-setlist" placeholder="Ex: Opened with… closed with…" ${ro?"disabled":""}>${esc(d.setlist||"")}</textarea></label>
+`)}` : `<div class="sect"><h3>The night</h3>
+      <div class="grid2">
+        <div class="field"><span class="lbl">Rating${Number(d.rating) ? ` · ${fmtRating(Number(d.rating))}` : ""}</span><div class="picker" role="group" aria-label="Rating">${[1,2,3,4,5].map(i=>`<button data-rate="${i}" aria-pressed="${(Number(d.rating)||0)>=i-0.5}" aria-label="${i} skull${i>1?'s':''}" ${ro?"disabled":""}>${SKULLV(Number(d.rating)||0, i)}</button>`).join("")}</div></div>
+        <div class="field"><span class="lbl">Pit intensity${Number(d.pit) ? ` · ${fmtRating(Number(d.pit))}` : ""}</span><div class="picker meter" role="group" aria-label="Pit intensity">${[1,2,3,4,5].map(i=>{ const pv = Number(d.pit)||0, c = `color-mix(in srgb, var(--blood) ${40+i*12}%, var(--rust))`; return `<button data-pit="${i}" aria-pressed="${pv>=i-0.5}" aria-label="Level ${i}" ${ro?"disabled":""}><i style="background:${pv>=i ? c : pv>=i-0.5 ? `linear-gradient(90deg, ${c} 50%, var(--slab) 50%)` : 'var(--slab)'}"></i></button>`; }).join("")}</div></div>
+      </div>
+      ${ro ? "" : `<div class="ro" style="margin-top:-4px">Tap a skull or bar again for a half, a third time to clear.</div>`}
+      <div class="grid2">
+        <label class="field"><span class="lbl">Where you stood</span><select id="f-spot" ${ro?"disabled":""}>${SPOTS.map(o=>`<option value="${esc(o)}" ${d.spot===o?"selected":""}>${o||"—"}</option>`).join("")}</select></label>
+        <label class="field"><span class="lbl">Best band of the night</span><select id="f-best" ${ro?"disabled":""}><option value="">—</option>${lineup(d).map(b=>`<option ${d.best===b?"selected":""}>${esc(b)}</option>`).join("")}</select></label>
+      </div>
+      ${lineup(d).length > 1 ? `<div class="field"><span class="lbl">Rate each band</span><div class="brates">${lineup(d).map(b => { const r = Number((d.bandRatings || {})[b]) || 0;
+        return `<div class="brate"><span class="bn">${esc(b)}</span><span class="picker sm" role="group" aria-label="Rate ${esc(b)}">${[1,2,3,4,5].map(i => `<button data-brate="${esc(b)}|${i}" aria-pressed="${r>=i-0.5}" aria-label="${esc(b)} ${i}">${SKULLV(r, i)}</button>`).join("")}</span></div>`; }).join("")}</div></div>` : ""}
+      <label class="field"><span class="lbl">Highlight moment</span><input id="f-highlight" value="${esc(d.highlight||"")}" placeholder="Ex: Wall of death during…" ${ro?"disabled":""}></label>
+    </div>
+    ${fsec("notes", "Setlist and notes", "", has("setlist", "notes"), `
+      <label class="field"><span class="lbl">Setlist notes</span><textarea id="f-setlist" placeholder="Ex: Opened with… closed with…" ${ro?"disabled":""}>${esc(d.setlist||"")}</textarea></label>
       <label class="field"><span class="lbl">Notes</span><textarea id="f-notes" ${ro?"disabled":""}>${esc(d.notes||"")}</textarea></label>
+`)}
+    ${fsec("spend", "Spend and travel", spendHint() || "Tickets, merch, miles", false, `
       <div class="grid2">
         <label class="field"><span class="lbl">Tickets bought</span><input id="f-ticketQty" type="number" min="0" step="1" inputmode="numeric" value="${esc(d.ticketQty??"")}" ${ro?"disabled":""}></label>
         <label class="field"><span class="lbl">Order total ${esc(CUR())} (with fees)</span><input id="f-ticketTotal" type="number" min="0" step="0.01" inputmode="decimal" value="${esc(d.ticketTotal??(d.ticket!=null&&d.ticketQty==null?d.ticket:""))}" ${ro?"disabled":""}></label>
@@ -1191,7 +1238,7 @@ function renderSheet(fresh){
         <label class="field"><span class="lbl">Merch ${esc(CUR())}</span><input id="f-merchSpend" type="number" min="0" step="1" inputmode="decimal" value="${esc(d.merchSpend??"")}" ${ro?"disabled":""}></label>
         <label class="field"><span class="lbl">Round-trip ${distLbl()} (est.)</span><input id="f-miles" type="number" min="0" step="1" value="${esc(d.miles!=null&&d.miles!==""?Math.round(dist(Number(d.miles))):"")}" ${ro?"disabled":""}></label>
       </div>
-    </div>
+`)}`}
 
     <div class="sect"><h3>Tour poster</h3>
       <div class="poster">
@@ -1200,9 +1247,9 @@ function renderSheet(fresh){
         <div class="ro">${S.openFriend ? "" : assets && !isNew ? `<label class="btn">${d.poster?"Replace poster":"Upload poster"}<input class="vh" type="file" data-upkind="poster" accept="image/*,.heic,.heif" aria-label="Upload poster"></label>` : isNew ? "Save the show first, then add a poster." : ""}</div>
       </div>
     </div>
-    ${media}
+    ${up ? fsec("media", "Photos and merch haul", "For after the show", has("photos", "merch"), media) : media}
 
-    ${!isNew && !ro ? `<div class="sect"><div><button class="btn warn" data-del>${confirmDel?(draft.linkId && friendList().some(f=>f.family) ? "Tap again: deletes from your log only" : "Tap again to delete this show"):"Delete show"}</button></div></div>` : ""}
+    ${!isNew && !ro ? `<div class="sect"><div><button class="btn warn" data-del>Delete show</button>${draft.linkId && friendList().some(f=>f.family) ? `<div class="ro" style="margin-top:6px">Deletes it from your log only. Your Crew Family keeps theirs.</div>` : ""}</div></div>` : ""}
   </div></div>`;
   const sh = $("#sheetRoot .sheet"); if (sh && !fresh) sh.scrollTop = scroll;
 }
@@ -1246,11 +1293,12 @@ function handleWriteErr(e){
 }
 
 async function del(){
-  if (!confirmDel) { confirmDel = true; renderSheet(); return; }
   const s = S.shows.find(x=>x.id===draft.id); if (!s) return;
   try { await deleteDoc(myShow(s.id)); } catch(e){ handleWriteErr(e); return; }
-  for (const p of [!s.linkId && s.poster && s.poster.path, ...items(s,"photos").flatMap(m=>[m.path, m.thumbPath]), ...items(s,"merch").map(m=>m.path)].filter(Boolean)) await removeFile(p);
-  closeSheet(); toast("Show deleted");
+  const files = [!s.linkId && s.poster && s.poster.path, ...items(s,"photos").flatMap(m=>[m.path, m.thumbPath]), ...items(s,"merch").map(m=>m.path)].filter(Boolean);
+  const { id, ...data } = JSON.parse(JSON.stringify(s));
+  closeSheet();
+  toastUndo(`Deleted ${headline(s) || "show"}`, async () => { await setDoc(myShow(id), data); toast("Show restored"); }, async () => { for (const p of files) await removeFile(p); });
 }
 
 /* ---------- Uploads ---------- */
@@ -1496,17 +1544,21 @@ async function rotateMedia(){
   LB.busy = false; drawLB();
 }
 async function lbRemove(){
-  if (!LB.confirm) { LB.confirm = true; drawLB(); return; }
   const e = LB.list[LB.i]; const s = S.shows.find(x=>x.id===e.show.id); if (!s) return;
+  const before = e.kind === "poster" ? { poster: s.poster || null } : { [e.kind]: JSON.parse(JSON.stringify(items(s, e.kind))) };
   const patch = e.kind === "poster" ? { poster: null } : { [e.kind]: items(s, e.kind).filter(m => m.id !== e.it.id) };
   try {
     await updateDoc(myShow(s.id), e.kind === "poster" && s.linkId && s.poster ? { ...patch, posterCleared: arrayUnion(s.poster.url) } : patch);
     if (e.kind === "poster") await pushPoster(s, null);
-    await removeFile(e.it.path); if (e.it.thumbPath) await removeFile(e.it.thumbPath);
     if (draft && draft.id === s.id) Object.assign(draft, patch);
     LB.list.splice(LB.i, 1); LB.confirm = false;
     if (!LB.list.length) closeLightbox(); else { LB.i = Math.min(LB.i, LB.list.length-1); drawLB(); }
-    if (S.open) renderSheet(); toast("Removed");
+    if (S.open) renderSheet();
+    const label = e.kind === "poster" ? "Poster" : e.it.type === "video" ? "Video" : e.kind === "merch" ? "Merch photo" : "Photo";
+    toastUndo(`${label} removed`, async () => {
+      await updateDoc(myShow(s.id), before); if (e.kind === "poster" && before.poster) await pushPoster(s, before.poster);
+      if (draft && draft.id === s.id) { Object.assign(draft, before); if (S.open) renderSheet(); } toast(`${label} is back`);
+    }, async () => { await removeFile(e.it.path); if (e.it.thumbPath) await removeFile(e.it.thumbPath); });
   } catch(err){ handleWriteErr(err); }
 }
 
@@ -1556,6 +1608,7 @@ document.addEventListener("click", e => {
   else if (t.hasAttribute("data-ics1")) { if (draft) { readForm(); deliverIcs([draft], `${slug(draft)}-${draft.date}.ics`); } }
   else if (t.hasAttribute("data-caltoday")) { const d = new Date(); S.cal = { y: d.getFullYear(), m: d.getMonth() }; renderCal(); }
   else if (t.id === "tab-stats") { S.tab = "stats"; renderTab(); }
+  else if (t.dataset.statv) { S.statView = t.dataset.statv; try { localStorage.setItem("pitlog.statView", S.statView); } catch (_) {} renderStats(); }
   else if (t.id === "addBtn") openSheet("__new");
   else if (t.dataset.filter) { S.filter = t.dataset.filter; renderShows(); }
   else if (t.hasAttribute("data-fpanel")) { S.fopen = !S.fopen; renderShows(); }
@@ -1571,6 +1624,14 @@ document.addEventListener("click", e => {
   else if (t.id === "searchBtn") { S.tab = "search"; S.search.profile = null; renderTab(); window.scrollTo(0, 0); setTimeout(() => $("#sq") && $("#sq").focus(), 50); }
   else if (searchClick(t)) {}
   else if (t.hasAttribute("data-editprofile")) editProfile();
+  else if (t.hasAttribute("data-settings")) { S.tab = "settings"; S.setSec = ""; renderTab(); window.scrollTo(0, 0); }
+  else if (t.dataset.setsec !== undefined) { S.setSec = t.dataset.setsec; renderTab(); window.scrollTo(0, 0); }
+  else if (t.hasAttribute("data-signout2")) { try { localStorage.removeItem(profKey(ME.uid)); } catch (_) {} signOut(auth); }
+  else if (t.hasAttribute("data-whatsnew2")) showWhatsNew(true);
+  else if (t.id === "bellBtn") { S.tab = "inbox"; renderTab(); window.scrollTo(0, 0); }
+  else if (t.dataset.actgo) actGo(t.dataset.actgo);
+  else if (t.dataset.gs) gsGo(t.dataset.gs);
+  else if (t.hasAttribute("data-gshide")) gsHide();
   else if (t.hasAttribute("data-myprofile") && S.tab === "search") { S.search.profile = null; S.search.pub = null; S.pubView = "public"; S.tab = "me"; renderTab(); window.scrollTo(0, 0); }
   else if (t.hasAttribute("data-myprofile2")) { S.tab = "me"; renderTab(); window.scrollTo(0, 0); }
   else if (t.hasAttribute("data-crewtoggle")) { S.crewOn = !S.crewOn; try { localStorage.setItem("pitlog.crewOn", S.crewOn ? "1" : "0"); } catch (_) {} renderTab(); }
@@ -1607,17 +1668,19 @@ document.addEventListener("input", e => {
 });
 document.addEventListener("change", e => {
   if (e.target.id === "pf-tagshow" && PEDIT) { PEDIT.tagShow = e.target.value; return; }
-  if (e.target.dataset && e.target.dataset.setting) { saveSetting(e.target.dataset.setting, e.target.value).then(() => { if (S.tab === "me") renderMe(); }); return; }
+  if (e.target.dataset && e.target.dataset.setting) { saveSetting(e.target.dataset.setting, e.target.value).then(rerenderSettingsish); return; }
   if (e.target.id === "sort") { S.sort = e.target.value; try { localStorage.setItem("pitlog.sort", S.sort); } catch(_){} renderShows(); return; }
   const up = e.target.dataset && e.target.dataset.upkind;
   if (up) { const files = [...(e.target.files || [])]; e.target.value = ""; readForm(); handleFiles(up, files); return; }
   if (e.target.classList && e.target.classList.contains("lu-in") && draft) { readForm(); refreshBest(); }
+  if (e.target.id === "f-date" && draft) { const was = draft.date > todayISO; readForm(); if ((draft.date > todayISO) !== was) renderSheet(); }
   if (e.target.id === "f-multi" && draft) { readForm(); S.multiOpen = e.target.checked; if (!e.target.checked) draft.endDate = ""; renderSheet(); }
   if (e.target.id === "f-cohead" && draft) { readForm(); const n = $(".lu2 .lunum"); if (n) n.textContent = draft.coHead ? "CO" : "2"; const t = $(".ptitle"); if (t) t.textContent = headline(draft) || "New show"; }
   if (e.target.id === "coverFile") { const f = e.target.files && e.target.files[0]; e.target.value = ""; if (f) uploadCover(f); }
   if (e.target.id === "avatarFile") { const f = e.target.files && e.target.files[0]; e.target.value = ""; if (f) uploadAvatar(f); }
   if (e.target.id === "importFile") { const f = e.target.files && e.target.files[0]; e.target.value = ""; if (f) importFile(f); }
 });
+document.addEventListener("toggle", e => { const d = e.target; if (d && d.dataset && d.dataset.fsec && S.formOpen) S.formOpen.set(d.dataset.fsec, d.open); }, true);
 document.addEventListener("keydown", e => {
   if ($("#modalRoot").innerHTML) { if (e.key === "Escape") $("#modalRoot").innerHTML = ""; return; }
   if (LB) {
@@ -2256,9 +2319,10 @@ function renderHome(){
   const hi = new Date().getHours();
   const hello = hi < 12 ? "Morning" : hi < 18 ? "Afternoon" : "Evening";
   const kpi = (n, l, tab) => `<button type="button" class="kpi" data-gotab="${tab}"><b class="num">${n}</b><span>${l}</span></button>`;
-  const kpis = `<div class="kpis">${kpi(up.length, "coming up", "shows")}${kpi(thisYear.length, "seen in " + yr, "shows")}${kpi(counts(thisYear.flatMap(lineup)).length, "bands in " + yr, "stats")}${pending ? kpi(pending, "waiting on you", "crew") : kpi(crew.length, "in your crew", "crew")}</div>`;
+  const kpis = `<div class="kpis">${kpi(up.length, "coming up", "shows")}${kpi(thisYear.length, "seen in " + yr, "shows")}${kpi(counts(thisYear.flatMap(lineup)).length, "bands in " + yr, "stats")}${pending ? kpi(pending, "waiting on you", "inbox") : kpi(crew.length, "in your crew", "crew")}</div>`;
   const open = !!S.recapOpen;
   $("#view").innerHTML = `<div class="home"><p class="kick">${hello}, ${esc((PROFILE.name || PROFILE.handle || "").split(" ")[0])}</p>
+    ${startChecklist()}
     <div class="rechead"><h2 class="hh2">Your recap</h2><button class="btn ghost sm" data-recap aria-expanded="${open}">${open ? "Hide details ▴" : "Details ▾"}</button></div>
     ${kpis}
     ${open ? `<div class="hgrid">${shows}${disc}${stats}${vault}${crewCard}</div>` : ""}
@@ -2271,6 +2335,35 @@ function renderHome(){
   $("#view").innerHTML = `<div class="home"><h2 class="hh2">Your recap</h2>
     <div class="hgrid">${shows}${disc}${stats}${vault}${crewCard}</div></div>`;
   fillHomeDiscover();
+}
+/* ---------- Get started: a short checklist for new accounts, until it's done or hidden ---------- */
+function gsSteps(){
+  const st = [
+    ["show", "Log your first show", "Past or upcoming. Every show counts.", S.shows.length > 0],
+    ["rate", "Rate a show you've been to", "Skulls for the night, bars for the pit.", S.shows.some(x => Number(x.rating) > 0)],
+    ["photo", "Add a profile photo", "So your crew knows it's you.", !!PROFILE.photoURL],
+    ["crew", "Add someone to your crew", "Send a request or a text invite.", friendList().length > 0 || REQ.out.some(r => r.status === "pending")],
+    ["bucket", "Start a bucket list", "Bands you want to see. We'll tell you when they tour.", bucketOf(PROFILE).length > 0]];
+  if (pushSupported()) st.push(["push", "Turn on phone notifications", "Tags, comments and show day reminders.", pushOnHere() || !!PROFILE.pushOn]);
+  return st;
+}
+function startChecklist(){
+  if (!PROFILE || PROFILE.gsHidden || S.shows.length >= 10) return "";
+  const st = gsSteps(), done = st.filter(x => x[3]).length; if (done === st.length) return "";
+  const next = st.find(x => !x[3]);
+  return `<section class="gstart" aria-label="Get started"><div class="gshead"><h3>Get started</h3><span class="lbl">${done} of ${st.length}</span><button class="linkbtn" data-gshide>Hide</button></div>
+    <div class="gsbar"><i style="width:${Math.round(done / st.length * 100)}%"></i></div>
+    <div class="gslist">${st.map(([k, t, sub, ok]) => `<button class="gsi${ok ? " ok" : ""}${k === next[0] ? " nx" : ""}" data-gs="${k}" ${ok ? "disabled" : ""}><span class="gsck" aria-hidden="true">${ok ? "✓" : ""}</span><span><b>${esc(t)}</b>${ok ? "" : `<span class="ro">${esc(sub)}</span>`}</span>${ok ? "" : `<span class="chev" aria-hidden="true">›</span>`}</button>`).join("")}</div></section>`;
+}
+async function gsHide(){ PROFILE.gsHidden = true; cacheProfile(); renderHome(); toastUndo("Checklist hidden", async () => { PROFILE.gsHidden = false; cacheProfile(); renderHome(); await updateDoc(doc(fdb, "users", ME.uid), { gsHidden: false }); });
+  try { await updateDoc(doc(fdb, "users", ME.uid), { gsHidden: true }); } catch (_) {} }
+function gsGo(k){
+  if (k === "show") openSheet("__new");
+  else if (k === "rate") { const p = sorted().filter(x => !isUpcoming(x)).pop(); if (p) { openSheet(p.id); S.editing = true; renderSheet(true); } else openSheet("__new"); }
+  else if (k === "photo") editProfile();
+  else if (k === "crew") { S.tab = "crew"; S.crewSel = null; renderTab(); window.scrollTo(0, 0); }
+  else if (k === "bucket") { S.tab = "me"; renderTab(); setTimeout(() => { const i = $("#bk-in"); if (i) { i.scrollIntoView({ block: "center" }); i.focus(); } }, 60); }
+  else if (k === "push") { S.tab = "settings"; S.setSec = "push"; renderTab(); window.scrollTo(0, 0); }
 }
 /* ---------- Band profile: photo + bio (MusicBrainz / Wikipedia), your history, crew, upcoming dates ---------- */
 const BANDINFO = new Map();
@@ -2676,7 +2769,7 @@ async function setHiddenTour(g, hide){
   let list = hiddenTours().filter(h => h.k !== g.key);
   if (hide) list = [{ k: g.key, n: headline(g.show) + (g.tour ? " — " + g.tour : "") }, ...list].slice(0, 300);
   PROFILE.hiddenTours = list; cacheProfile(); drawDiscover();
-  toast(hide ? `Hidden: ${headline(g.show)}. Bring it back with "Show tours you hid".` : "Tour is back in Discover", 3000);
+  if (hide) toastUndo(`Hidden: ${headline(g.show)}`, () => setHiddenTour(g, false)); else toast("Tour is back in Discover", 3000);
   try { await updateDoc(doc(fdb, "users", ME.uid), { hiddenTours: list }); } catch (e) { console.warn(e); toast("Couldn't save that. Check your connection."); }
 }
 document.addEventListener("click", e => {
@@ -3126,7 +3219,7 @@ function tagInbox(){
   return out.sort((a, b) => (a.stage === "ask" ? 0 : 1) - (b.stage === "ask" ? 0 : 1) || (b.s.date || "").localeCompare(a.s.date || ""));
 }
 const acctBadge = () => { const n = ME && S.loaded ? tagInbox().filter(x => x.stage === "ask").length : 0; return n ? `<span class="badge-n acctb" aria-label="${n} tag${n > 1 ? "s" : ""} to review">${n}</span>` : ""; };
-function updateAcctBadge(){ const a = $("#acct"); if (!a || a.hidden) return; a.querySelectorAll(".acctb").forEach(x => x.remove()); a.insertAdjacentHTML("beforeend", acctBadge()); }
+function updateAcctBadge(){ updateBell(); }
 async function answerMediaTag(key, yes){
   const field = yes ? "mediaYes" : "mediaNo";
   PROFILE[field] = [...new Set([...(PROFILE[field] || []), key])];
@@ -3162,6 +3255,78 @@ function tagInboxBlock(){
       ? `<button class="btn red" data-tagyes="${k}">${isUpcoming(s) ? "I'm going too" : "I was there"}</button><button class="btn ghost" data-tagno="${k}">${isUpcoming(s) ? "Not going" : "Not me"}</button>`
       : `<button class="btn red" data-tagadd="${k}">Add show only</button><button class="btn" data-tagfull="${k}">Add with their details</button><button class="btn ghost" data-tagdis="${k}">Skip</button>`}</div></div>`; }).join("")}</div>
     <div class="ro" style="margin-top:8px"><b>Show only</b> adds the date, bands and venue. Your rating, notes, spend and photos start blank. <b>With their details</b> also copies their rating, notes, spend and photos, which you can edit after.</div></section>`;
+}
+/* ---------- Activity inbox (the bell) ----------
+   "Needs you" holds anything waiting on an answer (crew requests, Family invites, tags).
+   "Recent" is everything the server logged for you: comments, horns, accepts, tags. */
+let ACT = [];
+const actMs = x => { const a = x && x.at; return !a ? Date.now() : typeof a.toMillis === "function" ? a.toMillis() : a.seconds ? a.seconds * 1000 : Date.parse(a) || Date.now(); };
+const ACTIONABLE = new Set(["request", "familyInvite", "tagged", "photoTag"]);
+function needsYou(){
+  if (!ME) return { inc: [], fam: [], tags: [] };
+  return { inc: REQ.in.filter(r => r.status === "pending"), fam: friendList().filter(f => f.famState === "pending" && f.famBy && f.famBy !== ME.uid), tags: S.loaded ? tagInbox() : [] };
+}
+function bellCount(){
+  const n = needsYou(); return n.inc.length + n.fam.length + n.tags.filter(x => x.stage === "ask").length + ACT.filter(a => !a.read && !ACTIONABLE.has(a.type)).length;
+}
+function updateBell(){
+  const b = $("#bellBtn"); if (!b || b.hidden) return; const n = bellCount();
+  b.querySelector(".bslot").innerHTML = n ? `<span class="badge-n">${n > 99 ? "99+" : n}</span>` : "";
+  b.setAttribute("aria-label", n ? `Activity, ${n} new` : "Activity");
+}
+function agoText(ms){
+  const m = Math.round((Date.now() - ms) / 60000);
+  if (m < 1) return "just now"; if (m < 60) return m + "m"; const h = Math.round(m / 60); if (h < 24) return h + "h";
+  const d = Math.round(h / 24); if (d < 7) return d + "d"; const dt = new Date(ms); return MONTHS[dt.getMonth()] + " " + dt.getDate();
+}
+function actLine(a){
+  const who = `<b>@${esc(a.fromHandle || "someone")}</b>`, sh = a.show ? ` <span class="ro">${esc((a.show.lineup || [])[0] || a.show.headline || "a show")}${a.show.date ? " · " + esc(fmtDate(a.show.date)) : ""}</span>` : "";
+  switch (a.type) {
+    case "request": return ["👋", `${who} wants you in their crew`];
+    case "accepted": return ["🤝", `${who} accepted your crew request`];
+    case "familyInvite": return ["🔗", `${who} wants to link logs with you (Crew Family)`];
+    case "familyApproved": return ["🔗", `${who} linked logs with you`];
+    case "tagged": return ["🏷️", `${who} tagged you on${sh}`];
+    case "photoTag": return ["📸", `${who} tagged you in a photo from${sh}`];
+    case "comment": return ["💬", `${who} commented on${sh}<span class="actq">"${esc(a.text || "")}"</span>`];
+    case "like": return ["🤘", `${who} threw the horns on${sh}`];
+    default: return ["•", `${who}${sh}`];
+  }
+}
+function renderInbox(){
+  const { inc, fam, tags } = needsYou();
+  let html = `<div class="crew inbox"><h2 class="seth">Activity</h2>`;
+  if (inc.length) html += `<section class="sect"><h3>Crew requests <span class="lbl">${inc.length}</span></h3><div class="plist">${inc.map(r => { const q = person(r.from, r.fromName, r.fromHandle, r.fromPhoto); return `
+      <div class="prow">${avatar(q.photo, q.name)}<div class="pt"><div class="nm">${esc(q.name || q.handle)}</div><div class="hd">@${esc(q.handle)}</div></div>
+      <button class="btn red" data-accept="${esc(r.id)}">Accept</button><button class="btn ghost" data-decline="${esc(r.id)}">Decline</button></div>`; }).join("")}</div></section>`;
+  if (fam.length) html += `<section class="sect"><h3>Family invites <span class="lbl">${fam.length}</span></h3><div class="plist">${fam.map(f => `
+      <div class="prow">${avatar(f.photo, f.name)}<div class="pt"><div class="nm">${esc(f.name || f.handle)}</div><div class="hd">@${esc(f.handle)} wants to link logs</div></div>
+      <button class="btn red" data-famok="${esc(f.uid)}">Approve</button><button class="btn ghost" data-famno="${esc(f.uid)}">Not now</button></div>`).join("")}</div></section>`;
+  if (tags.length) html += tagInboxBlock();
+  const list = ACT.slice(0, 40);
+  html += `<section class="sect"><h3>Recent</h3>${list.length ? `<div class="actlist">${list.map(a => { const [ic, txt] = actLine(a); return `<button class="actrow${a.read ? "" : " unread"}" data-actgo="${esc(a.id)}"><span class="actic" aria-hidden="true">${ic}</span><span class="actt">${txt}</span><span class="actago">${agoText(actMs(a))}</span></button>`; }).join("")}</div>`
+    : `<div class="empty"><h3>All quiet</h3><div>Comments, 🤘s, tags and crew requests show up here.</div></div>`}</section></div>`;
+  $("#view").innerHTML = html;
+  clearTimeout(renderInbox.t); renderInbox.t = setTimeout(markActRead, 1500);
+}
+async function markActRead(){
+  if (S.tab !== "inbox" || !ME) return; const un = ACT.filter(a => !a.read); if (!un.length) return;
+  un.forEach(a => a.read = true); updateBell();
+  try { const b = writeBatch(fdb); un.slice(0, 400).forEach(a => b.update(doc(fdb, "users", ME.uid, "activity", a.id), { read: true })); await b.commit(); } catch (e) { console.warn("activity read", e); }
+}
+function actGo(id){
+  const a = ACT.find(x => x.id === id); if (!a) return;
+  if (["request", "familyInvite"].includes(a.type)) { S.tab = "crew"; S.crewSel = null; renderTab(); return; }
+  if (["accepted", "familyApproved"].includes(a.type)) { S.tab = "crew"; S.crewSel = FR[a.from] ? a.from : null; renderTab(); window.scrollTo(0, 0); return; }
+  const sid = a.show && a.show.id; if (!sid) return;
+  if (a.owner === ME.uid || ["comment", "like"].includes(a.type)) { if (S.shows.some(x => x.id === sid)) openSheet(sid); else toast("That show was deleted"); return; }
+  if (FR[a.owner || a.from]) openFriendSheet(a.owner || a.from, sid); else toast("That show isn't available anymore");
+}
+function watchActivity(){
+  UNSUBS.push(onSnapshot(query(collection(fdb, "users", ME.uid, "activity"), orderBy("at", "desc"), limit(40)), snap => {
+    ACT = snap.docs.map(d => ({ id: d.id, ...d.data() })); updateBell();
+    if (S.tab === "inbox" && !S.open && !LB && !$("#modalRoot").innerHTML) renderInbox();
+  }, err => console.warn("activity", err)));
 }
 // Accept a tag. "Show only" copies the date, bands and venue and leaves your own night blank.
 // "Everything" also brings over their rating, notes, spend, poster and photos.
@@ -3251,7 +3416,7 @@ function renderCrew(){
       <div class="ro">Every show either of you adds lands in both logs.</div></div>
       <button class="btn red" data-famok="${esc(f.uid)}">Approve</button><button class="btn ghost" data-famno="${esc(f.uid)}">Not now</button></div>`).join("")}</div></section>`;
   const tq = ME && S.loaded ? tagInbox().length : 0;
-  if (tq) html += `<button class="fambanner" data-tagsgo><b>${tq} tag${tq > 1 ? "s" : ""} from your crew.</b> Review ${tq > 1 ? "them" : "it"} on your profile.</button>`;
+  if (tq) html += `<button class="fambanner" data-tagsgo><b>${tq} tag${tq > 1 ? "s" : ""} from your crew.</b> Review ${tq > 1 ? "them" : "it"} in your activity 🔔</button>`;
   html += pastTagSuggestBlock();
   html += `<section class="sect"><h3>The crew <span class="lbl">${fl.length}</span></h3>`;
   if (!fl.length) html += `<div class="empty"><h3>No crew yet</h3><div>Send a friend your username, or add theirs above. Once they accept, you can see each other's shows and the ones you hit together.</div></div>`;
@@ -3322,9 +3487,8 @@ function profileBlock(p, isMe, f, extra){
 
 function renderMe(){
   if (!PROFILE) return;
-  const openNow = [...document.querySelectorAll("[data-setgrp]")];
-  if (openNow.length) S.setOpen = new Set(openNow.filter(d => d.open).map(d => d.dataset.setgrp));
-  $("#view").innerHTML = `<div class="crew">${tagInboxBlock()}${profileBlock({ uid: ME.uid, name: PROFILE.name, handle: PROFILE.handle, photo: PROFILE.photoURL, cover: PROFILE.coverURL || "", bio: PROFILE.bio, favBands: favList(PROFILE), favVenue: PROFILE.favVenue || "", shows: S.shows }, true, null, {})}${bucketBlock()}${settingsBlock()}</div>`;
+  const tq = S.loaded ? tagInbox().length : 0;
+  $("#view").innerHTML = `<div class="crew">${tq ? `<button class="fambanner" data-tagsgo><b>${tq} tag${tq > 1 ? "s" : ""} from your crew.</b> Review ${tq > 1 ? "them" : "it"} in your activity 🔔</button>` : ""}${profileBlock({ uid: ME.uid, name: PROFILE.name, handle: PROFILE.handle, photo: PROFILE.photoURL, cover: PROFILE.coverURL || "", bio: PROFILE.bio, favBands: favList(PROFILE), favVenue: PROFILE.favVenue || "", shows: S.shows }, true, null, {})}${bucketBlock()}<button class="setgo" data-settings><span><b>Settings</b><span class="ro">Privacy, notifications, email, display, your data</span></span><span class="chev" aria-hidden="true">›</span></button></div>`;
   drawBucketShows();
 }
 /* ---------- Bucket list: bands you want to see. New dates for them show up in Just announced and the Sunday recap. ---------- */
@@ -3398,50 +3562,63 @@ function addBucket(){
 document.addEventListener("click", e => {
   const a = e.target.closest && e.target.closest("[data-bkadd]"); if (a) { addBucket(); return; }
   const c = e.target.closest && e.target.closest("[data-bkcat]"); if (c) { const sh = BK.list[Number(c.dataset.bkcat)]; if (sh) openSheetFrom(sh); return; }
-  const d = e.target.closest && e.target.closest("[data-bkdel]"); if (d) { const l = bucketOf(PROFILE).slice(); l.splice(Number(d.dataset.bkdel), 1); saveBucket(l); }
+  const d = e.target.closest && e.target.closest("[data-bkdel]"); if (d) { const old = bucketOf(PROFILE).slice(), l = old.slice(), [gone] = l.splice(Number(d.dataset.bkdel), 1); saveBucket(l); toastUndo(`${gone} off your bucket list`, () => saveBucket(old)); }
 });
 document.addEventListener("keydown", e => { if (e.key !== "Enter") return; if (e.target.dataset && e.target.dataset.fin) { e.preventDefault(); postComment2(e.target.dataset.fin, e.target); } else if (e.target.id === "cin") { e.preventDefault(); postComment(); } });
 document.addEventListener("keydown", e => { if (e.key === "Enter" && e.target.id === "bk-in") { const box = e.target.parentElement.querySelector(".acbox"); if (box) box.hidden = true; e.preventDefault(); addBucket(); } });
 const selectRow = (key, label, help, opts, val) => `<label class="setrow"><span class="st"><b>${esc(label)}</b>${help ? `<span class="ro">${esc(help)}</span>` : ""}</span>
   <select data-setting="${key}" aria-label="${esc(label)}">${opts.map(([v, l]) => `<option value="${v}" ${val === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`;
-function settingsBlock(){
-  const set = MY(), open = S.setOpen || new Set();
-  const grp = (id, title, body) => `<details class="setgrp" data-setgrp="${id}" ${open.has(id) ? "open" : ""}><summary><h3>${title}</h3></summary>${body}</details>`;
-  return `<section class="sect settings"><h3 style="margin-bottom:6px">Settings</h3>
-    ${grp("privacy", "Privacy", `<div class="ro" style="margin:4px 0 10px">Choose who sees each part of your log. Family only means people you've linked with Crew Family. Public covers your whole crew today, and anyone on Pit Log if public profiles are added later.</div>
-      ${PRIVACY.map(([k, l, h]) => selectRow(k, l, h, LEVELS, set[k])).join("")}`)}
-    ${grp("push", "Phone notifications", pushBlock() + [
+// Settings live on their own screen: a short menu, and one section at a time.
+const SET_SECS = [["privacy", "Privacy", "Who sees each part of your log"], ["push", "Phone notifications", "Tags, comments, show day and more"], ["notify", "Email", "Daily digest and Sunday recap"],
+  ["display", "Display", "Default views, currency, distance"], ["data", "Your data", "Download, import, delete account"], ["help", "Help and legal", "Support, privacy policy, terms"]];
+function settingsBody(id){
+  const set = MY();
+  if (id === "privacy") return `<div class="ro" style="margin:4px 0 10px">Choose who sees each part of your log. Family only means people you've linked with Crew Family. Public covers your whole crew today, and anyone on Pit Log if public profiles are added later.</div>
+      ${PRIVACY.map(([k, l, h]) => selectRow(k, l, h, LEVELS, set[k])).join("")}`;
+  if (id === "push") return pushBlock() + [
       selectRow("pushRequests", "Crew requests", "Crew requests and Crew Family invites.", [["on", "On"], ["off", "Off"]], set.pushRequests),
       selectRow("pushTags", "Tags", "When someone tags you on a show.", [["on", "On"], ["off", "Off"]], set.pushTags),
       selectRow("pushComments", "Comments", "Comments on your shows.", [["on", "On"], ["off", "Off"]], set.pushComments),
       selectRow("pushLikes", "🤘 on your shows", "Each time someone throws you the horns.", [["on", "On"], ["off", "Off"]], set.pushLikes),
       selectRow("pushReminders", "Show day", "Around noon on the day of a show you're going to.", [["on", "On"], ["off", "Off"]], set.pushReminders),
       selectRow("pushOnsale", "Tickets on sale", "About an hour before tickets go on sale for tours you marked Interested.", [["on", "On"], ["off", "Off"]], set.pushOnsale),
-      selectRow("pushAnnounce", "New tour dates", "Around 10 AM when a bucket-list band announces dates near you.", [["on", "On"], ["off", "Off"]], set.pushAnnounce)].join(""))}
-    ${grp("notify", "Email", `<div class="ro" style="margin:4px 0 10px">Emails come from alerts@thepitlog.com and go to ${esc((ME && ME.email) || "the address you sign in with")}.</div>` + [
+      selectRow("pushAnnounce", "New tour dates", "Around 10 AM when a bucket-list band announces dates near you.", [["on", "On"], ["off", "Off"]], set.pushAnnounce)].join("");
+  if (id === "notify") return `<div class="ro" style="margin:4px 0 10px">Emails come from alerts@thepitlog.com and go to ${esc((ME && ME.email) || "the address you sign in with")}.</div>` + [
       selectRow("emailDigest", "Daily digest", "One email around 6 PM, only on days something happened: crew requests, tags, shows your crew adds, and show reminders. Weekly sends it Sundays instead.", [["daily", "Daily"], ["weekly", "Weekly"], ["off", "Off"]], set.emailDigest),
       selectRow("emailRequests", "Include crew requests", "Crew requests, accepts and Crew Family invites, in the digest.", [["on", "Include"], ["off", "Leave out"]], set.emailRequests),
       selectRow("emailTags", "Include tags", "When someone tags you on a show, in the digest.", [["on", "Include"], ["off", "Leave out"]], set.emailTags),
       selectRow("emailReminders", "Include show reminders", "Sent 7 days and 1 day before a show, listing every show you have in the next week.", [["on", "Include"], ["off", "Leave out"]], set.emailReminders),
-      selectRow("emailWeekly", "Weekly recap", "Sunday mornings: open crew requests, your upcoming shows, crew going too, and new tour announcements for your bucket list and bands you've seen.", [["on", "Email me"], ["off", "Off"]], set.emailWeekly)].join(""))}
-    ${grp("display", "Display", [
+      selectRow("emailWeekly", "Weekly recap", "Sunday mornings: open crew requests, your upcoming shows, crew going too, and new tour announcements for your bucket list and bands you've seen.", [["on", "Email me"], ["off", "Off"]], set.emailWeekly)].join("");
+  if (id === "display") return [
       selectRow("defaultView", "Shows opens to", "", [["list", "List"], ["cal", "Calendar"]], set.defaultView),
       selectRow("defaultSort", "Default sort", "", Object.entries(SORTS), set.defaultSort),
       selectRow("crewDefault", "Crew shows mixed in", "Starting state of the Crew toggle.", [["off", "Off"], ["on", "On"]], set.crewDefault),
       selectRow("weekStart", "Week starts on", "", [["sun", "Sunday"], ["mon", "Monday"]], set.weekStart),
       selectRow("currency", "Currency", "", [["$", "$ Dollar"], ["€", "€ Euro"], ["£", "£ Pound"]], set.currency),
-      selectRow("distance", "Distance", "", [["mi", "Miles"], ["km", "Kilometers"]], set.distance)].join(""))}
-    ${grp("data", "Your data", `<div class="ro" style="margin:4px 0 10px">Download a backup of every show you've logged. Import it from the account menu to restore it.</div>
+      selectRow("distance", "Distance", "", [["mi", "Miles"], ["km", "Kilometers"]], set.distance)].join("")
+      + `<div class="ro" style="margin-top:12px">How your name shows on tags is under <button class="linkbtn" data-editprofile>Edit profile</button>.</div>`;
+  if (id === "data") return `<div class="ro" style="margin:4px 0 10px">Download a backup of every show you've logged.</div>
       <button class="btn" data-backup>Download my data</button>
+      <div class="ro" style="margin:16px 0 8px"><b class="bone">Import a file.</b> A Pit Log backup, or a ticket-cost file. A cost file only fills in ticket totals on shows you've already logged.</div>
+      <label class="btn" style="text-align:center">Import Pit Log file<input class="vh" type="file" id="importFile" accept=".json,application/json"></label>
       <div class="ro" style="margin:16px 0 8px"><b class="bone">Import from setlist.fm.</b> Already log shows there? Bring your whole attended history over, setlists included. Shows you already have are skipped.${FEAT.setlist ? "" : ` <b>Coming soon:</b> we're finishing the setlist.fm connection.`}</div>
       <div class="bkadd"><input id="slUser" placeholder="Your setlist.fm username" autocapitalize="none" spellcheck="false" aria-label="setlist.fm username"><button class="btn red" data-slimport>Import</button></div>
       <div class="ro" id="slImportMsg"></div>
       <div class="ro" style="margin:18px 0 8px"><b class="bone">Delete my account.</b> Permanently removes your profile, shows, photos and crew links. Shows you shared with Crew Family stay in their log.</div>
-      <button class="btn warn" data-delacct>Delete my account</button>`)}
-    <div class="ro legal"><a href="privacy.html">Privacy</a> · <a href="terms.html">Terms</a></div>
-    <div class="support"><b>Need a hand?</b> Questions, bugs, ideas, or a show that won't save: email <a href="mailto:support@thepitlog.com?subject=Pit%20Log%20help%20(%40${encodeURIComponent(PROFILE.handle || "")})">support@thepitlog.com</a>. A real person reads every one.</div>
-  </section>`;
+      <button class="btn warn" data-delacct>Delete my account</button>`;
+  if (id === "help") return `<div class="support"><b>Need a hand?</b> Questions, bugs, ideas, or a show that won't save: email <a href="mailto:support@thepitlog.com?subject=Pit%20Log%20help%20(%40${encodeURIComponent(PROFILE.handle || "")})">support@thepitlog.com</a>. A real person reads every one.</div>
+      <div class="setlinks"><button class="btn" data-whatsnew2>What's new in Pit Log</button><a class="btn" href="version-history.html">Full version history</a><a class="btn" href="privacy.html">Privacy policy</a><a class="btn" href="terms.html">Terms</a></div>`;
+  return "";
 }
+function renderSettings(){
+  if (!PROFILE) return;
+  const sec = SET_SECS.find(x => x[0] === S.setSec);
+  if (sec) { $("#view").innerHTML = `<div class="crew setscreen"><button class="backlink" data-setsec="">‹ Settings</button><section class="sect settings"><h2 class="seth">${esc(sec[1])}</h2>${settingsBody(sec[0])}</section></div>`; return; }
+  $("#view").innerHTML = `<div class="crew setscreen"><button class="backlink" data-myprofile2>‹ Profile</button><section class="sect settings"><h2 class="seth">Settings</h2>
+    <div class="setmenu">${SET_SECS.map(([id, t, sub]) => `<button class="setmi" data-setsec="${id}"><span><b>${esc(t)}</b><span class="ro">${esc(sub)}</span></span><span class="chev" aria-hidden="true">›</span></button>`).join("")}</div>
+    <button class="btn warn setout" data-signout2>Sign out</button></section></div>`;
+}
+const rerenderSettingsish = () => { if (S.tab === "me") renderMe(); else if (S.tab === "settings") renderSettings(); };
 async function saveSetting(key, val){
   PROFILE.settings = { ...(PROFILE.settings || {}), [key]: val }; cacheProfile();
   if (key === "defaultView") { S.showView = val; try { localStorage.setItem("pitlog.showView", val); } catch (_) {} }
@@ -3663,7 +3840,7 @@ async function saveProfileEdit(){
     if (old && old !== patch.photoPath) removeFile(old);
     if (oldCover && oldCover !== patch.coverPath) removeFile(oldCover);
     PEDIT = null; $("#modalRoot").innerHTML = "";
-    $("#acct").innerHTML = avatar(PROFILE.photoURL, PROFILE.name) + acctBadge();
+    $("#acct").innerHTML = avatar(PROFILE.photoURL, PROFILE.name);
     toast(changing ? `You're now @${patch.handle}` : "Profile saved"); renderTab(); syncSearchFields(); schedulePublish(true); cacheProfile();
   } catch (err) { handleWriteErr(err); }
 }
@@ -3739,7 +3916,7 @@ function openInvite(){
 }
 function crewClick(t){
   if (t.hasAttribute("data-invite")) { openInvite(); return true; }
-  if (t.hasAttribute("data-tagsgo")) { S.tab = "me"; renderTab(); setTimeout(() => { const b = $("#tagInbox"); if (b) b.scrollIntoView({ block: "start", behavior: "smooth" }); }, 50); return true; }
+  if (t.hasAttribute("data-tagsgo")) { S.tab = "inbox"; renderTab(); window.scrollTo(0, 0); return true; }
   if (t.dataset.mtyes) { answerMediaTag(t.dataset.mtyes, true); return true; }
   if (t.dataset.mtno) { answerMediaTag(t.dataset.mtno, false); return true; }
   if (t.dataset.tagyes) { answerTag(t.dataset.tagyes, true); return true; }
@@ -3781,16 +3958,16 @@ function accountMenu(){
   const root = $("#modalRoot");
   root.innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-label="Account"><div class="mbox">
     <div class="me-card" style="border:0;padding:0">${avatar(PROFILE.photoURL, PROFILE.name, "lg")}<div style="min-width:0"><div class="nm">${esc(PROFILE.name||"")}</div><div class="hd">@${esc(PROFILE.handle)}</div><div class="ro">${esc(ME.email||"")}</div></div></div>
-    <button class="btn red" data-myprofile style="text-align:center">View my profile${tagInbox().filter(x => x.stage === "ask").length ? ` · ${tagInbox().filter(x => x.stage === "ask").length} tag${tagInbox().filter(x => x.stage === "ask").length > 1 ? "s" : ""} to review` : ""}</button>
+    <button class="btn red" data-myprofile style="text-align:center">View my profile</button>
+    <button class="btn" data-msettings style="text-align:center">Settings</button>
     <button class="btn" data-whatsnew style="text-align:center">What's new in Pit Log</button>
-    <div class="ro">Import a Pit Log export file, or a ticket-cost file. A cost file only fills in ticket totals on shows you've already logged.</div>
-    <label class="btn" style="text-align:center">Import Pit Log file<input class="vh" type="file" id="importFile" accept=".json,application/json"></label>
     <div class="mbtns"><button class="btn warn" data-signout>Sign out</button><button class="btn ghost" data-mclose>Close</button></div>
   </div></div>`;
   root.querySelector("[data-mclose]").onclick = () => root.innerHTML = "";
   root.querySelector("[data-signout]").onclick = () => { root.innerHTML = ""; try { localStorage.removeItem(profKey(ME.uid)); } catch (_) {} signOut(auth); };
   root.querySelector("[data-myprofile]").onclick = () => { root.innerHTML = ""; S.tab = "me"; renderTab(); window.scrollTo(0, 0); };
   root.querySelector("[data-whatsnew]").onclick = () => showWhatsNew(true);
+  root.querySelector("[data-msettings]").onclick = () => { root.innerHTML = ""; S.tab = "settings"; S.setSec = ""; renderTab(); window.scrollTo(0, 0); };
 }
 
 async function importFile(file){
@@ -3881,7 +4058,7 @@ async function saveProfile(){
 function resetState(){
   UNSUBS.forEach(u => { try { u(); } catch(_){} }); UNSUBS = [];
   for (const uid of Object.keys(FR)) dropFriend(uid);
-  REQ = { in: [], out: [] }; S.shows = []; S.loaded = false; S.tab = "home"; S.crewSel = null;
+  REQ = { in: [], out: [] }; ACT = []; S.shows = []; S.loaded = false; S.tab = "home"; S.crewSel = null;
   closeLightbox(); if (S.open) closeSheet(); $("#modalRoot").innerHTML = "";
   ME = null; PROFILE = null; db = null; assets = null;
 }
@@ -3975,8 +4152,8 @@ function startApp(){
   if (ps.defaultSort && SORTS[ps.defaultSort]) S.sort = ps.defaultSort;
   if (ps.crewDefault) S.crewOn = ps.crewDefault === "on";
   showOnly("appRoot");
-  const a = $("#acct"); a.hidden = false; a.innerHTML = avatar(PROFILE.photoURL, PROFILE.name) + acctBadge();
-  $("#searchBtn").hidden = false;
+  const a = $("#acct"); a.hidden = false; a.innerHTML = avatar(PROFILE.photoURL, PROFILE.name);
+  $("#searchBtn").hidden = false; $("#bellBtn").hidden = false;
   $("#addBtn").hidden = false;
   syncSearchFields();
   // Remember this device's time zone so emails arrive at 6 PM / Sunday morning local time.
@@ -4004,6 +4181,7 @@ function startApp(){
     REQ[key] = snap.docs.map(d => ({ id: d.id, ...d.data() })); syncFriends(); updateCrewBadge();
   }, err => console.error("requests", err));
   UNSUBS.push(reqs("to", "in"), reqs("from", "out"));
+  watchActivity();
   setTimeout(claimInvite, 3000); setTimeout(loadFeatures, 1200);
   if (START_GO) setTimeout(() => goTo(START_GO), 1800);
 }
@@ -4087,7 +4265,7 @@ onAuthStateChanged(auth, async user => {
   if (cached) {
     // Open straight away from the saved profile, then quietly swap in the server copy.
     PROFILE = cached; enterApp();
-    getDoc(doc(fdb, "users", user.uid)).then(p => { if (p.exists() && p.data().handle && ME && ME.uid === user.uid) { PROFILE = { ...p.data() }; cacheProfile(); const a = $("#acct"); if (a) a.innerHTML = avatar(PROFILE.photoURL, PROFILE.name) + acctBadge(); } }).catch(() => {});
+    getDoc(doc(fdb, "users", user.uid)).then(p => { if (p.exists() && p.data().handle && ME && ME.uid === user.uid) { PROFILE = { ...p.data() }; cacheProfile(); const a = $("#acct"); if (a) a.innerHTML = avatar(PROFILE.photoURL, PROFILE.name); } }).catch(() => {});
     return;
   }
   if ($("#boot").hidden) showOnly("gate");
@@ -4130,7 +4308,7 @@ async function messagingMod(){ return await import("https://www.gstatic.com/fire
 async function enablePush(){
   if (!pushSupported()) { toast("This browser can't show notifications"); return; }
   const perm = await Notification.requestPermission();
-  if (perm !== "granted") { toast(perm === "denied" ? "Notifications are blocked. Allow them in your phone's settings." : "Notifications not turned on"); if (S.tab === "me") renderMe(); return; }
+  if (perm !== "granted") { toast(perm === "denied" ? "Notifications are blocked. Allow them in your phone's settings." : "Notifications not turned on"); rerenderSettingsish(); return; }
   try {
     toast("Turning on notifications…", 4000);
     const reg = await navigator.serviceWorker.register("./sw.js"); await navigator.serviceWorker.ready;
@@ -4144,13 +4322,13 @@ async function enablePush(){
     try { localStorage.setItem("pitlog.pushTok", token); localStorage.setItem("pitlog.pushId", id); } catch (_) {}
     toast("Notifications on 🤘", 2500);
   } catch (e) { console.error("push", e); logError(String((e && e.message) || e), "enablePush"); toast("Couldn't turn on notifications. Try again in a minute.", 4000); }
-  if (S.tab === "me") renderMe();
+  rerenderSettingsish();
 }
 async function disablePush(){
   let id = ""; try { id = localStorage.getItem("pitlog.pushId") || ""; localStorage.removeItem("pitlog.pushTok"); localStorage.removeItem("pitlog.pushId"); } catch (_) {}
   try { const { getMessaging, deleteToken } = await messagingMod(); await deleteToken(getMessaging(app)); } catch (_) {}
   if (id) try { await deleteDoc(doc(fdb, "users", ME.uid, "push", id)); } catch (_) {}
-  toast("Notifications off for this phone"); if (S.tab === "me") renderMe();
+  toast("Notifications off for this phone"); rerenderSettingsish();
 }
 async function testPush(){
   try { const reg = await navigator.serviceWorker.ready; await reg.showNotification("Pit Log 🤘", { body: "This is what an alert looks like on this phone.", icon: "icons/icon-192.png", badge: "icons/favicon-64.png", tag: "test" }); }
@@ -4160,7 +4338,7 @@ async function testPush(){
 function goTo(url){
   let q; try { q = new URL(url, location.href).searchParams; } catch (_) { return; }
   const go = q.get("go"); if (!go || !ME || !PROFILE) return;
-  if (go === "tags") { S.tab = "me"; renderTab(); setTimeout(() => $("#tagInbox")?.scrollIntoView({ block: "start" }), 80); }
+  if (go === "tags" || go === "inbox") { S.tab = "inbox"; renderTab(); window.scrollTo(0, 0); }
   else if (go === "crew" || go === "disc") { S.tab = go; renderTab(); }
   else if (go === "show") { const o = q.get("o"), id = q.get("s"); if (o === ME.uid) { if (S.shows.some(x => x.id === id)) { S.tab = "shows"; renderTab(); openSheet(id); } } else if (FR[o]) openFriendSheet(o, id); }
 }
@@ -4178,6 +4356,11 @@ function pushClick(t){
    than the feature it fixes (same-day polish is part of the feature). b = the build it shipped in.
    Every build, user-facing or not (including removals), also gets an entry in version-history.html. */
 const WHATS_NEW = [
+  { b: 76, date: "2026-11-23", icon: "🔔", t: "Activity inbox", d: "Tap the bell for crew requests, tags, comments and 🤘s in one place.", go: "inbox" },
+  { b: 76, date: "2026-11-23", icon: "✍️", t: "Shorter show forms", d: "Upcoming shows ask only for plans. Rating and memories wait until after the night." },
+  { b: 76, date: "2026-11-23", icon: "⚙️", t: "Settings has its own screen", d: "Open it from your account menu or the bottom of your profile." },
+  { b: 76, date: "2026-11-23", icon: "📊", t: "Lighter Stats", d: "Stats now split into Overview, Bands & crew, Spend and Patches." },
+  { b: 76, date: "2026-11-23", icon: "↩️", t: "Undo", d: "Deleted a show or removed a photo by mistake? Tap Undo on the message that pops up." },
   { b: 75, date: "2026-11-23", icon: "📜", t: "Setlists are coming", d: "Setlist features show a coming-soon note until setlist.fm is connected. Privacy policy and terms were refreshed too." },
   { b: 74, date: "2026-11-22", icon: "🗺️", t: "Tour names on show cards", d: "Your Shows list now shows each show's tour name when it has one.", go: "shows" },
   { b: 73, date: "2026-11-22", icon: "📐", t: "Tidier show cards", d: "Names, ratings and tags on show cards now line up on clean rows." },
@@ -4233,9 +4416,9 @@ function whatsNewGo(go){
   const [tab, sub] = go.split(":");
   if (tab === "disc") { S.disc.view = sub || "up"; }
   if (tab === "vault" && S.vault) S.vault.type = "videos";
+  if (tab === "stats" && sub === "patches") S.statView = "patches";
+  if (tab === "me" && sub === "push") { S.tab = "settings"; S.setSec = "push"; renderTab(); window.scrollTo(0, 0); return; }
   S.tab = tab; renderTab(); window.scrollTo(0, 0);
-  if (tab === "stats" && sub) setTimeout(() => $("#" + sub)?.scrollIntoView({ block: "start" }), 80);
-  if (tab === "me" && sub === "push") setTimeout(() => { const d = document.querySelector('[data-setgrp="push"]'); if (d) { d.open = true; d.scrollIntoView({ block: "start" }); } }, 80);
 }
 // Once per launch, after your log has loaded, if nothing else is open.
 let WN_DONE = false;

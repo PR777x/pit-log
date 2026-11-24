@@ -22,6 +22,12 @@ service cloud.firestore {
         allow read, write: if signedIn() && me() == uid;
       }
 
+      // Activity inbox: written by the server, the owner can read it, mark it read, or clear it.
+      match /activity/{id} {
+        allow read, delete: if signedIn() && me() == uid;
+        allow update: if signedIn() && me() == uid && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
+      }
+
       match /shows/{showId} {
         allow read: if signedIn() && (me() == uid || friends(me(), uid));
         allow delete: if signedIn() && me() == uid;
