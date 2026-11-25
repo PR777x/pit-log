@@ -100,7 +100,7 @@ jobs:
               for (const e of errs.docs) { const x = e.data(); console.log("app error", t(x.at), "build", x.build || "?", "|", String(x.msg || "").slice(0, 160), "|", String(x.where || "").slice(0, 60)); }
               const admin = list.users.find(x => x.email && crypto.createHash("sha256").update(x.email.trim().toLowerCase()).digest("hex") === "756dc8d665670c2e7b9550374dd0faca59ca1638be06ec438737d87fb810eae3");
               if (admin) { try {
-                // Read her profile the way the site owner's app would (read-only), to test the database rules.
+                // Read her profile the way the site owner app would (read-only), to test the database rules.
                 const tok = await auth.createCustomToken(admin.uid);
                 const r1 = await fetch("https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=AIzaSyBBbSi3h5wPsIMMZoj2kUoHBa3d-dTb4Ik", { method: "POST", headers: { "Content-Type": "application/json", Referer: "https://thepitlog.com/" }, body: JSON.stringify({ token: tok, returnSecureToken: true }) });
                 const j1 = await r1.json(); if (!j1.idToken) console.log("owner token exchange failed", r1.status, JSON.stringify(j1).slice(0, 200));
