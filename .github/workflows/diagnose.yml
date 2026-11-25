@@ -11,6 +11,9 @@ on:
       band:
         description: "Band to look up live"
         default: "Insomnium"
+      user:
+        description: "Username to check (read-only; prints only yes/no and times)"
+        default: ""
 
 jobs:
   diagnose:
@@ -59,3 +62,41 @@ jobs:
           node -e 'require("./artists").bandInfo(process.env.BAND).then(r => { console.log(JSON.stringify(r).slice(0, 900)); require("fs").writeFileSync("/tmp/img.txt", [r.image || "", r.imageSmall || ""].join("\n")); }).catch(e => console.log("ERROR", e.status, e.message))'
           while read -r u; do [ -n "$u" ] && curl -s -o /dev/null -w "image %{http_code} %{content_type} $u\n" -A "Mozilla/5.0 (Linux; Android 14) Chrome/130 Mobile" -e "https://thepitlog.com/" "$u"; done < /tmp/img.txt || true
           curl -s -o /dev/null -w "musicbrainz %{http_code}\n" -A "PitLog/1.0 (https://thepitlog.com; support@thepitlog.com)" "https://musicbrainz.org/ws/2/artist?query=artist:%22Insomnium%22&fmt=json&limit=1"
+      - name: Account check (read-only, no personal details printed)
+        if: ${{ inputs.user != '' }}
+        continue-on-error: true
+        working-directory: functions
+        env:
+          WHO: ${{ inputs.user }}
+        run: |
+          node -e '
+            const { initializeApp } = require("firebase-admin/app"); const { getFirestore } = require("firebase-admin/firestore"); const { getAuth } = require("firebase-admin/auth"); const { getStorage } = require("firebase-admin/storage");
+            const crypto = require("crypto");
+            initializeApp({ storageBucket: "pit-log.firebasestorage.app" }); const db = getFirestore("pit-log"), auth = getAuth();
+            const mask = u => u ? "…" + u.slice(-4) : "none", t = x => x && x.toDate ? x.toDate().toISOString() : x ? new Date(x).toISOString() : "none";
+            const has = v => v === undefined ? "missing" : v === "" || v === null ? "empty" : "set";
+            (async () => {
+              const h = String(process.env.WHO).replace(/^@/, "").toLowerCase();
+              const hd = await db.doc("handles/" + h).get(); const uid = hd.exists ? hd.data().uid : null;
+              console.log("handle doc:", hd.exists ? "exists -> uid " + mask(uid) : "MISSING");
+              const handlesForUid = uid ? (await db.collection("handles").where("uid", "==", uid).get()).docs.length : 0; console.log("handles pointing at that uid:", handlesForUid);
+              if (!uid) return;
+              const u = await db.doc("users/" + uid).get();
+              if (!u.exists) { console.log("profile doc: MISSING"); } else { const d = u.data();
+                console.log("profile doc: exists. created", t(u.createTime), "updated", t(u.updateTime));
+                console.log("fields:", Object.keys(d).sort().join(","));
+                console.log("name:", has(d.name), "| handle matches:", d.handle === h, "| photoURL:", has(d.photoURL), "| photoPath:", has(d.photoPath), "| tagShow:", d.tagShow || "unset", "| prevHandles:", (d.prevHandles || []).length, "| seenBuild:", d.seenBuild || "none");
+                if (d.photoPath) { try { const [ok] = await getStorage().bucket().file(d.photoPath).exists(); console.log("photo file in storage:", ok ? "yes" : "NO"); } catch (e) { console.log("photo file check failed", e.message); } }
+              }
+              try { const a = await auth.getUser(uid); console.log("auth: providers", a.providerData.map(p => p.providerId).join(",") || "none", "| created", a.metadata.creationTime, "| last sign-in", a.metadata.lastSignInTime, "| last refresh", a.metadata.lastRefreshTime, "| tokens valid after", a.tokensValidAfterTime, "| disabled", a.disabled, "| authProfile name", has(a.displayName), "photo", has(a.photoURL)); } catch (e) { console.log("auth user: NOT FOUND", e.code || e.message); }
+              // Other accounts that look like the same person (same name on the profile), uid masked.
+              if (u.exists && u.data().name) { const same = await db.collection("users").where("name", "==", u.data().name).get(); console.log("profiles with the same name:", same.docs.map(x => mask(x.id)).join(" ")); }
+              const reqs = [...(await db.collection("friendRequests").where("from", "==", uid).get()).docs, ...(await db.collection("friendRequests").where("to", "==", uid).get()).docs];
+              for (const r of reqs) { const x = r.data(), side = x.from === uid ? "from" : "to"; console.log("crew link", mask(x.from === uid ? x.to : x.from), x.status, "family", x.family || "off", "| their name copy:", has(x[side + "Name"]), "photo copy:", has(x[side + "Photo"]), "| updated", t(r.updateTime)); }
+              // Recently created accounts (could be a second account made while signed out)
+              const list = await auth.listUsers(1000); const recent = list.users.filter(x => Date.now() - Date.parse(x.metadata.creationTime) < 7 * 864e5);
+              console.log("accounts created in last 7 days:", recent.length, recent.map(x => mask(x.uid) + " " + x.providerData.map(p => p.providerId).join("+")).join(" ; "));
+              const admin = list.users.find(x => x.email && crypto.createHash("sha256").update(x.email.trim().toLowerCase()).digest("hex") === "756dc8d665670c2e7b9550374dd0faca59ca1638be06ec438737d87fb810eae3");
+              if (admin) console.log("site owner auth: last sign-in", admin.metadata.lastSignInTime, "| last refresh", admin.metadata.lastRefreshTime, "| tokens valid after", admin.tokensValidAfterTime);
+            })().catch(e => console.log("ERROR", e.message));
+          '
