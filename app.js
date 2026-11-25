@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile, applyActionCode } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=79";
+import { VENUES } from "./venues.js?v=80";
 import { getStorage, ref as sref, uploadBytes, uploadBytesResumable, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -3947,18 +3947,19 @@ async function renderTraffic(){
   $("#view").innerHTML = `<div class="crew setscreen"><button class="backlink" data-settings>‹ Settings</button><section class="sect"><h2 class="seth">Site traffic</h2><div class="ro">Loading…</div></section></div>`;
   let r; try { r = await callAccount("traffic"); } catch (e) { if (S.tab === "traffic") $("#view .ro").textContent = "Couldn't load traffic: " + (e.message || e); return; }
   if (S.tab !== "traffic") return;
-  const D = r.days || [], sum = (k, n) => D.slice(-n).reduce((a, d) => a + (d[k] || 0), 0), max = Math.max(1, ...D.map(d => d.uniques));
+  const D = r.days || [], sum = (k, n) => D.slice(-n).reduce((a, d) => a + (d[k] || 0), 0), max = Math.max(1, ...D.map(d => d.people || d.uniques));
   const tot = key => { const m = {}; for (const d of D) for (const [k, v] of Object.entries(d[key] || {})) m[k] = (m[k] || 0) + v; return Object.entries(m).sort((a, b) => b[1] - a[1]); };
   const tile = (l, v) => `<div class="tile"><div class="lbl">${l}</div><div class="v num">${v}</div></div>`;
+  const U = r.unique || {}, ptile = (l, x) => `<div class="tile"><div class="lbl">${l}</div><div class="v num">${x ? x.all : 0}</div><div class="ro" style="font-size:12px">${x ? `${x.signedIn} signed in · ${x.guests} signed out` : ""}</div></div>`;
   const list = (rows, fmt) => rows.length ? `<div class="rank">${rows.slice(0, 10).map(([k, v]) => `<div class="row"><span class="n">${esc(fmt ? fmt(k) : k)}</span><span class="num lbl" style="color:var(--bone)">${v}</span><div class="track"><i style="width:${(v / rows[0][1] * 100).toFixed(1)}%"></i></div></div>`).join("")}</div>` : `<div class="ro">Nothing yet.</div>`;
   $("#view").innerHTML = `<div class="crew setscreen traffic"><button class="backlink" data-settings>‹ Settings</button><section class="sect"><h2 class="seth">Site traffic</h2>
-    <div class="ro">Counted from today on. Visitors are browsers, not accounts. Days are Eastern time.</div>
-    <div class="stats" style="margin-top:10px"><div class="tiles">${tile("Visitors today", D.length ? D[D.length - 1].uniques : 0)}${tile("Visitors · 7 days", sum("uniques", 7))}${tile("Visitors · 30 days", sum("uniques", 30))}${tile("Signed-in · 7 days", sum("uniquesIn", 7))}${tile("Sign-ups · 30 days", sum("signups", 30))}${tile("Screen views · 7 days", sum("views", 7))}${r.users != null ? tile("Accounts", r.users) : ""}${r.shows != null ? tile("Shows logged", r.shows) : ""}</div>
-    <section><h2>Visitors per day</h2><div class="bars tbars">${D.map(d => `<div class="bar" title="${esc(d.day)}: ${d.uniques}">${d.uniques ? `<span>${d.uniques}</span>` : ""}<i style="height:${d.uniques / max * 100}%"></i></div>`).join("")}</div>
+    <div class="ro">Unique people: each account counts once across all its phones and browsers, and each signed-out browser counts once. ${U.since ? `Counted since ${esc(fmtDate(U.since))}.` : "Counting starts with the next visit."} Days are Eastern time.</div>
+    <div class="stats" style="margin-top:10px"><div class="tiles">${ptile("People today", U.d1)}${ptile("People · 7 days", U.d7)}${ptile("People · 30 days", U.d30)}${tile("Sign-ups · 30 days", sum("signups", 30))}${tile("Screen views · 7 days", sum("views", 7))}${tile("App opens · 7 days", sum("opens", 7))}${r.users != null ? tile("Accounts", r.users) : ""}${r.shows != null ? tile("Shows logged", r.shows) : ""}</div>
+    <section><h2>People per day</h2><div class="bars tbars">${D.map(d => { const n = d.people || d.uniques; return `<div class="bar" title="${esc(d.day)}: ${n}">${n ? `<span>${n}</span>` : ""}<i style="height:${n / max * 100}%"></i></div>`; }).join("")}</div>
       <div class="barx tbx"><span>${esc(fmtDate(D[0] && D[0].day))}</span><span>Today</span></div></section>
     <div class="two"><section><h2>Screens · 30 days</h2>${list(tot("screens"))}</section><section><h2>Came from · 30 days</h2>${list(tot("refs"), k => k.replace(/_/g, "."))}</section></div>
     <section><h2>Devices · 30 days</h2>${list(tot("dev"), k => ({ phone: "Phone", desktop: "Desktop", app: "Opened as installed app" })[k] || k)}</section>
-    <section><h2>By day</h2><div class="ttable"><div class="tr th"><span>Day</span><span>Visitors</span><span>Signed in</span><span>Opens</span><span>Views</span><span>Sign-ups</span></div>${D.slice().reverse().filter(d => d.opens || d.signups || d.views).map(d => `<div class="tr"><span>${esc(shortDate(d.day))}</span><span>${d.uniques}</span><span>${d.uniquesIn}</span><span>${d.opens}</span><span>${d.views}</span><span>${d.signups}</span></div>`).join("") || `<div class="ro">No visits counted yet.</div>`}</div></section></div></section></div>`;
+    <section><h2>By day</h2><div class="ttable"><div class="tr th"><span>Day</span><span>People</span><span>Signed in</span><span>Opens</span><span>Views</span><span>Sign-ups</span></div>${D.slice().reverse().filter(d => d.opens || d.signups || d.views).map(d => `<div class="tr"><span>${esc(shortDate(d.day))}</span><span>${d.people || d.uniques}</span><span>${d.uniquesIn}</span><span>${d.opens}</span><span>${d.views}</span><span>${d.signups}</span></div>`).join("") || `<div class="ro">No visits counted yet.</div>`}</div></section></div></section></div>`;
 }
 const rerenderSettingsish = () => { if (S.tab === "me") renderMe(); else if (S.tab === "settings") renderSettings(); else if (S.tab === "inbox") renderInbox(); };
 async function saveSetting(key, val){
@@ -4606,11 +4607,11 @@ function hitSend(body){
   try { if (navigator.sendBeacon && navigator.sendBeacon(HIT_URL, new Blob([b], { type: "text/plain" }))) return; } catch (_) {}
   try { fetch(HIT_URL, { method: "POST", body: b, keepalive: true, headers: { "Content-Type": "text/plain" } }).catch(() => {}); } catch (_) {}
 }
-function trackOpen(signedIn){
-  if (TRK.opened) return; TRK.opened = true;
+function trackOpen(signedIn, uid){
+  if (TRK.opened) { if (uid && TRK.who !== uid) { TRK.who = uid; hitSend({ t: "who", a: uid }); } return; } TRK.opened = true; TRK.who = uid || "";
   let ref = ""; try { const r = document.referrer && new URL(document.referrer); if (r && r.hostname !== location.hostname) ref = r.hostname; } catch (_) {}
   const pwa = (window.matchMedia && matchMedia("(display-mode: standalone)").matches) || navigator.standalone === true;
-  hitSend({ t: "open", u: !!signedIn, m: /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent), pwa, r: ref });
+  hitSend({ t: "open", u: !!signedIn, ...(uid ? { a: uid } : {}), m: /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent), pwa, r: ref });
 }
 function trackScreen(name){ if (!name || name === TRK.last) return; TRK.last = name; TRK.s[name] = (TRK.s[name] || 0) + 1; }
 function flushScreens(){ if (!Object.keys(TRK.s).length) return; const s = TRK.s; TRK.s = {}; hitSend({ t: "screens", s }); }
@@ -4618,7 +4619,7 @@ document.addEventListener("visibilitychange", () => { if (document.visibilitySta
 window.addEventListener("pagehide", flushScreens);
 
 onAuthStateChanged(auth, async user => {
-  trackOpen(!!user); if (!user) trackScreen("landing");
+  trackOpen(!!user, user && user.uid); if (!user) trackScreen("landing");
   let wasRedirect = false; try { wasRedirect = sessionStorage.getItem("pitlog.redirect") === "1"; sessionStorage.removeItem("pitlog.redirect"); } catch(_){}
   if (!user) {
     resetState(); showOnly("gate");

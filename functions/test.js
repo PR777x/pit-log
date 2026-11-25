@@ -493,7 +493,17 @@ const sentTo = who => emails.filter(e => e.to[0] === who + "@example.com");
     assert.deepStrictEqual(tr.refs, { google_com: 1, direct: 1, instagram_com: 1 }); assert.deepStrictEqual(tr.dev, { phone: 2, desktop: 1 });
     assert.deepStrictEqual(tr.screens, { home: 3, disc: 2, other: 4 }); assert.strictEqual(tr.views, 9);
     assert.ok(![...store.keys()].some(k => k.includes("visitor-aaaa")), "visitor IDs stored hashed");
-    const rep = await F.trafficReport(); assert.strictEqual(rep.days.length, 30); assert.strictEqual(rep.days[29].opens, 3); assert.ok(rep.users > 0); }
+    const rep = await F.trafficReport(); assert.strictEqual(rep.days.length, 30); assert.strictEqual(rep.days[29].opens, 3); assert.ok(rep.users > 0);
+    // true uniques: same account on two browsers = 1 person; a browser that signs in later in the day joins that account
+    const yday = new Date(Date.now() - 864e5);
+    await F.recordHit({ t: "open", v: "phone-1111", u: true, a: "userA" }, yday);
+    await F.recordHit({ t: "open", v: "laptop-222", u: true, a: "userA" });
+    await F.recordHit({ t: "open", v: "guest-3333", u: false });
+    await F.recordHit({ t: "open", v: "guest-4444", u: false }); await F.recordHit({ t: "who", v: "guest-4444", a: "userB" });
+    const r2 = await F.trafficReport();
+    // today: visitor-aaaa(signed in, no uid sent), visitor-bbbb, laptop(userA), guest-3333, guest-4444(userB); yesterday: phone(userA)
+    assert.deepStrictEqual(r2.unique.d7, { all: 5, signedIn: 2, guests: 3 }, "userA counted once across browsers and days");
+    assert.ok(![...store.keys()].some(k => /userA|phone-1111/.test(k) || JSON.stringify(store.get(k) || {}).includes("userA")), "ids stored hashed"); }
   // 25. People you may know: friend of a friend, and someone public at the same show
   { const put = (id, v) => store.set(id, v);
     put("users/pmA", { name: "A", handle: "pma" }); put("users/pmB", { name: "B", handle: "pmb" }); put("users/pmC", { name: "C", handle: "pmc" }); put("users/pmD", { name: "D", handle: "pmd" });

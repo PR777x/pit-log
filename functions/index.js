@@ -86,6 +86,14 @@ async function recordHit(body, now = new Date()){
     if (!seen.exists) { await vref.set({ u: !!body.u }); patch.uniques = inc(1); if (body.u) patch.uniquesIn = inc(1); }
     else if (body.u && !seen.data().u) { await vref.set({ u: true }); patch.uniquesIn = inc(1); }
   }
+  // True unique people: one doc per browser per day (traffic/{day}/p/{key}), keyed the same way every day so
+  // weeks and months can be de-duplicated. Signed-in browsers carry a hashed account key, so the same person
+  // on several browsers counts once. Nothing here can be turned back into an account or email.
+  if (body.t === "open" || body.t === "who") {
+    const key = crypto.createHash("sha256").update("pitlog-v|" + vid).digest("hex").slice(0, 24);
+    const uid = clip(body.a, 64), uk = uid ? crypto.createHash("sha256").update("pitlog-u|" + uid).digest("hex").slice(0, 24) : "";
+    await db.doc(`traffic/${day}/p/${key}`).set(uk ? { uk } : { seen: true }, { merge: true });
+  }
   const sc = body.s && typeof body.s === "object" ? body.s : {}, tally = {};
   for (const [k, v] of Object.entries(sc).slice(0, 30)) { const key = SCREENS.has(k) ? k : "other", c = Math.max(0, Math.min(200, Math.round(Number(v) || 0))); if (c) tally[key] = (tally[key] || 0) + c; }
   let views = 0; for (const [k, c] of Object.entries(tally)) { add("screens", k, c); views += c; }
@@ -108,7 +116,12 @@ async function trafficReport(now = new Date()){
   try { const c = await db.collection("users").count().get(); users = c.data().count; } catch (_) {}
   try { const all = await db.collection("users").get(); for (const u of all.docs) { const t = u.createTime && u.createTime.toDate ? u.createTime.toDate() : null; if (t) { const k = L.todayET(t); if (k >= days[0]) signups[k] = (signups[k] || 0) + 1; } } if (users == null) users = all.docs.length; } catch (_) {}
   let shows = null; try { const c = await db.collectionGroup("shows").count().get(); shows = c.data().count; } catch (_) {}
-  return { days: rows.map(r => ({ day: r.day, opens: r.opens || 0, uniques: r.uniques || 0, uniquesIn: r.uniquesIn || 0, views: r.views || 0, signups: signups[r.day] || 0, screens: r.screens || {}, refs: r.refs || {}, dev: r.dev || {} })), users, shows };
+  // Unique people over 7 and 30 days: a browser that ever signed in counts as that account.
+  const ppl = await Promise.all(days.map(d => db.collection(`traffic/${d}/p`).get().then(s => s.docs.map(x => ({ k: x.id, uk: x.data().uk || "" }))).catch(() => [])));
+  const link = new Map(); for (const day of ppl) for (const x of day) if (x.uk) link.set(x.k, x.uk);
+  const people = n => { const all = new Set(), signed = new Set(); for (const day of ppl.slice(-n)) for (const x of day) { const who = x.uk || link.get(x.k); all.add(who ? "u:" + who : "v:" + x.k); if (who) signed.add(who); } return { all: all.size, signedIn: signed.size, guests: all.size - signed.size }; };
+  const unique = { d1: people(1), d7: people(7), d30: people(30), since: (rows.find((r, i) => ppl[i].length) || {}).day || "" };
+  return { days: rows.map(r => ({ day: r.day, opens: r.opens || 0, uniques: r.uniques || 0, uniquesIn: r.uniquesIn || 0, views: r.views || 0, signups: signups[r.day] || 0, screens: r.screens || {}, refs: r.refs || {}, dev: r.dev || {}, people: ppl[days.indexOf(r.day)].length })), users, shows, unique };
 }
 module.exports.trafficReport = trafficReport;
 
