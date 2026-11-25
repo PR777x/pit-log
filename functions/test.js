@@ -510,5 +510,17 @@ const sentTo = who => emails.filter(e => e.to[0] === who + "@example.com");
     put("friendRequests/pmA_pmD", { from: "pmA", to: "pmD", status: "pending" });
     assert.ok(!(await F.suggestPeople("pmA", { fresh: true })).list.some(x => x.handle === "pmd"), "pending requests skipped"); }
 
+  // 26. Crew links keep a current copy of each person's name, username and photo
+  { store.set("users/cpA", { name: "Carly C", handle: "djentyghoul", photoURL: "https://img/c.jpg", seenBuild: 79 });
+    store.set("friendRequests/cpP_cpA", { from: "cpP", to: "cpA", status: "accepted", family: "active", toName: "", toHandle: "conlancarly", toPhoto: "" });
+    store.set("friendRequests/cpA_cpS", { from: "cpA", to: "cpS", status: "accepted", fromName: "Carly C", fromHandle: "djentyghoul", fromPhoto: "https://img/c.jpg" });
+    await F.onProfileChange({ params: { uid: "cpA" }, data: { before: { data: () => ({ name: "Carly C", handle: "djentyghoul", photoURL: "https://img/c.jpg", seenBuild: 78 }) }, after: { data: () => store.get("users/cpA") } } });
+    const r = store.get("friendRequests/cpP_cpA"); assert.deepStrictEqual([r.toName, r.toHandle, r.toPhoto, r.family], ["Carly C", "djentyghoul", "https://img/c.jpg", "active"]);
+    assert.strictEqual(await F.syncCrewCopies("cpA", store.get("users/cpA")), 0, "nothing rewritten when already current");
+    // unrelated profile edits don't trigger it
+    store.set("friendRequests/cpP_cpA", { ...r, toName: "stale" });
+    await F.onProfileChange({ params: { uid: "cpA" }, data: { before: { data: () => store.get("users/cpA") }, after: { data: () => ({ ...store.get("users/cpA"), bio: "new" }) } } });
+    assert.strictEqual(store.get("friendRequests/cpP_cpA").toName, "stale"); }
+
   console.log("All email function tests passed.");
 })().catch(e => { console.error(e); process.exit(1); });

@@ -215,6 +215,30 @@ async function queue(uid, kind, item){
   await db.collection(`users/${uid}/inbox`).add({ ...item, sent: false, at: FieldValue.serverTimestamp() });
   return true;
 }
+/* ---------- Keep the name, username and photo saved on crew links current ----------
+   The app shows these when it can't load someone's live profile, so they must never go stale or blank.
+   Runs when someone's name, username or photo changes, and once per new app version they open
+   (seenBuild changes), which also fills in links made before these copies existed. */
+async function syncCrewCopies(uid, u){
+  if (!u || !u.handle) return 0;
+  const want = { Name: u.name || "", Handle: u.handle, Photo: u.photoURL || "" };
+  const [a, b] = await Promise.all([db.collection("friendRequests").where("from", "==", uid).get(), db.collection("friendRequests").where("to", "==", uid).get()]);
+  let n = 0;
+  for (const [docs, side] of [[a.docs, "from"], [b.docs, "to"]]) for (const d of docs) {
+    const x = d.data(), patch = {};
+    for (const [k, v] of Object.entries(want)) if ((x[side + k] || "") !== v) patch[side + k] = v;
+    if (Object.keys(patch).length) { await d.ref.update(patch); n++; }
+  }
+  return n;
+}
+module.exports.syncCrewCopies = syncCrewCopies;
+exports.onProfileChange = onDocumentUpdated({ document: "users/{uid}", database: DB_ID }, async event => {
+  const b = event.data.before.data() || {}, a = event.data.after.data() || {};
+  if (b.name === a.name && b.handle === a.handle && b.photoURL === a.photoURL && b.seenBuild === a.seenBuild) return;
+  const n = await syncCrewCopies(event.params.uid, a);
+  if (n) logger.info(`crew copies refreshed on ${n} link(s)`);
+});
+
 exports.onCrewRequest = onDocumentCreated({ document: "friendRequests/{id}", database: DB_ID }, async event => {
   const r = event.data && event.data.data(); if (!r || r.status !== "pending") return;
   { const fu = await userDoc(r.from); await activity(r.to, `req_${r.from}`, { type: "request", from: r.from, fromHandle: handleOf(fu), fromName: nameOf(fu) }); }

@@ -2,8 +2,8 @@
 // Versioned files (?v=N) never change once published, so they come straight from the cache.
 // The page itself is network-first (so updates show up right away), falling back to the cache when the
 // network is slow or offline. Everything else same-site: network first, cache as backup.
-const V = "78";
-const CACHE = "pitlog-v78";
+const V = "79";
+const CACHE = "pitlog-v79";
 const SHELL = ["./", "./index.html", `./app.min.js?v=${V}`, `./styles.css?v=${V}`, `./venues.js?v=${V}`, "./manifest.webmanifest", "./icons/icon-192.png", "./icons/icon-512.png", "./brand/emblem-128.webp", "./brand/wordmark-180.webp"];
 self.addEventListener("install", e => { e.waitUntil(caches.open(CACHE).then(c => Promise.all(SHELL.map(u => c.add(u).catch(() => {})))).then(() => self.skipWaiting())); });
 self.addEventListener("activate", e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k.startsWith("pitlog-v") && k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim())); });

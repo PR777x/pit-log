@@ -1,0 +1,53 @@
+name: Maintenance (one-off fixes)
+
+# Small, named one-off data fixes, run by hand. Each task only touches what its name says.
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: "Which fix to run"
+        type: choice
+        options: ["sync-crew-copies"]
+        default: "sync-crew-copies"
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install function dependencies
+        working-directory: functions
+        run: npm install --no-audit --no-fund
+      - name: Credentials
+        env:
+          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          node -e '
+            const fs = require("fs");
+            let raw = process.env.SA.replace(/[\r\n\t]/g, "").trim();
+            if (!raw.startsWith("{")) raw = Buffer.from(raw, "base64").toString("utf8");
+            fs.writeFileSync(process.argv[1], JSON.stringify(JSON.parse(raw)), { mode: 0o600 });
+          ' "$RUNNER_TEMP/sa.json"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/sa.json" >> "$GITHUB_ENV"
+      # Copies each person's current name, username and photo onto every crew link they're part of
+      # (the copies the app falls back to). Changes only those copy fields; prints counts only.
+      - name: Sync crew link copies
+        if: ${{ inputs.task == 'sync-crew-copies' }}
+        working-directory: functions
+        run: |
+          node -e '
+            const { initializeApp } = require("firebase-admin/app"); const { getFirestore } = require("firebase-admin/firestore");
+            initializeApp(); const db = getFirestore("pit-log");
+            (async () => {
+              const users = new Map((await db.collection("users").get()).docs.map(d => [d.id, d.data()]));
+              const reqs = await db.collection("friendRequests").get(); let fixed = 0, fields = 0;
+              for (const r of reqs.docs) { const x = r.data(), patch = {};
+                for (const side of ["from", "to"]) { const u = users.get(x[side]); if (!u || !u.handle) continue;
+                  for (const [k, v] of [["Name", u.name || ""], ["Handle", u.handle], ["Photo", u.photoURL || ""]]) if ((x[side + k] || "") !== v) patch[side + k] = v; }
+                if (Object.keys(patch).length) { await r.ref.update(patch); fixed++; fields += Object.keys(patch).length; } }
+              console.log("crew links checked:", reqs.docs.length, "| updated:", fixed, "| fields refreshed:", fields);
+            })().catch(e => { console.log("ERROR", e.message); process.exit(1); });
+          '

@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile, applyActionCode } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot, query, where, writeBatch, serverTimestamp, arrayUnion, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { VENUES } from "./venues.js?v=78";
+import { VENUES } from "./venues.js?v=79";
 import { getStorage, ref as sref, uploadBytes, uploadBytesResumable, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -1889,7 +1889,14 @@ function watchFriend(uid, info){
     if (f.family) { applyPrivacy(f); scheduleFamilySync(); }
     rerenderSoft();
   }, err => { f.err = err.code === "permission-denied" ? "Their log isn't shared with you yet." : "Couldn't load their log."; f.loaded = true; rerenderSoft(); });
-  f.unsubP = onSnapshot(doc(fdb, "users", uid), p => { if (p.exists()) { const d = p.data(); f.live = true; Object.assign(f, { name: d.name || f.name, handle: d.handle || f.handle, photo: d.photoURL || f.photo, bio: d.bio || "", favBand: d.favBand || "", favBands: d.favBands || [], favVenue: d.favVenue || "", settings: d.settings || {}, interested: Array.isArray(d.interested) ? d.interested : [], bucket: Array.isArray(d.bucket) ? d.bucket : [], cover: d.coverURL || "", tagShow: d.tagShow || "", tagNo: Array.isArray(d.tagNo) ? d.tagNo : [], mediaNo: Array.isArray(d.mediaNo) ? d.mediaNo : [], mediaYes: Array.isArray(d.mediaYes) ? d.mediaYes : [] }); applyPrivacy(f); rerenderSoft(); } }, () => {});
+  // Their live profile (name, username, photo, settings). If the live connection fails or is slow, fall back to a
+  // one-time read, retry, and report the error so it can be looked into.
+  const applyProfile = d => { f.live = true; Object.assign(f, { name: d.name || f.name, handle: d.handle || f.handle, photo: d.photoURL || f.photo, bio: d.bio || "", favBand: d.favBand || "", favBands: d.favBands || [], favVenue: d.favVenue || "", settings: d.settings || {}, interested: Array.isArray(d.interested) ? d.interested : [], bucket: Array.isArray(d.bucket) ? d.bucket : [], cover: d.coverURL || "", tagShow: d.tagShow || "", tagNo: Array.isArray(d.tagNo) ? d.tagNo : [], mediaNo: Array.isArray(d.mediaNo) ? d.mediaNo : [], mediaYes: Array.isArray(d.mediaYes) ? d.mediaYes : [] }); applyPrivacy(f); rerenderSoft(); };
+  const oneRead = () => { if (FR[uid] !== f || f.live) return; getDoc(doc(fdb, "users", uid)).then(p => { if (p.exists() && FR[uid] === f && !f.live) applyProfile(p.data()); }).catch(e => logError("friend profile read: " + (e.code || e.message), "watchFriend")); };
+  const listen = tries => { f.unsubP = onSnapshot(doc(fdb, "users", uid), p => { if (p.exists()) applyProfile(p.data()); }, e => {
+    logError("friend profile listen: " + (e.code || e.message), "watchFriend"); oneRead();
+    if (tries < 3 && FR[uid] === f) setTimeout(() => { if (FR[uid] === f) listen(tries + 1); }, 4000 * (tries + 1)); }); };
+  listen(0); setTimeout(oneRead, 6000);
 }
 // Friends' privacy settings decide what this app shows of their log. f.raw keeps the full
 // docs for Crew Family syncing; everything you see goes through f.shows.
@@ -4716,6 +4723,7 @@ function pushClick(t){
    than the feature it fixes (same-day polish is part of the feature). b = the build it shipped in.
    Every build, user-facing or not (including removals), also gets an entry in version-history.html. */
 const WHATS_NEW = [
+  { b: 79, date: "2026-11-24", icon: "🩹", t: "Crew names and photos fixed", d: "Crew members who changed their name, username or photo now show up correctly for everyone.", go: "crew" },
   { b: 78, date: "2026-11-23", icon: "📊", t: "Stats: see it all", d: "A new All view shows every stat on one page, and Bands now counts the bands you've seen more than once.", go: "stats" },
   { b: 78, date: "2026-11-23", icon: "📲", t: "Alerts and home screen tips", d: "Activity reminds you to turn on phone alerts and shows how to add Pit Log to your home screen." },
   { b: 78, date: "2026-11-23", icon: "⚡", t: "Faster all around", d: "Quicker start-up, faster lists and screens, and smaller photo downloads." },
