@@ -96,6 +96,8 @@ jobs:
               // Recently created accounts (could be a second account made while signed out)
               const list = await auth.listUsers(1000); const recent = list.users.filter(x => Date.now() - Date.parse(x.metadata.creationTime) < 7 * 864e5);
               console.log("accounts created in last 7 days:", recent.length, recent.map(x => mask(x.uid) + " " + x.providerData.map(p => p.providerId).join("+")).join(" ; "));
+              const errs = await db.collection("errors").orderBy("at", "desc").limit(40).get();
+              for (const e of errs.docs) { const x = e.data(); console.log("app error", t(x.at), "build", x.build || "?", "|", String(x.msg || "").slice(0, 160), "|", String(x.where || "").slice(0, 60)); }
               const admin = list.users.find(x => x.email && crypto.createHash("sha256").update(x.email.trim().toLowerCase()).digest("hex") === "756dc8d665670c2e7b9550374dd0faca59ca1638be06ec438737d87fb810eae3");
               if (admin) console.log("site owner auth: last sign-in", admin.metadata.lastSignInTime, "| last refresh", admin.metadata.lastRefreshTime, "| tokens valid after", admin.tokensValidAfterTime);
             })().catch(e => console.log("ERROR", e.message));
