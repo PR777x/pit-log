@@ -106,6 +106,18 @@ jobs:
                   const od = await db.doc("users/" + other).get(), shows = (await db.collection("users/" + other + "/shows").count().get()).data().count;
                   console.log("owner link ->", mask(other), x.status, "family", x.family || "off", "| handle copy matches her handle:", x[side + "Handle"] === h, "| profile doc:", od.exists ? "exists (name " + has(od.data().name) + ", photo " + has(od.data().photoURL) + ")" : "MISSING", "| shows:", shows); }
               }
+              if (admin) { try {
+                // Ask Firebase to evaluate the live database rules for "owner reads her profile" (no data is touched).
+                const { GoogleAuth } = require("google-auth-library"); const ga = new GoogleAuth({ scopes: ["https://www.googleapis.com/auth/cloud-platform"] });
+                const tk = (await (await ga.getClient()).getAccessToken()).token, H = { Authorization: "Bearer " + tk, "Content-Type": "application/json" };
+                const rel = await (await fetch("https://firebaserules.googleapis.com/v1/projects/pit-log/releases", { headers: H })).json();
+                const fsRel = (rel.releases || []).filter(r => /cloud\.firestore/.test(r.name)); console.log("firestore rule releases:", fsRel.map(r => r.name.split("/").pop() + " @ " + r.updateTime).join(" ; "));
+                const content = require("fs").readFileSync("../firestore.rules", "utf8");
+                const cases = [["users/" + uid, admin.uid], ["users/" + uid + "/shows/x", admin.uid], ["users/" + admin.uid, uid]].map(([path, who]) => ({ expectation: "ALLOW", request: { auth: { uid: who, token: { email_verified: true } }, path: "/databases/pit-log/documents/" + path, method: "get" }, functionMocks: [{ function: "exists", args: [{ anyValue: {} }], result: { value: true } }, { function: "get", args: [{ anyValue: {} }], result: { value: { data: { status: "accepted", family: "active", blocked: [], settings: {} } } } }] }));
+                const tr = await (await fetch("https://firebaserules.googleapis.com/v1/projects/pit-log:test", { method: "POST", headers: H, body: JSON.stringify({ source: { files: [{ name: "firestore.rules", content }] }, testSuite: { testCases: cases } }) })).json();
+                (tr.testResults || []).forEach((r, i) => console.log("rules test", ["owner reads her profile", "owner reads her shows", "she reads owner profile"][i], r.state, (r.debugMessages || []).join(" ").slice(0, 200)));
+                if (!tr.testResults) console.log("rules test response", JSON.stringify(tr).slice(0, 300));
+              } catch (e) { console.log("rules test failed", e.message); } }
               if (admin) console.log("site owner auth: last sign-in", admin.metadata.lastSignInTime, "| last refresh", admin.metadata.lastRefreshTime, "| tokens valid after", admin.tokensValidAfterTime);
             })().catch(e => console.log("ERROR", e.message));
           '
