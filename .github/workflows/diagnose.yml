@@ -99,13 +99,13 @@ jobs:
               const errs = await db.collection("errors").orderBy("at", "desc").limit(40).get();
               for (const e of errs.docs) { const x = e.data(); console.log("app error", t(x.at), "build", x.build || "?", "|", String(x.msg || "").slice(0, 160), "|", String(x.where || "").slice(0, 60)); }
               const admin = list.users.find(x => x.email && crypto.createHash("sha256").update(x.email.trim().toLowerCase()).digest("hex") === "756dc8d665670c2e7b9550374dd0faca59ca1638be06ec438737d87fb810eae3");
-              if (admin) { try {
-                // Read her profile the way the site owner app would (read-only), to test the database rules.
-                const tok = await auth.createCustomToken(admin.uid);
-                const r1 = await fetch("https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=AIzaSyBBbSi3h5wPsIMMZoj2kUoHBa3d-dTb4Ik", { method: "POST", headers: { "Content-Type": "application/json", Referer: "https://thepitlog.com/" }, body: JSON.stringify({ token: tok, returnSecureToken: true }) });
-                const j1 = await r1.json(); if (!j1.idToken) console.log("owner token exchange failed", r1.status, JSON.stringify(j1).slice(0, 200));
-                else for (const path of ["users/" + uid, "users/" + uid + "/shows"]) { const r2 = await fetch("https://firestore.googleapis.com/v1/projects/pit-log/databases/pit-log/documents/" + path + "?pageSize=1", { headers: { Authorization: "Bearer " + j1.idToken } }); const b2 = await r2.text(); console.log("read as owner:", path.replace(uid, mask(uid)), r2.status, r2.ok ? "OK" : b2.slice(0, 200)); }
-              } catch (e) { console.log("owner read test failed", e.message); } }
+              if (admin) {
+                console.log("site owner uid", mask(admin.uid), "| her uid", mask(uid));
+                const mine = [...(await db.collection("friendRequests").where("from", "==", admin.uid).get()).docs, ...(await db.collection("friendRequests").where("to", "==", admin.uid).get()).docs];
+                for (const r of mine) { const x = r.data(), other = x.from === admin.uid ? x.to : x.from, side = x.from === admin.uid ? "to" : "from";
+                  const od = await db.doc("users/" + other).get(), shows = (await db.collection("users/" + other + "/shows").count().get()).data().count;
+                  console.log("owner link ->", mask(other), x.status, "family", x.family || "off", "| handle copy matches her handle:", x[side + "Handle"] === h, "| profile doc:", od.exists ? "exists (name " + has(od.data().name) + ", photo " + has(od.data().photoURL) + ")" : "MISSING", "| shows:", shows); }
+              }
               if (admin) console.log("site owner auth: last sign-in", admin.metadata.lastSignInTime, "| last refresh", admin.metadata.lastRefreshTime, "| tokens valid after", admin.tokensValidAfterTime);
             })().catch(e => console.log("ERROR", e.message));
           '
